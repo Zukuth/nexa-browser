@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Nexa Browser</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="topbar">
+    <button id="tb-back" class="nav-btn" title="Atrás">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15,5 8,12 15,19"/></svg>
+    </button>
+    <button id="tb-forward" class="nav-btn" title="Adelante">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9,5 16,12 9,19"/></svg>
+    </button>
+    <button id="tb-reload" class="nav-btn" title="Recargar">⟳</button>
+    <button id="tb-home" class="nav-btn" title="Inicio">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11.5 12 4l8 7.5"/><path d="M6 10v9a1 1 0 0 0 1 1h3v-6h4v6h3a1 1 0 0 0 1-1v-9"/></svg>
+    </button>
+
+    <input id="input-address" type="text" placeholder="Escribe una URL y presiona Enter" />
+
+    <button id="tb-copy-url" class="nav-btn" title="Copiar enlace">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22,2 15,22 11,13 2,9"/></svg>
+    </button>
+
+    <div id="toolbar">
+      <button id="tb-reload-2" title="Recargar">⟳</button>
+      <button id="tb-mute" title="Silenciar panel">🔊</button>
+      <button id="tb-mute-all" title="Silenciar todo">🔇</button>
+
+      <button id="tb-shield" class="shield-btn" title="Bloqueador de anuncios">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/></svg>
+        <span id="tb-shield-count" class="shield-count"></span>
+      </button>
+
+      <div class="menu-wrap">
+        <button id="btn-zoom-menu" class="menu-btn" title="Zoom">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/><line x1="8" y1="11" x2="14" y2="11"/><line x1="11" y1="8" x2="11" y2="14"/></svg>
+        </button>
+        <div id="zoom-menu" class="dropdown-menu hidden"></div>
+      </div>
+
+      <div class="menu-wrap">
+        <button id="btn-layout-menu" class="menu-btn" title="Diseño">
+          <svg viewBox="0 0 24 24" width="15" height="15"><rect x="3" y="3" width="8" height="8" rx="1.5" fill="currentColor"/><rect x="13" y="3" width="8" height="8" rx="1.5" fill="currentColor"/><rect x="3" y="13" width="8" height="8" rx="1.5" fill="currentColor"/><rect x="13" y="13" width="8" height="8" rx="1.5" fill="currentColor"/></svg>
+        </button>
+        <div id="layout-menu" class="dropdown-menu hidden">
+          <div class="layout-option" data-mode="grid">
+            <svg viewBox="0 0 24 24" width="15" height="15"><rect x="3" y="3" width="8" height="8" rx="1.5" fill="currentColor"/><rect x="13" y="3" width="8" height="8" rx="1.5" fill="currentColor"/><rect x="3" y="13" width="8" height="8" rx="1.5" fill="currentColor"/><rect x="13" y="13" width="8" height="8" rx="1.5" fill="currentColor"/></svg>
+            <span>Cuadrícula automática</span>
+          </div>
+          <div class="layout-option" data-mode="single">
+            <svg viewBox="0 0 24 24" width="15" height="15"><rect x="3" y="3" width="18" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+            <span>Panel único</span>
+          </div>
+          <div class="layout-option" data-mode="columns">
+            <svg viewBox="0 0 24 24" width="15" height="15"><rect x="3" y="3" width="4.5" height="18" fill="currentColor"/><rect x="9.75" y="3" width="4.5" height="18" fill="currentColor"/><rect x="16.5" y="3" width="4.5" height="18" fill="currentColor"/></svg>
+            <span>Columnas</span>
+          </div>
+          <div class="layout-option" data-mode="rows">
+            <svg viewBox="0 0 24 24" width="15" height="15"><rect x="3" y="3" width="18" height="4.5" fill="currentColor"/><rect x="3" y="9.75" width="18" height="4.5" fill="currentColor"/><rect x="3" y="16.5" width="18" height="4.5" fill="currentColor"/></svg>
+            <span>Filas</span>
+          </div>
+          <div class="layout-option" data-mode="free">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="10" height="8" rx="1"/><rect x="14" y="6" width="7" height="6" rx="1"/><rect x="6" y="14" width="8" height="7" rx="1"/><rect x="16" y="15" width="5" height="6" rx="1"/></svg>
+            <span>Libre</span>
+          </div>
+        </div>
+      </div>
+
+      <button id="tb-fullscreen" title="Pantalla completa">⛶</button>
+      <button id="tb-downloads" title="Descargas">⬇</button>
+      <button id="tb-settings" title="Configuración">⚙</button>
+      <button id="tb-bookmarks" title="Favoritos">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div id="panel-headers"></div>
+
+  <div id="findbar" class="hidden">
+    <input id="findbar-input" type="text" placeholder="Buscar en la página..." />
+    <span id="findbar-count"></span>
+    <button id="findbar-prev" title="Anterior">▲</button>
+    <button id="findbar-next" title="Siguiente">▼</button>
+    <button id="findbar-close" title="Cerrar">✕</button>
+  </div>
+
+  <div id="url-suggestions" class="hidden"></div>
+
+  <div id="empty-state" class="hidden">
+    <div class="empty-card">
+      <div class="empty-title">Ninguna cuenta abierta</div>
+      <div class="empty-desc">Añade cuentas a este espacio. Cada cuenta es una sesión independiente — su propio inicio de sesión, cookies y caché.</div>
+      <button id="btn-empty-add">+ Añadir primera cuenta</button>
+    </div>
+  </div>
+
+  <div id="statusbar">
+    <div id="status-left">
+      <span class="status-dot"></span>
+      <span>Conectado</span>
+      <span class="status-sep">·</span>
+      <span id="status-space-info"></span>
+      <span class="status-sep">·</span>
+      <span id="status-active-account"></span>
+    </div>
+    <div id="status-right">
+      <span id="status-cpu"></span>
+      <span id="status-ram"></span>
+      <span id="status-fps"></span>
+      <span id="status-time"></span>
+      <span id="status-version"></span>
+    </div>
+  </div>
+
+  <div id="rail">
+    <div id="rail-spaces"></div>
+    <button id="btn-add-space" title="Nuevo espacio">+</button>
+  </div>
+
+  <div id="sidebar">
+    <div id="space-header">
+      <span id="space-name"></span>
+      <button id="btn-edit-space" title="Editar espacio">✎</button>
+      <button id="btn-collapse-sidebar" title="Contraer barra lateral">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="10" y1="4" x2="10" y2="20"/><polyline points="7,9 4.5,12 7,15"/></svg>
+      </button>
+    </div>
+    <div id="account-list"></div>
+    <div id="sidebar-bottom">
+      <button id="btn-new-tab">+ Nueva pestaña</button>
+      <button id="btn-toggle-all" title="Cerrar todas">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div id="space-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-title">Editar espacio</div>
+      <label>Nombre</label>
+      <input id="space-input-name" type="text" />
+
+      <label>Color</label>
+      <div id="space-colors" class="swatch-row"></div>
+
+      <label>Ícono</label>
+      <div id="space-icons" class="swatch-row"></div>
+
+      <label>URL predeterminada</label>
+      <input id="space-input-url" type="text" />
+
+      <label>Diseño predeterminado</label>
+      <select id="space-input-layout">
+        <option value="single">Panel único</option>
+        <option value="grid">Cuadrícula automática</option>
+        <option value="columns">Columnas</option>
+        <option value="rows">Filas</option>
+        <option value="free">Libre</option>
+      </select>
+
+      <div class="modal-actions">
+        <button id="btn-delete-space" class="danger">Eliminar espacio</button>
+        <div class="modal-actions-right">
+          <button id="btn-cancel-space">Cancelar</button>
+          <button id="btn-save-space" class="primary">Guardar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="account-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-title">Editar cuenta</div>
+      <label>Nombre</label>
+      <input id="account-input-name" type="text" />
+
+      <label>Color</label>
+      <div id="account-colors" class="swatch-row"></div>
+
+      <label>URL</label>
+      <input id="account-input-url" type="text" />
+
+      <label>Proxy (host:puerto) — opcional</label>
+      <input id="account-input-proxy" type="text" placeholder="ej. 123.45.67.89:8080" />
+
+      <label>Usuario / contraseña del proxy — opcional</label>
+      <div class="swatch-row" style="gap:8px;">
+        <input id="account-input-proxy-user" type="text" placeholder="Usuario" style="flex:1;" />
+        <input id="account-input-proxy-pass" type="password" placeholder="Contraseña" style="flex:1;" />
+      </div>
+
+      <div class="modal-actions">
+        <div></div>
+        <div class="modal-actions-right">
+          <button id="btn-cancel-account">Cancelar</button>
+          <button id="btn-save-account" class="primary">Guardar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="shortcuts-modal" class="modal-overlay hidden">
+    <div class="modal shortcuts-modal">
+      <div class="settings-header">
+        <div class="modal-title">Atajos de teclado</div>
+        <button id="btn-close-shortcuts" class="icon-close">✕</button>
+      </div>
+      <div id="shortcuts-list" class="shortcuts-list"></div>
+    </div>
+  </div>
+
+  <div id="downloads-modal" class="modal-overlay hidden">
+    <div class="modal bookmarks-modal">
+      <div class="modal-title">⬇ Descargas</div>
+      <div id="downloads-list" class="ext-list bookmarks-list"></div>
+      <div class="modal-actions">
+        <button id="dl-open-folder">📁 Abrir carpeta</button>
+        <div class="modal-actions-right">
+          <button id="dl-clear">🗑 Limpiar lista</button>
+          <button id="btn-close-downloads" class="primary">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="settings-modal" class="modal-overlay hidden">
+    <div class="modal settings-modal">
+      <div class="settings-header">
+        <div class="modal-title">Configuración</div>
+        <button id="btn-close-settings" class="icon-close">✕</button>
+      </div>
+      <div class="settings-body">
+        <div class="settings-nav">
+          <div class="settings-nav-item active" data-tab="general">General</div>
+          <div class="settings-nav-item" data-tab="navegacion">Navegación</div>
+          <div class="settings-nav-item" data-tab="descargas">Descargas</div>
+          <div class="settings-nav-item" data-tab="extensiones">Extensiones</div>
+          <div class="settings-nav-item" data-tab="contrasenas">Contraseñas</div>
+          <div class="settings-nav-item" data-tab="actualizaciones">Actualizaciones</div>
+          <div class="settings-nav-item" data-tab="acerca">Acerca de</div>
+        </div>
+        <div class="settings-content">
+
+          <div class="settings-pane active" data-pane="general">
+            <div class="settings-row">
+              <span>Idioma</span>
+              <select id="set-language">
+                <option value="es">Español</option>
+              </select>
+            </div>
+            <div class="settings-row">
+              <span>Tema</span>
+              <select id="set-theme">
+                <option value="dark">Oscuro</option>
+              </select>
+            </div>
+            <div class="settings-row">
+              <span>Iniciar con Windows</span>
+              <label class="switch"><input type="checkbox" id="set-start-windows" /><span class="slider"></span></label>
+            </div>
+            <div class="settings-row">
+              <span>Reabrir el último espacio al iniciar</span>
+              <label class="switch"><input type="checkbox" id="set-reopen-space" /><span class="slider"></span></label>
+            </div>
+            <div class="settings-row">
+              <div>
+                <div>Bloqueador de anuncios y rastreadores</div>
+                <div class="settings-hint">Bloquea publicidad, analíticas y rastreadores conocidos en todas las cuentas — activado por defecto.</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="set-adblock" /><span class="slider"></span></label>
+            </div>
+            <div class="settings-row">
+              <div>
+                <div>Aceleración por hardware</div>
+                <div class="settings-hint">Desactívala si notas parpadeos o inestabilidad. El cambio requiere reiniciar la app.</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="set-hw-accel" /><span class="slider"></span></label>
+            </div>
+            <div class="settings-row-buttons">
+              <button id="set-export-spaces">⬆ Exportar espacios</button>
+              <button id="set-import-spaces">⬇ Importar espacios</button>
+            </div>
+            <div class="settings-row-buttons">
+              <button id="set-show-shortcuts">⌨ Ver atajos de teclado</button>
+            </div>
+          </div>
+
+          <div class="settings-pane" data-pane="navegacion">
+            <div class="settings-row">
+              <span>URL de inicio predeterminada</span>
+              <input id="set-default-url" type="text" />
+            </div>
+            <div class="settings-row">
+              <span>Zoom predeterminado</span>
+              <select id="set-default-zoom">
+                <option value="0.5">50%</option>
+                <option value="0.75">75%</option>
+                <option value="1">100%</option>
+                <option value="1.25">125%</option>
+                <option value="1.5">150%</option>
+              </select>
+            </div>
+            <div class="settings-row">
+              <span>Diseño predeterminado</span>
+              <select id="set-default-layout">
+                <option value="single">Panel único</option>
+                <option value="grid">Cuadrícula automática</option>
+                <option value="columns">Columnas</option>
+                <option value="rows">Filas</option>
+                <option value="free">Libre</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="settings-pane" data-pane="descargas">
+            <div class="settings-row">
+              <div>
+                <div>Carpeta de descargas</div>
+                <div class="settings-hint" id="set-downloads-folder-label">Carpeta predeterminada del sistema</div>
+              </div>
+              <button id="set-choose-folder">📁 Elegir carpeta...</button>
+            </div>
+            <div class="settings-row">
+              <span>Preguntar dónde guardar cada descarga</span>
+              <label class="switch"><input type="checkbox" id="set-ask-download" /><span class="slider"></span></label>
+            </div>
+          </div>
+
+          <div class="settings-pane" data-pane="extensiones">
+            <div class="settings-row">
+              <input id="ext-input" type="text" placeholder="Pega el enlace o ID de la Chrome Web Store" style="flex:1; min-width:0;" />
+              <button id="ext-install">Instalar</button>
+            </div>
+            <div id="ext-error" class="ext-error hidden"></div>
+            <div class="settings-row-buttons">
+              <button id="ext-load-unpacked">📁 Cargar extensión descomprimida...</button>
+              <button id="ext-open-store">🛒 Abrir Chrome Web Store</button>
+            </div>
+            <div id="ext-list" class="ext-list"></div>
+
+            <div class="settings-subheading">Plugins</div>
+            <div id="plugin-list" class="ext-list"></div>
+          </div>
+
+          <div class="settings-pane" data-pane="contrasenas">
+            <p class="settings-hint">
+              Nexa Browser no incluye un gestor de contraseñas con autocompletado en las páginas (Electron no trae
+              ese componente de Chrome). Puedes importar el CSV que Chrome, Firefox, Brave o Edge generan con su
+              propia opción "Exportar contraseñas" para guardarlas aquí como respaldo consultable.
+            </p>
+            <div class="settings-row-buttons">
+              <button id="pw-import">📁 Importar contraseñas (CSV)...</button>
+            </div>
+            <div class="settings-row">
+              <input id="pw-add-name" type="text" placeholder="Nombre (ej. Google)" style="flex:1; min-width:0;" />
+              <input id="pw-add-url" type="text" placeholder="URL" style="flex:1; min-width:0;" />
+            </div>
+            <div class="settings-row">
+              <input id="pw-add-user" type="text" placeholder="Usuario o correo" style="flex:1; min-width:0;" />
+              <input id="pw-add-pass" type="password" placeholder="Contraseña" style="flex:1; min-width:0;" />
+              <button id="pw-add-save">+ Guardar</button>
+            </div>
+            <div id="pw-error" class="ext-error hidden"></div>
+            <div id="pw-list" class="ext-list"></div>
+          </div>
+
+          <div class="settings-pane" data-pane="actualizaciones">
+            <div class="settings-row">
+              <span>Buscar actualizaciones automáticamente</span>
+              <label class="switch"><input type="checkbox" id="set-auto-update" /><span class="slider"></span></label>
+            </div>
+            <div class="settings-update-box">
+              <div id="set-update-status"></div>
+              <button id="set-check-updates">🔄 Comprobar ahora</button>
+            </div>
+          </div>
+
+          <div class="settings-pane" data-pane="acerca">
+            <div class="settings-about-title">Nexa <span class="accent-text">Browser</span></div>
+            <p class="settings-hint">Navegador multisesión gratuito: organiza cuentas ilimitadas en espacios, cada una con una sesión aislada.</p>
+            <div class="settings-version-box">
+              <div class="settings-row"><span>Versión</span><span id="ver-app"></span></div>
+              <div class="settings-row"><span>Electron</span><span id="ver-electron"></span></div>
+              <div class="settings-row"><span>Chromium</span><span id="ver-chrome"></span></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="bookmarks-modal" class="modal-overlay hidden">
+    <div class="modal bookmarks-modal">
+      <div class="modal-title">⭐ Favoritos</div>
+      <div class="settings-row-buttons">
+        <button id="bm-add-current">+ Guardar página actual</button>
+      </div>
+      <div id="bookmarks-list" class="ext-list bookmarks-list"></div>
+      <div class="modal-actions">
+        <button id="bm-import">⬇ Importar</button>
+        <div class="modal-actions-right">
+          <button id="bm-export">⬆ Exportar</button>
+          <button id="btn-close-bookmarks" class="primary">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
