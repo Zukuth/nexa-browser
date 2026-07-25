@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("com.google.devtools.ksp")
 }
 
 android {
@@ -41,4 +42,11 @@ dependencies {
     // isolation APIs this whole port hinges on all live in this artifact, not
     // in the platform android.webkit package directly.
     implementation("androidx.webkit:webkit:1.12.1")
+    // Account list + per-account last-URL persistence (Fase 2), same role
+    // store.js/data.json plays on desktop.
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    ksp("androidx.room:room-compiler:2.6.1")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.4")
+    implementation("androidx.recyclerview:recyclerview:1.3.2")
 }

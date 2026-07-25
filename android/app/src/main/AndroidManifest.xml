@@ -30,34 +30,40 @@
         </activity>
 
         <!--
-          Fase 1 MVP: navegación de una cuenta, sin partición de proceso
-          todavía (eso llega en la Fase 2, cuando esta misma pantalla se
-          aloje dentro de cada proceso-cuenta).
+          Fase 2: pool fijo de 4 slots de proceso. Las cuatro comparten el
+          100% de su código (todas extienden WebViewSlotActivity), pero cada
+          una vive en su propio proceso Android — así que hasta 4 cuentas
+          pueden estar realmente aisladas (cookies, storage) al mismo tiempo.
+          AccountSlotManager decide qué cuenta va en qué slot y expulsa por
+          LRU cuando hace falta un quinto.
         -->
         <activity
-            android:name=".BrowserActivity"
+            android:name=".slots.SlotActivity0"
+            android:process=":wv0"
             android:exported="false"
             android:label="Nexa Browser"
             android:configChanges="orientation|screenSize|keyboardHidden" />
 
-        <!--
-          Fase 0 de-risk: dos activities que comparten toda su lógica (ambas
-          extienden WebViewSlotActivity) pero cada una vive en su propio
-          proceso Android (:wv0 / :wv1). Esto es exactamente el mecanismo de
-          aislamiento de cuentas de la Fase 2, reducido al mínimo para
-          probarlo antes de construir el resto encima.
-        -->
         <activity
-            android:name=".SlotActivity0"
-            android:process=":wv0"
-            android:exported="false"
-            android:label="Slot wv0" />
-
-        <activity
-            android:name=".SlotActivity1"
+            android:name=".slots.SlotActivity1"
             android:process=":wv1"
             android:exported="false"
-            android:label="Slot wv1" />
+            android:label="Nexa Browser"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
+        <activity
+            android:name=".slots.SlotActivity2"
+            android:process=":wv2"
+            android:exported="false"
+            android:label="Nexa Browser"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
+        <activity
+            android:name=".slots.SlotActivity3"
+            android:process=":wv3"
+            android:exported="false"
+            android:label="Nexa Browser"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
 
     </application>
 
