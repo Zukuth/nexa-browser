@@ -1,10 +1,12 @@
 package com.nexabrowser.app
 
 import android.app.AlertDialog
+import android.content.Intent
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageButton
 import android.widget.TextView
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -43,6 +45,9 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         list.adapter = adapter
 
         findViewById<Button>(R.id.btnAddAccount).setOnClickListener { showAddAccountDialog() }
+        findViewById<ImageButton>(R.id.btnPasswords).setOnClickListener {
+            startActivity(Intent(this, PasswordsActivity::class.java))
+        }
     }
 
     override fun onResume() {

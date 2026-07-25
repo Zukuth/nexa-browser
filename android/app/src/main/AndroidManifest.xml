@@ -29,6 +29,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".PasswordsActivity"
+            android:exported="false"
+            android:label="Contraseñas" />
+
         <!--
           Fase 2: pool fijo de 4 slots de proceso. Las cuatro comparten el
           100% de su código (todas extienden WebViewSlotActivity), pero cada

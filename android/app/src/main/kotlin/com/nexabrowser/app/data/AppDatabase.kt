@@ -15,9 +15,10 @@ import androidx.room.RoomDatabase
  * collectors. Good enough for Fase 2 — the account list re-reads on resume
  * rather than needing a push channel between processes.
  */
-@Database(entities = [Account::class], version = 1, exportSchema = false)
+@Database(entities = [Account::class, PasswordEntry::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun accountDao(): AccountDao
+    abstract fun passwordDao(): PasswordDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
@@ -30,6 +31,9 @@ abstract class AppDatabase : RoomDatabase() {
                     "nexa-browser.db"
                 )
                     .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
+                    // Pre-release app with no installed base to migrate yet —
+                    // once this ships, a real migration replaces this.
+                    .fallbackToDestructiveMigration()
                     .build()
                     .also { instance = it }
             }

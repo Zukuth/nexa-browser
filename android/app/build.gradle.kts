@@ -49,4 +49,7 @@ dependencies {
     ksp("androidx.room:room-compiler:2.6.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.4")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
+    // Fase 3: periodic StevenBlack blocklist refresh that survives Doze,
+    // instead of a process-lifetime timer Android would just kill.
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 }

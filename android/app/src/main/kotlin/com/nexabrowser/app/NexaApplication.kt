@@ -2,6 +2,8 @@ package com.nexabrowser.app
 
 import android.app.Application
 import android.util.Log
+import com.nexabrowser.app.adblock.AdBlockRefreshWorker
+import com.nexabrowser.app.adblock.AdBlocker
 
 /**
  * Runs once per Android process — and on a multi-process app, that means once
@@ -26,7 +28,21 @@ class NexaApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        Log.d(TAG, "onCreate in process: ${currentProcessName()}")
+        val processName = currentProcessName()
+        Log.d(TAG, "onCreate in process: $processName")
+
+        // Cheap disk read — every process (main + each slot) keeps its own
+        // in-memory copy of whatever list is cached, same reasoning as the
+        // comment on AdBlocker itself.
+        AdBlocker.loadCached(this)
+
+        // Only the main process should own the periodic refresh job —
+        // scheduling it from every slot process too would be four redundant
+        // registrations of the exact same unique work name (harmless thanks
+        // to KEEP, but pointless).
+        if (processName == packageName) {
+            AdBlockRefreshWorker.schedule(this)
+        }
     }
 
     private fun currentProcessName(): String =

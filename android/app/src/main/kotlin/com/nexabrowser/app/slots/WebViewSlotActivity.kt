@@ -29,8 +29,12 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.webkit.WebViewFeature
 import com.nexabrowser.app.R
+import com.nexabrowser.app.adblock.AdBlocker
 import com.nexabrowser.app.data.AppDatabase
+import com.nexabrowser.app.security.PasswordCrypto
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * Fase 2: this is the real per-account browser screen — Fase 1's browsing
@@ -165,6 +169,26 @@ abstract class WebViewSlotActivity : androidx.appcompat.app.AppCompatActivity() 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean = false
 
+            // Fase 3 adblock. isForMainFrame() is the exact equivalent of the
+            // desktop blocker's `resourceType === 'mainFrame'` skip (main.js)
+            // — never block the page's own navigation, only its subresources
+            // (ad/tracker scripts, iframes, images, XHR/fetch).
+            override fun shouldInterceptRequest(
+                view: WebView,
+                request: android.webkit.WebResourceRequest
+            ): android.webkit.WebResourceResponse? {
+                if (request.isForMainFrame) return null
+                return if (AdBlocker.isBlockedHost(request.url.host)) {
+                    android.webkit.WebResourceResponse(
+                        "text/plain",
+                        "utf-8",
+                        java.io.ByteArrayInputStream(ByteArray(0))
+                    )
+                } else {
+                    null
+                }
+            }
+
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 addressBar.setText(url)
                 progressBar.visibility = View.VISIBLE
@@ -184,6 +208,7 @@ abstract class WebViewSlotActivity : androidx.appcompat.app.AppCompatActivity() 
                 progressBar.visibility = View.GONE
                 updateNavButtons()
                 persistUrl(url)
+                injectAutofill(url)
             }
         }
 
@@ -229,6 +254,143 @@ abstract class WebViewSlotActivity : androidx.appcompat.app.AppCompatActivity() 
             Toast.makeText(this, "Descargando $fileName", Toast.LENGTH_SHORT).show()
         }
     }
+
+    // Same origin-matching semantics as the desktop app's hostnameOf(): strip
+    // a leading "www.", and if the string has no scheme, retry as if it did
+    // (covers passwords saved with a bare "example.com" URL).
+    private fun hostnameOf(url: String?): String? {
+        if (url.isNullOrBlank()) return null
+        val host = Uri.parse(url).host ?: Uri.parse("https://$url").host
+        return host?.lowercase()?.removePrefix("www.")
+    }
+
+    // Fase 3: autocompletado de contraseñas. Pushed via evaluateJavascript()
+    // rather than addJavascriptInterface() — a JS bridge exposes the app to
+    // reflection-based RCE from any page it's ever injected into, whereas
+    // evaluateJavascript() only ever runs a script this app wrote itself.
+    // The tradeoff versus desktop's contextIsolated preload: this executes in
+    // the page's own JS world, not a separate isolated one, so the matched
+    // credentials are technically visible to the page's own scripts from the
+    // moment of injection rather than only after the user picks one. Accepted
+    // per the port plan — the alternative (addJavascriptInterface) is worse.
+    // Nothing is auto-filled; the user must click a suggestion, same as desktop.
+    private fun injectAutofill(url: String?) {
+        val host = hostnameOf(url) ?: return
+        lifecycleScope.launch {
+            val matches = db.passwordDao().getAll().filter { hostnameOf(it.url) == host }
+            if (matches.isEmpty()) return@launch
+            val jsonMatches = JSONArray()
+            matches.forEach { entry ->
+                val password = try {
+                    PasswordCrypto.decrypt(entry.encryptedPassword)
+                } catch (e: Exception) {
+                    Log.e(TAG, "failed to decrypt password ${entry.id}, skipping", e)
+                    return@forEach
+                }
+                jsonMatches.put(
+                    JSONObject().apply {
+                        put("username", entry.username)
+                        put("password", password)
+                        put("name", entry.name)
+                        put("url", entry.url)
+                    }
+                )
+            }
+            if (jsonMatches.length() == 0) return@launch
+            webView.evaluateJavascript(buildAutofillScript(jsonMatches), null)
+        }
+    }
+
+    private fun buildAutofillScript(matches: JSONArray): String = """
+        (function() {
+          if (window.__nexaAutofillInstalled) {
+            window.__nexaAutofillMatches = $matches;
+            return;
+          }
+          window.__nexaAutofillInstalled = true;
+          window.__nexaAutofillMatches = $matches;
+
+          function classifyField(input) {
+            var type = (input.type || '').toLowerCase();
+            if (type === 'password') return 'password';
+            var hint = ((input.name || '') + ' ' + (input.id || '') + ' ' + (input.autocomplete || '')).toLowerCase();
+            if (type === 'email' || hint.indexOf('email') >= 0 || hint.indexOf('user') >= 0 || hint.indexOf('login') >= 0) return 'username';
+            return null;
+          }
+
+          function setNativeValue(el, value) {
+            var proto = Object.getPrototypeOf(el);
+            var descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+            if (descriptor && descriptor.set) descriptor.set.call(el, value); else el.value = value;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+
+          function fillFrom(input, entry) {
+            var form = input.closest('form') || document;
+            var userField = form.querySelector('input[type="email"], input[autocomplete="username"], input[name*="user" i], input[name*="email" i], input[name*="login" i]') ||
+              (classifyField(input) === 'username' ? input : null);
+            var passField = form.querySelector('input[type="password"]');
+            if (userField && entry.username) setNativeValue(userField, entry.username);
+            if (passField && entry.password) setNativeValue(passField, entry.password);
+            if (!passField && classifyField(input) === 'username' && entry.username) setNativeValue(input, entry.username);
+            if (!userField && classifyField(input) === 'password' && entry.password) setNativeValue(input, entry.password);
+          }
+
+          var host = null, shadow = null;
+          function ensureHost() {
+            if (host && document.body.contains(host)) return;
+            host = document.createElement('div');
+            host.style.cssText = 'all:initial; position:fixed; z-index:2147483647;';
+            document.documentElement.appendChild(host);
+            shadow = host.attachShadow({ mode: 'closed' });
+            var style = document.createElement('style');
+            style.textContent = '.box { font-family: -apple-system, Segoe UI, Roboto, sans-serif; background:#fff; color:#1a1a1a; border:1px solid #dadce0; border-radius:8px; box-shadow:0 4px 16px rgba(0,0,0,0.25); min-width:220px; max-width:320px; overflow:hidden; } .row { display:flex; flex-direction:column; gap:2px; padding:9px 12px; cursor:pointer; } .row:hover { background:#f1f3f4; } .row + .row { border-top:1px solid #f0f0f0; } .user { font-size:13px; font-weight:600; } .src { font-size:11px; color:#5f6368; }';
+            shadow.appendChild(style);
+          }
+
+          var openForInput = null;
+          function hideDropdown() { if (host) host.style.display = 'none'; openForInput = null; }
+
+          function showDropdown(input) {
+            var current = window.__nexaAutofillMatches || [];
+            if (!current.length) return;
+            ensureHost();
+            var box = shadow.querySelector('.box') || document.createElement('div');
+            box.className = 'box';
+            box.replaceChildren();
+            current.forEach(function(entry) {
+              var row = document.createElement('div');
+              row.className = 'row';
+              var user = document.createElement('div');
+              user.className = 'user';
+              user.textContent = entry.username || entry.name || entry.url;
+              var src = document.createElement('div');
+              src.className = 'src';
+              src.textContent = 'Contraseña guardada';
+              row.appendChild(user);
+              row.appendChild(src);
+              row.onmousedown = function(e) { e.preventDefault(); fillFrom(input, entry); hideDropdown(); };
+              box.appendChild(row);
+            });
+            if (!shadow.contains(box)) shadow.appendChild(box);
+            var rect = input.getBoundingClientRect();
+            host.style.left = Math.round(rect.left) + 'px';
+            host.style.top = Math.round(rect.bottom + 4) + 'px';
+            host.style.display = 'block';
+            openForInput = input;
+          }
+
+          document.addEventListener('mousedown', function(e) {
+            var target = e.target;
+            if (target && target.tagName === 'INPUT' && classifyField(target)) { showDropdown(target); return; }
+            var insideDropdown = host && host.contains(target);
+            if (!insideDropdown && openForInput) hideDropdown();
+          }, true);
+
+          window.addEventListener('scroll', hideDropdown, true);
+        })();
+    """.trimIndent()
 
     private fun persistUrl(url: String?) {
         if (url.isNullOrBlank() || !::accountId.isInitialized) return
