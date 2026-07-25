@@ -45,8 +45,22 @@
       "createStartMenuShortcut": true,
       "shortcutName": "Nexa Browser"
     },
+    "linux": {
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] },
+        { "target": "deb", "arch": ["x64"] }
+      ],
+      "category": "Network",
+      "maintainer": "Nexa Browser",
+      "artifactName": "${productName}-${version}-x64.${ext}"
+    },
     "directories": {
       "output": "build"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Zukuth",
+      "repo": "nexa-browser"
     }
   }
 }

@@ -236,43 +236,78 @@ if (data.settings.hardwareAcceleration === false) {
 // Spotify Web Player, etc.) can actually play. Best-effort: if no compatible
 // install is found, or the version drifts too far from our own Chromium, it just
 // silently isn't available rather than breaking anything.
+// Windows installs keep each version in its own versioned subfolder
+// (Application\131.0.6778.86\WidevineCdm\...); Linux .deb/.rpm installs of
+// Chrome/Chromium/Edge instead keep a single current WidevineCdm dir straight
+// under the install root, no version subfolder — so the two OSes need
+// different traversal, not just different root paths.
 function findWidevineCdm() {
-  const roots = [
-    'C:\\Program Files\\Google\\Chrome\\Application',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application',
-    'C:\\Program Files\\Microsoft\\Edge\\Application',
-    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application'
-  ];
-  let best = null;
-  for (const root of roots) {
-    let versions;
-    try {
-      versions = fs.readdirSync(root).filter((v) => /^\d+\.\d+\.\d+\.\d+$/.test(v));
-    } catch {
-      continue;
+  if (process.platform === 'win32') {
+    const roots = [
+      'C:\\Program Files\\Google\\Chrome\\Application',
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application',
+      'C:\\Program Files\\Microsoft\\Edge\\Application',
+      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application'
+    ];
+    let best = null;
+    for (const root of roots) {
+      let versions;
+      try {
+        versions = fs.readdirSync(root).filter((v) => /^\d+\.\d+\.\d+\.\d+$/.test(v));
+      } catch {
+        continue;
+      }
+      for (const v of versions) {
+        const dllPath = path.join(root, v, 'WidevineCdm', '_platform_specific', 'win_x64', 'widevinecdm.dll');
+        const manifestPath = path.join(root, v, 'WidevineCdm', 'manifest.json');
+        try {
+          if (!fs.existsSync(dllPath)) continue;
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+          if (!best || manifest.version > best.version) {
+            best = { dllPath, version: manifest.version, source: root.includes('Edge') ? 'Edge' : 'Chrome', browserVersion: v };
+          }
+        } catch {
+          // unreadable manifest or missing files — skip this candidate
+        }
+      }
     }
-    for (const v of versions) {
-      const dllPath = path.join(root, v, 'WidevineCdm', '_platform_specific', 'win_x64', 'widevinecdm.dll');
-      const manifestPath = path.join(root, v, 'WidevineCdm', 'manifest.json');
+    return best;
+  }
+
+  if (process.platform === 'linux') {
+    const roots = [
+      { dir: '/opt/google/chrome/WidevineCdm', source: 'Chrome' },
+      { dir: '/opt/microsoft/msedge/WidevineCdm', source: 'Edge' },
+      { dir: '/usr/lib/chromium/WidevineCdm', source: 'Chromium' },
+      { dir: '/usr/lib/chromium-browser/WidevineCdm', source: 'Chromium' }
+    ];
+    for (const { dir, source } of roots) {
+      const dllPath = path.join(dir, '_platform_specific', 'linux_x64', 'libwidevinecdm.so');
+      const manifestPath = path.join(dir, 'manifest.json');
       try {
         if (!fs.existsSync(dllPath)) continue;
         const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
-        if (!best || manifest.version > best.version) {
-          best = { dllPath, version: manifest.version, source: root.includes('Edge') ? 'Edge' : 'Chrome', browserVersion: v };
-        }
+        return { dllPath, version: manifest.version, source, browserVersion: '' };
       } catch {
-        // unreadable manifest or missing files — skip this candidate
+        // unreadable manifest or missing files — try the next candidate
       }
     }
+    return null;
   }
-  return best;
+
+  return null; // macOS: not a target platform for this app right now
 }
 
 const widevineCdm = findWidevineCdm();
 if (widevineCdm) {
   app.commandLine.appendSwitch('widevine-cdm-path', widevineCdm.dllPath);
   app.commandLine.appendSwitch('widevine-cdm-version', widevineCdm.version);
-  console.log('[widevine] using CDM from', widevineCdm.source, widevineCdm.browserVersion, '— CDM v' + widevineCdm.version);
+  console.log(
+    '[widevine] using CDM from',
+    widevineCdm.source,
+    widevineCdm.browserVersion || '',
+    '— CDM v' + widevineCdm.version
+  );
 } else {
   console.log('[widevine] no compatible CDM found (checked local Chrome/Edge installs) — DRM playback will not work');
 }
