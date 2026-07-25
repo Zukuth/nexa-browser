@@ -1,6 +1,6 @@
 # Launches the NexaBrowserTest AVD and centers its window on the primary
 # screen. The emulator never remembers window position/size across launches
-# (confirmed empirically — its Qt settings only store adb/clipboard prefs,
+# (confirmed empirically - its Qt settings only store adb/clipboard prefs,
 # nothing about geometry), and its default placement can land partly
 # off-screen depending on the host display setup. Centering it here every
 # time is the reliable fix, not a one-off manual reposition.
@@ -35,7 +35,7 @@ $screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
 $left = [int](($screen.Width - $winW) / 2)
 $top = [int](($screen.Height - $winH) / 2)
 
-# The window doesn't exist the instant the process starts — poll briefly.
+# The window doesn't exist the instant the process starts - poll briefly.
 $deadline = (Get-Date).AddSeconds(30)
 $proc = $null
 while ((Get-Date) -lt $deadline) {
@@ -51,5 +51,5 @@ if ($proc) {
     [EmuWindow]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null
     Write-Output "Emulator window centered at ($left, $top), size ${winW}x${winH}."
 } else {
-    Write-Warning "Emulator process started but its window wasn't found within 30s — it may still be booting."
+    Write-Warning "Emulator process started but its window wasn't found within 30s - it may still be booting."
 }

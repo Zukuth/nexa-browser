@@ -31,18 +31,27 @@ class NexaApplication : Application() {
         val processName = currentProcessName()
         Log.d(TAG, "onCreate in process: $processName")
 
-        // Cheap disk read — every process (main + each slot) keeps its own
-        // in-memory copy of whatever list is cached, same reasoning as the
-        // comment on AdBlocker itself.
-        AdBlocker.loadCached(this)
+        // Both of these are pushed to a background thread rather than run
+        // inline here — empirically, doing this synchronously in
+        // Application.onCreate() reproducibly caused a ~15s stall (WorkManager's
+        // first-touch initialization, most likely) that tripped Android's own
+        // "process failed to complete startup" ANR before a single Activity
+        // ever got a chance to draw. Application.onCreate() has to return fast;
+        // neither of these needs to finish before the first Activity shows.
+        Thread {
+            // Every process (main + each slot) keeps its own in-memory copy
+            // of whatever list is cached, same reasoning as the comment on
+            // AdBlocker itself.
+            AdBlocker.loadCached(this)
 
-        // Only the main process should own the periodic refresh job —
-        // scheduling it from every slot process too would be four redundant
-        // registrations of the exact same unique work name (harmless thanks
-        // to KEEP, but pointless).
-        if (processName == packageName) {
-            AdBlockRefreshWorker.schedule(this)
-        }
+            // Only the main process should own the periodic refresh job —
+            // scheduling it from every slot process too would be four
+            // redundant registrations of the exact same unique work name
+            // (harmless thanks to KEEP, but pointless).
+            if (processName == packageName) {
+                AdBlockRefreshWorker.schedule(this)
+            }
+        }.start()
     }
 
     private fun currentProcessName(): String =

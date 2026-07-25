@@ -178,7 +178,9 @@ abstract class WebViewSlotActivity : androidx.appcompat.app.AppCompatActivity() 
                 request: android.webkit.WebResourceRequest
             ): android.webkit.WebResourceResponse? {
                 if (request.isForMainFrame) return null
-                return if (AdBlocker.isBlockedHost(request.url.host)) {
+                val blocked = AdBlocker.isBlockedHost(request.url.host)
+                if (blocked) Log.d(TAG, "adblock: blocked ${request.url.host}")
+                return if (blocked) {
                     android.webkit.WebResourceResponse(
                         "text/plain",
                         "utf-8",
