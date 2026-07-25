@@ -46,10 +46,7 @@
       "shortcutName": "Nexa Browser"
     },
     "linux": {
-      "target": [
-        { "target": "AppImage", "arch": ["x64"] },
-        { "target": "deb", "arch": ["x64"] }
-      ],
+      "target": ["AppImage", "deb"],
       "category": "Network",
       "maintainer": "Nexa Browser",
       "artifactName": "${productName}-${version}-x64.${ext}"
@@ -60,7 +57,8 @@
     "publish": {
       "provider": "github",
       "owner": "Zukuth",
-      "repo": "nexa-browser"
+      "repo": "nexa-browser",
+      "releaseType": "release"
     }
   }
 }
