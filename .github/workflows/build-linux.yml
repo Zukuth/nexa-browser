@@ -6,8 +6,12 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Tag a compilar (ej. v0.1.1)'
+      ref:
+        description: 'Rama o tag desde donde compilar (ej. main)'
+        required: true
+        default: 'main'
+      release_tag:
+        description: 'Release de GitHub donde subir los paquetes (ej. v0.1.1)'
         required: true
         default: 'v0.1.1'
 
@@ -20,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ github.event.inputs.ref || github.ref_name }}
 
       - uses: actions/setup-node@v4
         with:
@@ -28,6 +32,18 @@ jobs:
 
       - run: npm ci
 
-      - run: npx electron-builder --linux --publish always
+      # --publish never: build only, don't let electron-builder touch the
+      # GitHub release itself — it refuses to attach new assets to a release
+      # published more than 2 hours ago (a safeguard against clobbering old
+      # releases). Uploading the files directly with `gh release upload`
+      # sidesteps that guard and works the same whether the release is
+      # brand new or already published.
+      - run: npx electron-builder --linux --publish never
+
+      - name: Upload Linux assets to the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.inputs.release_tag || github.ref_name }}" \
+            build/*.AppImage build/*.deb build/latest-linux.yml \
+            --clobber
