@@ -1,0 +1,46 @@
+name: Build Android
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - '.github/workflows/build-android.yml'
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('android/**/*.gradle*', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
+      - uses: android-actions/setup-android@v3
+
+      # Debug build only — no signing yet. Release signing + Play Store
+      # publish is Fase 5's job (needs a keystore + Play testing track set up
+      # first), not something to bolt on here. This workflow exists purely to
+      # catch compile regressions on every push, same role build-linux.yml
+      # plays for the Linux desktop build.
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexa-browser-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk

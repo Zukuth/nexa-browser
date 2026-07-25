@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- Only needed pre-scoped-storage; DownloadManager writes to Downloads/
+         without it on API 29+. maxSdkVersion keeps it off newer installs. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+
+    <application
+        android:name=".NexaApplication"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="Nexa Browser"
+        android:theme="@style/Theme.NexaBrowser">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          Fase 1 MVP: navegación de una cuenta, sin partición de proceso
+          todavía (eso llega en la Fase 2, cuando esta misma pantalla se
+          aloje dentro de cada proceso-cuenta).
+        -->
+        <activity
+            android:name=".BrowserActivity"
+            android:exported="false"
+            android:label="Nexa Browser"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
+        <!--
+          Fase 0 de-risk: dos activities que comparten toda su lógica (ambas
+          extienden WebViewSlotActivity) pero cada una vive en su propio
+          proceso Android (:wv0 / :wv1). Esto es exactamente el mecanismo de
+          aislamiento de cuentas de la Fase 2, reducido al mínimo para
+          probarlo antes de construir el resto encima.
+        -->
+        <activity
+            android:name=".SlotActivity0"
+            android:process=":wv0"
+            android:exported="false"
+            android:label="Slot wv0" />
+
+        <activity
+            android:name=".SlotActivity1"
+            android:process=":wv1"
+            android:exported="false"
+            android:label="Slot wv1" />
+
+    </application>
+
+</manifest>
