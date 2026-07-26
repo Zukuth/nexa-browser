@@ -259,6 +259,26 @@ function palette(i) {
   return colors[i % colors.length];
 }
 
+// Reference-counted hideViews()/showViews() for the app's modal dialogs
+// (settings, shortcuts, bookmarks, downloads, command palette, space/account
+// editors). Each account's WebContentsView is a native layer that always
+// paints above the shell's own DOM, so hideViews() has to stay in effect for
+// as long as ANY modal is open. Calling showViews() independently from each
+// modal's own close function — which every one of them used to do — broke as
+// soon as two modals opened at once (e.g. "Ver atajos de teclado" from
+// inside Configuración): closing the inner one called showViews()
+// unconditionally, popping the account views back on top of the outer modal
+// that was still open, which then visually blocked every click.
+let openModalCount = 0;
+function pushModal() {
+  openModalCount++;
+  if (openModalCount === 1) window.api.hideViews();
+}
+function popModal() {
+  openModalCount = Math.max(openModalCount - 1, 0);
+  if (openModalCount === 0) window.api.showViews();
+}
+
 function currentSpace() {
   return state.spaces.find((s) => s.id === state.settings.currentSpaceId) || state.spaces[0];
 }
@@ -940,14 +960,14 @@ function openSpaceModal(space) {
   btnDeleteSpace.style.display = space && state.spaces.length > 1 && !isFirstSpace ? 'inline-block' : 'none';
   renderSwatches();
   spaceModal.classList.remove('hidden');
-  window.api.hideViews();
+  pushModal();
   spaceInputName.focus();
 }
 
 function closeSpaceModal() {
   spaceModal.classList.add('hidden');
   editingSpaceId = null;
-  window.api.showViews();
+  popModal();
 }
 
 function renderSwatches() {
@@ -1031,14 +1051,14 @@ function openAccountModal(account) {
   accountModalColor = account.color || SPACE_COLORS[0];
   renderAccountSwatches();
   accountModal.classList.remove('hidden');
-  window.api.hideViews();
+  pushModal();
   accountInputName.focus();
 }
 
 function closeAccountModal() {
   accountModal.classList.add('hidden');
   editingAccountId = null;
-  window.api.showViews();
+  popModal();
 }
 
 function renderAccountSwatches() {
@@ -1246,12 +1266,12 @@ function renderBookmarksList() {
 function openBookmarksModal() {
   renderBookmarksList();
   bookmarksModal.classList.remove('hidden');
-  window.api.hideViews();
+  pushModal();
 }
 
 function closeBookmarksModal() {
   bookmarksModal.classList.add('hidden');
-  window.api.showViews();
+  popModal();
 }
 
 tbBookmarks.addEventListener('click', openBookmarksModal);
@@ -1368,12 +1388,12 @@ function renderDownloadsList() {
 function openDownloadsModal() {
   renderDownloadsList();
   downloadsModal.classList.remove('hidden');
-  window.api.hideViews();
+  pushModal();
 }
 
 function closeDownloadsModal() {
   downloadsModal.classList.add('hidden');
-  window.api.showViews();
+  popModal();
 }
 
 // ---- Command palette (Ctrl+K) ----
@@ -1499,13 +1519,13 @@ function openCommandPalette() {
   cmdkSelectedIndex = 0;
   renderCmdkResults();
   cmdkModal.classList.remove('hidden');
-  window.api.hideViews();
+  pushModal();
   cmdkInput.focus();
 }
 
 function closeCommandPalette() {
   cmdkModal.classList.add('hidden');
-  window.api.showViews();
+  popModal();
 }
 
 cmdkInput.addEventListener('input', () => {
@@ -1565,12 +1585,12 @@ async function openShortcutsModal() {
     shortcutsListEl.appendChild(row);
   });
   shortcutsModal.classList.remove('hidden');
-  window.api.hideViews();
+  pushModal();
 }
 
 function closeShortcutsModal() {
   shortcutsModal.classList.add('hidden');
-  window.api.showViews();
+  popModal();
 }
 
 setShowShortcuts.addEventListener('click', openShortcutsModal);
@@ -1683,6 +1703,11 @@ addressInput.addEventListener('blur', () => setTimeout(hideSuggestions, 100));
 // ---- Settings modal ----
 
 function openSettingsModal() {
+  // Idempotent: the command palette can call this to jump straight to a tab
+  // while Settings is already open, without going through closeSettingsModal()
+  // first — pushModal() must only fire on an actual closed-to-open transition,
+  // or the counter drifts and views never come back.
+  const wasHidden = settingsModal.classList.contains('hidden');
   const s = state.settings;
   setTheme.value = s.theme || 'system';
   setStartWindows.checked = !!s.startWithWindows;
@@ -1710,12 +1735,12 @@ function openSettingsModal() {
   renderPokeIdle();
 
   settingsModal.classList.remove('hidden');
-  window.api.hideViews();
+  if (wasHidden) pushModal();
 }
 
 function closeSettingsModal() {
   settingsModal.classList.add('hidden');
-  window.api.showViews();
+  popModal();
 }
 
 function renderExtensions() {
