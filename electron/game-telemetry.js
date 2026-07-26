@@ -71,9 +71,15 @@ function emptyLive() {
     captureGold: 0,
     shinyCaught: 0,
     shinyLost: 0,
-    ballsOnShiny: 0
+    ballsOnShiny: 0,
+    // Most-recent-first, capped — captures worth showing off (Lendária+ or
+    // shiny), each with enough detail for a real capture-log UI card.
+    notableCaptures: []
   };
 }
+
+const NOTABLE_CAPTURE_CAP = 30;
+const NOTABLE_RARITIES = new Set(['Lendária', 'Mythic', 'Ancient', 'Divine']);
 
 // One of these per account id that's ever matched isGameUrl().
 function newState() {
@@ -175,9 +181,25 @@ function applyFrame(state, msg) {
       if (typeof poke.sellValue === 'number') L.captureGold += poke.sellValue;
       const rarity = poke.rarity || rarityFromQuality(poke.quality);
       if (rarity) L.byRarity[rarity] = (L.byRarity[rarity] || 0) + 1;
+      const isNotable = poke.shiny || NOTABLE_RARITIES.has(rarity);
+      if (isNotable) {
+        L.notableCaptures.unshift({
+          name: poke.name,
+          speciesId: poke.speciesId,
+          level: poke.level,
+          quality: poke.quality,
+          ivTotal: poke.ivTotal,
+          rarity,
+          shiny: !!poke.shiny,
+          sellValue: poke.sellValue,
+          at: Date.now()
+        });
+        if (L.notableCaptures.length > NOTABLE_CAPTURE_CAP) L.notableCaptures.length = NOTABLE_CAPTURE_CAP;
+      }
       if (poke.shiny) {
+        L.shinyCaught += 1;
         state.lastEvent = { type: 'shiny_capture', at: Date.now(), payload: { name: poke.name, rarity } };
-      } else if (rarity === 'Lendária' || rarity === 'Mythic' || rarity === 'Ancient' || rarity === 'Divine') {
+      } else if (NOTABLE_RARITIES.has(rarity)) {
         state.lastEvent = { type: 'rare_capture', at: Date.now(), payload: { name: poke.name, rarity } };
       }
       break;
@@ -318,6 +340,7 @@ function computeRates(state) {
     netGold: Math.round(netGold),
     shinyCaught: L.shinyCaught,
     shinyLost: L.shinyLost,
+    notableCaptures: L.notableCaptures,
     lastEvent: state.lastEvent,
     connected: state.lastFrameTs != null && Date.now() - state.lastFrameTs < HEARTBEAT_STALE_MS
   };

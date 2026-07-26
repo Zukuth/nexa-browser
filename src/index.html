@@ -12,7 +12,11 @@
        style-src allows 'unsafe-inline' for the handful of static, non-user
        layout `style="..."` attributes already in this file (flex/gap only —
        no user data ever lands in one). -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none';" />
+  <!-- img-src also allows raw.githubusercontent.com: the Poke Idle "capturas
+       destacadas" panel loads Pokémon sprites from PokeAPI's public sprite
+       CDN (the game's own creatures.json has no image URL, only an internal
+       looktype id) — no other external origin is allowed. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://raw.githubusercontent.com; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none';" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -416,6 +420,9 @@
             <div id="poke-idle-summary" class="poke-summary-cards"></div>
             <div class="settings-subheading">Por cuenta</div>
             <div id="poke-idle-accounts" class="ext-list"></div>
+
+            <div class="settings-subheading">Capturas destacadas <span class="settings-hint" style="text-transform:none; letter-spacing:normal; font-weight:400;">— Lendária o más, y shiny</span></div>
+            <div id="poke-idle-notable" class="poke-notable-list"></div>
 
             <div class="settings-subheading">Alertas</div>
             <div class="settings-row">

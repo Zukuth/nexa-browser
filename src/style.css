@@ -1554,6 +1554,86 @@ html, body {
   flex-wrap: wrap;
 }
 
+.poke-notable-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.poke-notable-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--rarity-color, var(--accent));
+  border-radius: 10px;
+  box-shadow: 0 0 14px -8px var(--rarity-color, transparent);
+  animation: pokeNotableIn 0.25s ease-out;
+}
+
+.poke-notable-sprite {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 0 5px var(--rarity-color, transparent));
+}
+
+.poke-notable-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.poke-notable-name {
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.poke-notable-meta {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+.poke-notable-rarity {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: #16151c;
+  background: var(--rarity-color, var(--accent));
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.poke-notable-time {
+  font-size: 10px;
+  color: var(--muted);
+  flex-shrink: 0;
+  white-space: nowrap;
+  text-align: right;
+  min-width: 48px;
+}
+
+@keyframes pokeNotableIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 .ext-item {
   display: flex;
   gap: 10px;

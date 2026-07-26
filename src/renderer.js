@@ -202,6 +202,7 @@ const pwAddSave = document.getElementById('pw-add-save');
 
 const pokeIdleSummaryEl = document.getElementById('poke-idle-summary');
 const pokeIdleAccountsEl = document.getElementById('poke-idle-accounts');
+const pokeIdleNotableEl = document.getElementById('poke-idle-notable');
 const pokeAlertEnabled = document.getElementById('poke-alert-enabled');
 const pokeAlertShiny = document.getElementById('poke-alert-shiny');
 const pokeAlertRare = document.getElementById('poke-alert-rare');
@@ -1759,6 +1760,7 @@ function openSettingsModal() {
   renderPasswords();
   renderNetworkTab();
   renderPokeIdle();
+  renderPokeIdleNotable();
   loadPokeIdleAlertFields();
 
   settingsModal.classList.remove('hidden');
@@ -1903,6 +1905,84 @@ function savePokeIdleAlertFields() {
   el.addEventListener('change', savePokeIdleAlertFields);
 });
 pokeAlertBallsThreshold.addEventListener('change', savePokeIdleAlertFields);
+
+const POKE_RARITY_COLORS = {
+  'Lendária': '#ffb020',
+  'Mythic': '#b076ff',
+  'Ancient': '#34d3c4',
+  'Divine': '#ff5fa8'
+};
+
+// Public sprite CDN keyed by National Pokédex number — the game's own
+// creatures.json (checked live) has no image URL, only a numeric `looktype`
+// that isn't the dex number; `speciesId` in poke-delta frames IS the real
+// dex number (confirmed: 18 = Pidgeot), which this CDN indexes by directly.
+function pokeSpriteUrl(speciesId) {
+  return speciesId ? `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${speciesId}.png` : '';
+}
+
+function formatRelativeTime(ts) {
+  const diff = Math.max(Date.now() - ts, 0);
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `hace ${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `hace ${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `hace ${h}h`;
+  return `hace ${Math.floor(h / 24)}d`;
+}
+
+function renderPokeIdleNotable() {
+  const el = pokeIdleNotableEl;
+  if (!el) return;
+  const tracked = state.accounts.filter((a) => !a.closed && gameStats[a.id]);
+  const all = [];
+  tracked.forEach((account, i) => {
+    const gs = gameStats[account.id];
+    (gs.notableCaptures || []).forEach((c) => all.push({ ...c, accountName: displayName(account, i) }));
+  });
+  all.sort((a, b) => b.at - a.at);
+  const top = all.slice(0, 20);
+
+  if (top.length === 0) {
+    el.innerHTML = '<div class="settings-hint">Todavía no hay capturas Lendária o superiores (ni shinies) en esta sesión.</div>';
+    return;
+  }
+
+  el.innerHTML = '';
+  const showAccountName = tracked.length > 1;
+  top.forEach((c) => {
+    const card = document.createElement('div');
+    card.className = 'poke-notable-card';
+    const color = POKE_RARITY_COLORS[c.rarity] || '#ffd84d';
+    card.style.setProperty('--rarity-color', color);
+
+    const img = document.createElement('img');
+    img.className = 'poke-notable-sprite';
+    img.src = pokeSpriteUrl(c.speciesId);
+    img.alt = c.name || '';
+    img.onerror = () => { img.style.visibility = 'hidden'; };
+
+    const info = document.createElement('div');
+    info.className = 'poke-notable-info';
+    const quality = typeof c.quality === 'number' ? c.quality.toFixed(3) : '?';
+    info.innerHTML = `
+      <div class="poke-notable-name">${c.shiny ? '✨' : ''} ${escapeHtmlClient(c.name || '?')} <span style="color:var(--muted); font-weight:400;">Lv.${c.level ?? '?'}</span></div>
+      <div class="poke-notable-meta">${showAccountName ? escapeHtmlClient(c.accountName) + ' · ' : ''}Quality ${quality} · IV ${c.ivTotal ?? '?'}/186</div>
+    `;
+
+    const rarity = document.createElement('div');
+    rarity.className = 'poke-notable-rarity';
+    rarity.textContent = c.rarity || (c.shiny ? 'Shiny' : '');
+
+    const time = document.createElement('div');
+    time.className = 'poke-notable-time';
+    time.textContent = formatRelativeTime(c.at);
+
+    card.append(img, info, rarity, time);
+    el.appendChild(card);
+  });
+}
 
 function renderPokeIdle() {
   if (!pokeIdleSummaryEl || !pokeIdleAccountsEl) return;
@@ -2337,7 +2417,10 @@ setInterval(async () => {
 
 setInterval(async () => {
   gameStats = await window.api.getGameStats();
-  if (!settingsModal.classList.contains('hidden')) renderPokeIdle();
+  if (!settingsModal.classList.contains('hidden')) {
+    renderPokeIdle();
+    renderPokeIdleNotable();
+  }
 }, 5000);
 
 setInterval(render, 1000);
