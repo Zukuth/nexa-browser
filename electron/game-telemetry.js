@@ -12,12 +12,17 @@
 // puede perderse la conexión si el juego ya conectó antes de que el script
 // corra.
 //
-// Limitación honesta de esta primera versión: `goldPerHour` solo cuenta el
-// oro de venta de capturas (`sellValue` viene directo en el frame poke-delta),
-// no el oro de vender el loot de las kills — eso requeriría el catálogo de
-// precios de items del propio juego (que el launcher de referencia trae
-// aparte vía polling a su API), no algo que venga en los frames de WebSocket
-// en sí. Se puede sumar en una fase posterior sin romper nada de esto.
+// `goldPerHour` = oro de capturas (sellValue, del frame poke-delta) + oro de
+// vender el loot de las kills - costo de las bolas gastadas — el mismo
+// "Balance (Loot + Captures - Supply)" que ya muestra el propio "Hunt
+// Analyzer" del juego. Los precios de venta de items NO vienen en los
+// frames de WebSocket; se confirmó que el juego los sirve como JSON
+// estático en /game/items.json (mismo origen, sin auth) — verificado
+// contra el propio Hunt Analyzer real (Bird Beak: npcPrice 30 × 212 =
+// $6.360, exacto). El costo de bolas usa el catálogo de precios que sí
+// viaja por WS en el frame `balls` (priceGold por ballId), cruzado con
+// cuántas se gastaron por catch-result — también verificado exacto
+// (575 Ultra Ball × $130 = $74.750).
 
 const GAME_HOSTNAME = 'poke.idleworld.online';
 const HEARTBEAT_STALE_MS = 60_000;
@@ -85,6 +90,33 @@ function getOrCreateState(accountId) {
     stateByAccount.set(accountId, s);
   }
   return s;
+}
+
+// Fetched once (shared across every account — it's the same game server for
+// all of them) and cached for the app's lifetime: item prices don't change
+// mid-session. If the fetch ever fails, loot just contributes 0 to
+// goldPerHour instead of throwing — same honest-undercount policy as the
+// xpGained fallback above.
+let itemPriceCatalog = null;
+let itemPriceCatalogPromise = null;
+function ensureItemPriceCatalog() {
+  if (itemPriceCatalog || itemPriceCatalogPromise) return itemPriceCatalogPromise;
+  itemPriceCatalogPromise = fetch(`https://${GAME_HOSTNAME}/game/items.json`)
+    .then((res) => res.json())
+    .then((data) => {
+      const map = new Map();
+      for (const item of (data && data.items) || []) {
+        if (item && item.id != null && typeof item.npcPrice === 'number') {
+          map.set(item.id, item.npcPrice);
+        }
+      }
+      itemPriceCatalog = map;
+    })
+    .catch((err) => {
+      console.error('[game-telemetry] no se pudo cargar el catálogo de precios de items', err);
+      itemPriceCatalogPromise = null; // allow a retry on the next attachCapture
+    });
+  return itemPriceCatalogPromise;
 }
 
 // Mirrors the documented frame-type behavior of game-parse.js — not its code.
@@ -207,10 +239,28 @@ function applyFrame(state, msg) {
 function computeRates(state) {
   const hrs = Math.max((Date.now() - state.startTs) / 3_600_000, 1 / 3600);
   const L = state.live;
+
+  let lootGold = 0;
+  if (itemPriceCatalog) {
+    for (const [itemId, qty] of Object.entries(L.loot)) {
+      lootGold += (itemPriceCatalog.get(Number(itemId)) || 0) * qty;
+    }
+  }
+
+  let supplyCost = 0;
+  if (state.ballCatalog) {
+    const priceByBallId = new Map(state.ballCatalog.map((b) => [b.id, b.priceGold]));
+    for (const [ballId, qty] of Object.entries(L.ballsUsed)) {
+      supplyCost += (priceByBallId.get(Number(ballId)) || 0) * qty;
+    }
+  }
+
+  const netGold = L.captureGold + lootGold - supplyCost;
+
   return {
     killsPerHour: Math.round(L.kills / hrs),
     xpPerHour: Math.round(L.xp / hrs),
-    goldPerHour: Math.round(L.captureGold / hrs),
+    goldPerHour: Math.round(netGold / hrs),
     capturesPerHour: Math.round(L.captures / hrs),
     attempts: L.attempts,
     captures: L.captures,
@@ -220,6 +270,9 @@ function computeRates(state) {
     byRarity: L.byRarity,
     ballsUsed: L.ballsUsed,
     captureGold: L.captureGold,
+    lootGold: Math.round(lootGold),
+    supplyCost: Math.round(supplyCost),
+    netGold: Math.round(netGold),
     shinyCaught: L.shinyCaught,
     shinyLost: L.shinyLost,
     lastEvent: state.lastEvent,
@@ -248,6 +301,7 @@ function attachCapture(view, accountId) {
 
   const state = getOrCreateState(accountId);
   attachedAccounts.add(accountId);
+  ensureItemPriceCatalog();
 
   wc.debugger.on('message', (_event, method, params) => {
     if (method !== 'Network.webSocketFrameReceived') return;
