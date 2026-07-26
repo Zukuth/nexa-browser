@@ -630,6 +630,7 @@ const SHORTCUTS = [
   { combo: 'Ctrl + 0', label: 'Restablecer zoom' },
   { combo: 'F11', label: 'Pantalla completa' },
   { combo: 'Ctrl + ,', label: 'Configuración' },
+  { combo: 'Ctrl + K', label: 'Paleta de comandos' },
   { combo: 'Ctrl + W', label: 'Cerrar cuenta activa' },
   { combo: 'Ctrl + Shift + T', label: 'Reabrir última cuenta cerrada' },
   { combo: 'Ctrl + B', label: 'Colapsar/expandir barra lateral' },

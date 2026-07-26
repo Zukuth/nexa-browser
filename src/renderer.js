@@ -55,6 +55,10 @@ const downloadsListEl = document.getElementById('downloads-list');
 const btnCloseDownloads = document.getElementById('btn-close-downloads');
 const dlOpenFolder = document.getElementById('dl-open-folder');
 const dlClear = document.getElementById('dl-clear');
+
+const cmdkModal = document.getElementById('cmdk-modal');
+const cmdkInput = document.getElementById('cmdk-input');
+const cmdkListEl = document.getElementById('cmdk-list');
 const btnLayoutMenu = document.getElementById('btn-layout-menu');
 const layoutMenu = document.getElementById('layout-menu');
 const layoutOptions = document.querySelectorAll('.layout-option');
@@ -1372,6 +1376,166 @@ function closeDownloadsModal() {
   window.api.showViews();
 }
 
+// ---- Command palette (Ctrl+K) ----
+
+let cmdkResults = [];
+let cmdkSelectedIndex = 0;
+
+function getCommandActions() {
+  const actions = [];
+
+  currentSpaceAccounts().forEach((account, i) => {
+    actions.push({
+      icon: account.closed ? '⚪' : '🟢',
+      label: displayName(account, i),
+      hint: 'Cambiar de cuenta',
+      keywords: `cuenta ${displayName(account, i)}`,
+      run: () => window.api.activateAccount(account.id)
+    });
+  });
+
+  state.spaces.forEach((space) => {
+    actions.push({
+      icon: '🗂️',
+      label: space.name,
+      hint: 'Cambiar de espacio',
+      keywords: `espacio ${space.name}`,
+      run: () => window.api.activateSpace(space.id)
+    });
+  });
+
+  [
+    ['general', 'General'], ['navegacion', 'Navegación'], ['descargas', 'Descargas'],
+    ['extensiones', 'Extensiones'], ['contrasenas', 'Contraseñas'],
+    ['actualizaciones', 'Actualizaciones'], ['poke-idle', 'Poke Idle'], ['acerca', 'Acerca de']
+  ].forEach(([tab, label]) => {
+    actions.push({
+      icon: '⚙️',
+      label: `Configuración: ${label}`,
+      keywords: `configuracion settings ${label}`,
+      run: () => { openSettingsModal(); activateSettingsTab(tab); }
+    });
+  });
+
+  const adBlockOn = state.settings.adBlockEnabled !== false;
+  actions.push(
+    {
+      icon: '➕', label: 'Nueva cuenta', keywords: 'nueva cuenta agregar add account',
+      run: () => window.api.quickAddAccount()
+    },
+    {
+      icon: adBlockOn ? '🛡️' : '🚫',
+      label: adBlockOn ? 'Desactivar bloqueador de anuncios' : 'Activar bloqueador de anuncios',
+      keywords: 'adblock bloqueador anuncios rastreadores',
+      run: () => window.api.updateSettings({ adBlockEnabled: !adBlockOn })
+    },
+    {
+      icon: '⬇️', label: 'Abrir Descargas', keywords: 'descargas downloads',
+      run: () => openDownloadsModal()
+    },
+    {
+      icon: '⭐', label: 'Abrir Favoritos', keywords: 'favoritos bookmarks marcadores',
+      run: () => openBookmarksModal()
+    }
+  );
+
+  return actions;
+}
+
+function filterCommandActions(query) {
+  const q = query.trim().toLowerCase();
+  const all = getCommandActions();
+  const filtered = q
+    ? all.filter((a) => a.label.toLowerCase().includes(q) || (a.keywords || '').toLowerCase().includes(q))
+    : all;
+  if (q) {
+    filtered.push({
+      icon: '🔗',
+      label: `Ir a: ${query.trim()}`,
+      hint: 'Navegar en la cuenta activa',
+      run: () => {
+        const active = activeAccount();
+        if (active) window.api.navigateAccount(active.id, query.trim());
+      }
+    });
+  }
+  return filtered;
+}
+
+function renderCmdkResults() {
+  cmdkListEl.innerHTML = '';
+  if (cmdkResults.length === 0) {
+    cmdkListEl.innerHTML = '<div class="cmdk-empty">Sin resultados</div>';
+    return;
+  }
+  cmdkResults.forEach((action, i) => {
+    const item = document.createElement('div');
+    item.className = 'cmdk-item' + (i === cmdkSelectedIndex ? ' selected' : '');
+    item.innerHTML =
+      `<span class="cmdk-item-icon">${action.icon || ''}</span>` +
+      `<span class="cmdk-item-label">${escapeHtmlClient(action.label)}</span>` +
+      (action.hint ? `<span class="cmdk-item-hint">${escapeHtmlClient(action.hint)}</span>` : '');
+    item.onmousemove = () => {
+      if (cmdkSelectedIndex !== i) {
+        cmdkSelectedIndex = i;
+        renderCmdkResults();
+      }
+    };
+    item.onclick = () => executeCmdkSelection();
+    cmdkListEl.appendChild(item);
+  });
+}
+
+function executeCmdkSelection() {
+  const action = cmdkResults[cmdkSelectedIndex];
+  if (!action) return;
+  closeCommandPalette();
+  action.run();
+}
+
+function openCommandPalette() {
+  cmdkInput.value = '';
+  cmdkResults = filterCommandActions('');
+  cmdkSelectedIndex = 0;
+  renderCmdkResults();
+  cmdkModal.classList.remove('hidden');
+  window.api.hideViews();
+  cmdkInput.focus();
+}
+
+function closeCommandPalette() {
+  cmdkModal.classList.add('hidden');
+  window.api.showViews();
+}
+
+cmdkInput.addEventListener('input', () => {
+  cmdkResults = filterCommandActions(cmdkInput.value);
+  cmdkSelectedIndex = 0;
+  renderCmdkResults();
+});
+
+cmdkInput.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    cmdkSelectedIndex = Math.min(cmdkSelectedIndex + 1, cmdkResults.length - 1);
+    renderCmdkResults();
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    cmdkSelectedIndex = Math.max(cmdkSelectedIndex - 1, 0);
+    renderCmdkResults();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    executeCmdkSelection();
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    closeCommandPalette();
+  }
+});
+
+cmdkModal.addEventListener('mousedown', (e) => {
+  if (e.target === cmdkModal) closeCommandPalette();
+});
+
 // ---- Shortcuts modal ----
 
 async function openShortcutsModal() {
@@ -1725,13 +1889,13 @@ extOpenStore.addEventListener('click', () => {
 tbSettings.addEventListener('click', openSettingsModal);
 btnCloseSettings.addEventListener('click', closeSettingsModal);
 
+function activateSettingsTab(tab) {
+  settingsNavItems.forEach((n) => n.classList.toggle('active', n.dataset.tab === tab));
+  settingsPanes.forEach((p) => p.classList.toggle('active', p.dataset.pane === tab));
+}
+
 settingsNavItems.forEach((navItem) => {
-  navItem.addEventListener('click', () => {
-    settingsNavItems.forEach((n) => n.classList.remove('active'));
-    settingsPanes.forEach((p) => p.classList.remove('active'));
-    navItem.classList.add('active');
-    document.querySelector(`.settings-pane[data-pane="${navItem.dataset.tab}"]`).classList.add('active');
-  });
+  navItem.addEventListener('click', () => activateSettingsTab(navItem.dataset.tab));
 });
 
 setTheme.addEventListener('change', () => {
@@ -1976,6 +2140,12 @@ document.addEventListener('keydown', (e) => {
   if (ctrl && !shift && !alt && key === ',') {
     e.preventDefault();
     if (settingsModal.classList.contains('hidden')) openSettingsModal();
+    return;
+  }
+  if (ctrl && !shift && !alt && key === 'k') {
+    e.preventDefault();
+    if (cmdkModal.classList.contains('hidden')) openCommandPalette();
+    else closeCommandPalette();
     return;
   }
   if (ctrl && !shift && !alt && key === 'b') {
