@@ -112,20 +112,30 @@ function applyFrame(state, msg) {
       break;
     }
     case 'poke-delta': {
-      const id = msg.id ?? msg.pokeId;
+      // Confirmed against a real frame: the caught poke is nested under
+      // `poke`, not spread on the message itself —
+      // {"type":"poke-delta","poke":{"id":...,"sellValue":...,"quality":...}}.
+      // Represents a new entry actually added to the player's collection —
+      // may read lower than the game's own "Captured" counter (which
+      // appears to count every successful catch-result, including ones
+      // auto-processed without a full box entry), but every count here is a
+      // real, fully-detailed capture.
+      const poke = msg.poke;
+      if (!poke) break;
+      const id = poke.id;
       const alreadyKnown = id != null && state._knownIds && state._knownIds.has(id);
       if (!state._knownIds) state._knownIds = new Set();
       if (id != null) state._knownIds.add(id);
       if (alreadyKnown) break; // update to an existing poke, not a new capture
 
       L.captures += 1;
-      if (typeof msg.sellValue === 'number') L.captureGold += msg.sellValue;
-      const rarity = msg.rarity || rarityFromQuality(msg.quality);
+      if (typeof poke.sellValue === 'number') L.captureGold += poke.sellValue;
+      const rarity = poke.rarity || rarityFromQuality(poke.quality);
       if (rarity) L.byRarity[rarity] = (L.byRarity[rarity] || 0) + 1;
-      if (msg.shiny) {
-        state.lastEvent = { type: 'shiny_capture', at: Date.now(), payload: { name: msg.name, rarity } };
+      if (poke.shiny) {
+        state.lastEvent = { type: 'shiny_capture', at: Date.now(), payload: { name: poke.name, rarity } };
       } else if (rarity === 'Lendária' || rarity === 'Mythic' || rarity === 'Ancient' || rarity === 'Divine') {
-        state.lastEvent = { type: 'rare_capture', at: Date.now(), payload: { name: msg.name, rarity } };
+        state.lastEvent = { type: 'rare_capture', at: Date.now(), payload: { name: poke.name, rarity } };
       }
       break;
     }
@@ -159,24 +169,28 @@ function applyFrame(state, msg) {
       break;
     }
     case 'pokes': {
-      if (Array.isArray(msg.team)) {
+      // Confirmed against a real frame: the array is under `list` (the full
+      // collection, each entry flagged `team:true/false`), not `team`.
+      if (Array.isArray(msg.list)) {
+        const activeTeam = msg.list.filter((p) => p.team);
         const wasAlive = state.team.some((p) => p.hp > 0);
-        const leader = msg.team[0];
+        const leader = activeTeam[0];
         if (wasAlive && leader && leader.hp <= 0) {
           state.lastEvent = { type: 'died', at: Date.now(), payload: { name: leader.name } };
         }
-        state.team = msg.team;
+        state.team = activeTeam;
+        state.collectionSize = msg.list.length;
       }
       break;
     }
     case 'balls': {
-      state.balls = msg.balls || msg;
-      const total = sumNumericValues(state.balls);
-      if (total != null && total <= 0) {
-        state.lastEvent = { type: 'balls_out', at: Date.now() };
-      } else if (total != null && total <= 20) {
-        state.lastEvent = { type: 'balls_low', at: Date.now(), payload: { total } };
-      }
+      // Confirmed against a real frame: this is the static ball catalog
+      // ({id,name,catchRate,priceGold,...}), not the player's current ball
+      // counts — real counts come from the `inventory` frame instead
+      // (`{itemId,quantity}`, same itemId space as loot). Kept for a future
+      // phase (ball buy-price lookups); no low/out alert here since this
+      // frame was never player-state to begin with.
+      if (Array.isArray(msg.catalog)) state.ballCatalog = msg.catalog;
       break;
     }
     case 'session-replaced': {
@@ -188,19 +202,6 @@ function applyFrame(state, msg) {
       // anything else — no counters depend on these for Fase A.
       break;
   }
-}
-
-function sumNumericValues(obj) {
-  if (!obj || typeof obj !== 'object') return null;
-  let total = 0;
-  let any = false;
-  for (const v of Object.values(obj)) {
-    if (typeof v === 'number') {
-      total += v;
-      any = true;
-    }
-  }
-  return any ? total : null;
 }
 
 function computeRates(state) {
@@ -305,33 +306,12 @@ function startHeartbeat() {
   }, HEARTBEAT_CHECK_MS);
 }
 
-// TEMPORARY — Fase A manual verification aid. Logs a compact one-line
-// summary per tracked account to the main process console (visible in the
-// terminal that ran `npm start`), so the numbers can be sanity-checked
-// against the game's own analyzer panel without needing DevTools access on
-// an account WebContentsView (which the app's own context menu doesn't
-// expose an "Inspect" entry for). Remove once Fase B's real UI panel ships.
-function startDebugLogger() {
-  setInterval(() => {
-    if (stateByAccount.size === 0) return;
-    for (const [accountId, state] of stateByAccount.entries()) {
-      const r = computeRates(state);
-      console.log(
-        `[game-telemetry] ${accountId.slice(0, 8)} — kills/h=${r.killsPerHour} xp/h=${r.xpPerHour} ` +
-        `gold/h=${r.goldPerHour} captures=${r.captures} attempts=${r.attempts} ` +
-        `connected=${r.connected} lastEvent=${r.lastEvent ? r.lastEvent.type : 'none'}`
-      );
-    }
-  }, 10_000);
-}
-
 module.exports = {
   isGameUrl,
   attachCapture,
   getStats,
   getAllStats,
   startHeartbeat,
-  startDebugLogger,
   // exported for unit testing
   rarityFromQuality,
   applyFrame,
