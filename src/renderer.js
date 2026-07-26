@@ -154,6 +154,7 @@ const accountInputUrl = document.getElementById('account-input-url');
 const accountInputProxy = document.getElementById('account-input-proxy');
 const accountInputProxyUser = document.getElementById('account-input-proxy-user');
 const accountInputProxyPass = document.getElementById('account-input-proxy-pass');
+const accountInputEco = document.getElementById('account-input-eco');
 const btnSaveAccount = document.getElementById('btn-save-account');
 const btnCancelAccount = document.getElementById('btn-cancel-account');
 
@@ -201,6 +202,7 @@ const pwAddSave = document.getElementById('pw-add-save');
 
 const pokeIdleSummaryEl = document.getElementById('poke-idle-summary');
 const pokeIdleAccountsEl = document.getElementById('poke-idle-accounts');
+const networkListEl = document.getElementById('network-list');
 
 const SPACE_COLORS = ['#4f8cff', '#ff6b6b', '#51cf66', '#fcc419', '#cc5de8', '#ff922b', '#f06595', '#22b8cf'];
 const SPACE_ICONS = ['grid', 'gamepad', 'swords', 'shield', 'flame', 'leaf', 'droplet', 'bolt', 'star', 'crown', 'ghost', 'rocket'];
@@ -1048,6 +1050,7 @@ function openAccountModal(account) {
   accountInputProxy.value = account.proxy?.server || '';
   accountInputProxyUser.value = account.proxy?.username || '';
   accountInputProxyPass.value = account.proxy?.password || '';
+  accountInputEco.checked = !!account.ecoMode;
   accountModalColor = account.color || SPACE_COLORS[0];
   renderAccountSwatches();
   accountModal.classList.remove('hidden');
@@ -1084,7 +1087,8 @@ btnSaveAccount.addEventListener('click', async () => {
     url: accountInputUrl.value.trim(),
     proxy: proxyServer
       ? { server: proxyServer, username: accountInputProxyUser.value.trim(), password: accountInputProxyPass.value }
-      : null
+      : null,
+    ecoMode: accountInputEco.checked
   });
   closeAccountModal();
 });
@@ -1351,9 +1355,10 @@ function renderDownloadsList() {
       d.state === 'progressing'
         ? `${formatBytes(d.receivedBytes)} / ${formatBytes(d.totalBytes) || '?'}`
         : formatBytes(d.totalBytes || d.receivedBytes);
+    const stateLabel = d.state === 'progressing' && d.paused ? 'Pausada' : (DOWNLOAD_STATE_LABELS[d.state] || d.state);
     info.innerHTML = `
       <div class="ext-name">${escapeHtmlClient(d.filename)}</div>
-      <div class="ext-desc">${DOWNLOAD_STATE_LABELS[d.state] || d.state} · ${sizeText}</div>
+      <div class="ext-desc">${stateLabel} · ${sizeText}</div>
       <div class="ext-id">${escapeHtmlClient(d.path || '')}</div>
     `;
 
@@ -1372,6 +1377,20 @@ function renderDownloadsList() {
       folderBtn.onclick = () => window.api.showDownloadInFolder(d.id);
 
       actions.append(openBtn, folderBtn);
+    }
+
+    if (d.state === 'progressing') {
+      const toggleBtn = document.createElement('button');
+      toggleBtn.className = 'ext-remove';
+      toggleBtn.textContent = d.paused ? 'Reanudar' : 'Pausar';
+      toggleBtn.onclick = () => (d.paused ? window.api.resumeDownload(d.id) : window.api.pauseDownload(d.id));
+
+      const cancelBtn = document.createElement('button');
+      cancelBtn.className = 'ext-remove';
+      cancelBtn.textContent = 'Cancelar';
+      cancelBtn.onclick = () => window.api.cancelDownload(d.id);
+
+      actions.append(toggleBtn, cancelBtn);
     }
 
     const removeBtn = document.createElement('button');
@@ -1426,7 +1445,7 @@ function getCommandActions() {
 
   [
     ['general', 'General'], ['navegacion', 'Navegación'], ['descargas', 'Descargas'],
-    ['extensiones', 'Extensiones'], ['contrasenas', 'Contraseñas'],
+    ['extensiones', 'Extensiones'], ['contrasenas', 'Contraseñas'], ['red', 'Red'],
     ['actualizaciones', 'Actualizaciones'], ['poke-idle', 'Poke Idle'], ['acerca', 'Acerca de']
   ].forEach(([tab, label]) => {
     actions.push({
@@ -1732,6 +1751,7 @@ function openSettingsModal() {
   renderExtensions();
   renderPlugins();
   renderPasswords();
+  renderNetworkTab();
   renderPokeIdle();
 
   settingsModal.classList.remove('hidden');
@@ -1823,6 +1843,29 @@ async function renderPlugins() {
 
     item.append(icon, info);
     pluginListEl.appendChild(item);
+  });
+}
+
+function renderNetworkTab() {
+  if (!networkListEl) return;
+  networkListEl.innerHTML = '';
+  if (state.accounts.length === 0) {
+    networkListEl.innerHTML = '<div class="settings-hint">Todavía no creaste ninguna cuenta.</div>';
+    return;
+  }
+  state.accounts.forEach((account, i) => {
+    const item = document.createElement('div');
+    item.className = 'ext-item';
+    const proxyText = account.proxy?.server
+      ? `${account.proxy.server}${account.proxy.username ? ` (usuario: ${account.proxy.username})` : ''}`
+      : 'Sin proxy — usa la conexión directa';
+    item.innerHTML = `
+      <div class="ext-info">
+        <div class="ext-name">${escapeHtmlClient(displayName(account, i))}</div>
+        <div class="ext-desc">${escapeHtmlClient(proxyText)}</div>
+      </div>
+    `;
+    networkListEl.appendChild(item);
   });
 }
 

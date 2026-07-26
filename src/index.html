@@ -203,6 +203,14 @@
         <input id="account-input-proxy-pass" type="password" placeholder="Contraseña" style="flex:1;" />
       </div>
 
+      <div class="settings-row" style="padding:0; margin-top:8px;">
+        <div>
+          <div>Modo Eco</div>
+          <div class="settings-hint">Reduce la frecuencia de animación de esta cuenta para ahorrar CPU. No afecta el progreso en segundo plano.</div>
+        </div>
+        <label class="switch"><input type="checkbox" id="account-input-eco" /><span class="slider"></span></label>
+      </div>
+
       <div class="modal-actions">
         <div></div>
         <div class="modal-actions-right">
@@ -250,6 +258,7 @@
           <div class="settings-nav-item" data-tab="descargas">Descargas</div>
           <div class="settings-nav-item" data-tab="extensiones">Extensiones</div>
           <div class="settings-nav-item" data-tab="contrasenas">Contraseñas</div>
+          <div class="settings-nav-item" data-tab="red">Red</div>
           <div class="settings-nav-item" data-tab="actualizaciones">Actualizaciones</div>
           <div class="settings-nav-item" data-tab="poke-idle">Poke Idle</div>
           <div class="settings-nav-item" data-tab="acerca">Acerca de</div>
@@ -379,6 +388,13 @@
             </div>
             <div id="pw-error" class="ext-error hidden"></div>
             <div id="pw-list" class="ext-list"></div>
+          </div>
+
+          <div class="settings-pane" data-pane="red">
+            <p class="settings-hint">
+              Proxy configurado por cuenta — para cambiarlo, abrí "Editar cuenta" desde el menú de cada una.
+            </p>
+            <div id="network-list" class="ext-list"></div>
           </div>
 
           <div class="settings-pane" data-pane="actualizaciones">

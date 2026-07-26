@@ -415,6 +415,13 @@ function displayName(account) {
   return `Pestaña ${position + 1}`;
 }
 
+// Live DownloadItem handles, keyed by the same id as its `data.downloads`
+// record — the item only exists as a closure variable inside 'will-download'
+// otherwise, so pause/resume/cancel from the renderer has nothing to call
+// without this. Cleared once a download finishes (success, cancel, or
+// interruption); pause/resume/cancel only make sense while it's live.
+const downloadItems = new Map();
+
 function handleDownloads(ses) {
   ses.on('will-download', (event, item) => {
     let savePath = null;
@@ -439,10 +446,12 @@ function handleDownloads(ses) {
       totalBytes: item.getTotalBytes(),
       receivedBytes: 0,
       state: 'progressing',
+      paused: false,
       startedAt: Date.now()
     };
     data.downloads.unshift(record);
     if (data.downloads.length > 200) data.downloads.length = 200;
+    downloadItems.set(record.id, item);
     persist();
     broadcastState();
 
@@ -450,6 +459,7 @@ function handleDownloads(ses) {
     item.on('updated', (_e, state) => {
       record.receivedBytes = item.getReceivedBytes();
       record.state = state;
+      record.paused = item.isPaused();
       const now = Date.now();
       if (now - lastBroadcast > 400) {
         lastBroadcast = now;
@@ -459,8 +469,10 @@ function handleDownloads(ses) {
 
     item.on('done', (_e, state) => {
       record.state = state;
+      record.paused = false;
       record.path = item.getSavePath() || record.path;
       record.receivedBytes = item.getReceivedBytes();
+      downloadItems.delete(record.id);
       persist();
       broadcastState();
     });
@@ -941,6 +953,7 @@ function createViewForAccount(account) {
   // only ever changes via the user picking a new one or closing the tab.
   view.webContents.on('did-finish-load', () => {
     view.webContents.setZoomFactor(account.zoom || data.settings.defaultZoom || 1);
+    if (account.ecoMode) enableEcoMode(view.webContents);
     injectGameOverlayButtons(view.webContents);
     // Covers an account that started elsewhere and only just navigated to
     // the game — attachCapture() is idempotent (checks debugger.isAttached())
@@ -1010,6 +1023,44 @@ const GENGAR_ICON_B64 = (() => {
     return '';
   }
 })();
+
+// "Modo Eco" — opt-in per account (off by default, never forced), throttles
+// window.requestAnimationFrame to a fixed low fps by rerouting it through
+// setTimeout. Deliberately leaves setInterval/setTimeout/WebSocket/fetch
+// completely untouched — an idle-farming account with Modo Eco off must keep
+// making real progress in the background, same rule the Poke Idle telemetry
+// feature already follows. Idempotent (checks window.__nexaEco) so it's safe
+// to call again on every full page load.
+const ECO_MODE_FPS = 15;
+function enableEcoMode(wc) {
+  wc.executeJavaScript(
+    `(function() {
+      if (window.__nexaEco) return;
+      const nativeRAF = window.requestAnimationFrame.bind(window);
+      const nativeCAF = window.cancelAnimationFrame.bind(window);
+      const frameInterval = 1000 / ${ECO_MODE_FPS};
+      let last = 0;
+      window.requestAnimationFrame = function(cb) {
+        const now = performance.now();
+        const wait = Math.max(0, frameInterval - (now - last));
+        return setTimeout(function() { last = performance.now(); cb(last); }, wait);
+      };
+      window.cancelAnimationFrame = function(id) { clearTimeout(id); };
+      window.__nexaEco = { nativeRAF: nativeRAF, nativeCAF: nativeCAF };
+    })();`
+  ).catch(() => {});
+}
+
+function disableEcoMode(wc) {
+  wc.executeJavaScript(
+    `(function() {
+      if (!window.__nexaEco) return;
+      window.requestAnimationFrame = window.__nexaEco.nativeRAF;
+      window.cancelAnimationFrame = window.__nexaEco.nativeCAF;
+      delete window.__nexaEco;
+    })();`
+  ).catch(() => {});
+}
 
 // Site-specific enhancement: on poke.idleworld.online's /play page only, add two
 // floating buttons top-right — a Pokéball that manually collapses/expands the
@@ -1593,7 +1644,7 @@ ipcMain.on('accounts:contextmenu', (_e, payload) => {
   menu.popup({ window: mainWindow });
 });
 
-ipcMain.handle('accounts:update', (_e, { id, name, color, url, proxy }) => {
+ipcMain.handle('accounts:update', (_e, { id, name, color, url, proxy, ecoMode }) => {
   const account = getAccount(id);
   if (!account) return data;
   if (name !== undefined) account.name = name || null;
@@ -1608,6 +1659,16 @@ ipcMain.handle('accounts:update', (_e, { id, name, color, url, proxy }) => {
     account.proxy = proxy && proxy.server ? proxy : null;
     const view = views.get(id);
     if (view) applyProxy(view.webContents.session, account);
+  }
+  if (ecoMode !== undefined && ecoMode !== account.ecoMode) {
+    account.ecoMode = !!ecoMode;
+    const view = views.get(id);
+    // Only the live page needs the immediate toggle — did-finish-load already
+    // re-applies enableEcoMode() on every future load from account.ecoMode.
+    if (view && !view.webContents.isDestroyed()) {
+      if (account.ecoMode) enableEcoMode(view.webContents);
+      else disableEcoMode(view.webContents);
+    }
   }
   persist();
   broadcastGeometryOnly();
@@ -2201,6 +2262,21 @@ ipcMain.handle('downloads:clear', () => {
   persist();
   broadcastState();
   return data;
+});
+
+ipcMain.handle('downloads:pause', (_e, { id }) => {
+  const item = downloadItems.get(id);
+  if (item && !item.isPaused()) item.pause();
+});
+
+ipcMain.handle('downloads:resume', (_e, { id }) => {
+  const item = downloadItems.get(id);
+  if (item && item.isPaused() && item.canResume()) item.resume();
+});
+
+ipcMain.handle('downloads:cancel', (_e, { id }) => {
+  const item = downloadItems.get(id);
+  if (item) item.cancel();
 });
 
 ipcMain.handle('accounts:muteAll', (_e, { muted }) => {
