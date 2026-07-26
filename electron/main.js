@@ -226,6 +226,15 @@ const PANEL_HEADER_HEIGHT = 30;
 // they can be unit-tested without launching the app — see test/unit/.
 
 let mainWindow = null;
+// A destroyed BrowserWindow is still a truthy JS object — `if (mainWindow)`
+// alone doesn't catch it, which is exactly what let an uncaught
+// "Object has been destroyed" TypeError (via mainWindow.getContentSize() in
+// contentBounds(), reached from a webContents 'destroyed' listener that fired
+// during app shutdown) crash the whole process. Use this everywhere instead.
+function mainWindowAlive() {
+  return !!mainWindow && !mainWindow.isDestroyed();
+}
+let appQuitting = false;
 let data = store.load();
 
 // Always start on auto grid, regardless of whichever layout was active when the
@@ -748,20 +757,20 @@ function handleAccountShortcut(input, account) {
   const view = views.get(account.id);
 
   if (ctrl && !shift && !alt && key === 'f') {
-    if (mainWindow) mainWindow.webContents.send('findbar:open', { id: account.id });
+    if (mainWindowAlive()) mainWindow.webContents.send('findbar:open', { id: account.id });
     return true;
   }
   if (key === 'escape') {
     view?.webContents.stopFindInPage('clearSelection');
-    if (mainWindow) mainWindow.webContents.send('findbar:close', { id: account.id });
+    if (mainWindowAlive()) mainWindow.webContents.send('findbar:close', { id: account.id });
     return false; // let Escape still propagate normally for anything else on the page
   }
   if (ctrl && !shift && !alt && /^[1-9]$/.test(key)) {
-    if (mainWindow) mainWindow.webContents.send('shortcut:selectPanel', { n: Number(key) });
+    if (mainWindowAlive()) mainWindow.webContents.send('shortcut:selectPanel', { n: Number(key) });
     return true;
   }
   if (ctrl && !shift && !alt && key === 'tab') {
-    if (mainWindow) mainWindow.webContents.send('shortcut:nextPanel');
+    if (mainWindowAlive()) mainWindow.webContents.send('shortcut:nextPanel');
     return true;
   }
   if (ctrl && shift && !alt && key === 'n') {
@@ -793,7 +802,7 @@ function handleAccountShortcut(input, account) {
     return true;
   }
   if (ctrl && !shift && !alt && key === 'l') {
-    if (mainWindow) mainWindow.webContents.send('shortcut:focusAddress');
+    if (mainWindowAlive()) mainWindow.webContents.send('shortcut:focusAddress');
     return true;
   }
   if (ctrl && !shift && !alt && (key === '=' || key === '+')) {
@@ -813,7 +822,7 @@ function handleAccountShortcut(input, account) {
     return true;
   }
   if (ctrl && !shift && !alt && key === ',') {
-    if (mainWindow) mainWindow.webContents.send('shortcut:openSettings');
+    if (mainWindowAlive()) mainWindow.webContents.send('shortcut:openSettings');
     return true;
   }
   if (ctrl && !shift && !alt && key === 'w') {
@@ -1230,7 +1239,7 @@ function notifyNav(id, url) {
   account.url = url;
   pushHistory(url, null);
   persist();
-  if (mainWindow) mainWindow.webContents.send('nav:update', { id, url });
+  if (mainWindowAlive()) mainWindow.webContents.send('nav:update', { id, url });
 }
 
 function ensureView(account) {
@@ -1242,6 +1251,7 @@ function sidebarWidth() {
 }
 
 function contentBounds() {
+  if (!mainWindowAlive()) return { x: 0, y: 0, width: 0, height: 0 };
   const [winWidth, winHeight] = mainWindow.getContentSize();
   const top = TOPBAR_HEIGHT;
   const left = RAIL_WIDTH + sidebarWidth();
@@ -1254,6 +1264,7 @@ function contentBounds() {
 }
 
 function clearAllViews() {
+  if (!mainWindowAlive()) return;
   for (const view of views.values()) {
     mainWindow.contentView.removeChildView(view);
   }
@@ -1310,6 +1321,7 @@ function buildGeometry(cells, maximized) {
 }
 
 function renderLayout() {
+  if (!mainWindowAlive()) return;
   const bounds = contentBounds();
   clearAllViews();
   const { cells, maximized } = computeCells(bounds);
@@ -1325,7 +1337,7 @@ function renderLayout() {
     });
   }
 
-  if (mainWindow) mainWindow.webContents.send('panels:geometry', buildGeometry(cells, maximized));
+  mainWindow.webContents.send('panels:geometry', buildGeometry(cells, maximized));
 }
 
 // For changes that only affect a panel's displayed metadata (mute/name/color/
@@ -1335,7 +1347,7 @@ function renderLayout() {
 // measurable native work (each call tears down and recomposites every panel),
 // and several handlers were paying for it just to flip one boolean.
 function broadcastGeometryOnly() {
-  if (!mainWindow) return;
+  if (!mainWindowAlive()) return;
   const { cells, maximized } = computeCells(contentBounds());
   mainWindow.webContents.send('panels:geometry', buildGeometry(cells, maximized));
 }
@@ -1387,6 +1399,7 @@ function createWindow() {
 }
 
 function broadcastState() {
+  if (!mainWindowAlive()) return;
   mainWindow.webContents.send('state:update', data);
 }
 
@@ -1443,7 +1456,7 @@ function removeAccountCompletely(id) {
   const view = views.get(id);
   const ses = view ? view.webContents.session : session.fromPartition(`persist:account-${id}`);
   if (view) {
-    mainWindow.contentView.removeChildView(view);
+    if (mainWindowAlive()) mainWindow.contentView.removeChildView(view);
     view.webContents.close();
     views.delete(id);
   }
@@ -2247,7 +2260,7 @@ autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
 
 function sendUpdateStatus(status, extra = {}) {
-  if (mainWindow) mainWindow.webContents.send('update:status', { status, ...extra });
+  if (mainWindowAlive()) mainWindow.webContents.send('update:status', { status, ...extra });
 }
 
 autoUpdater.on('checking-for-update', () => sendUpdateStatus('checking'));
@@ -2646,4 +2659,7 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', flushPersist);
+app.on('before-quit', () => {
+  appQuitting = true;
+  flushPersist();
+});
