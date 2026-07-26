@@ -1601,6 +1601,40 @@ ipcMain.handle('accounts:update', (_e, { id, name, color, url, proxy }) => {
   return data;
 });
 
+// orderedIds must be an exact permutation of the current ids — checked via
+// two equal-size sets (not just "every id in orderedIds exists"), because a
+// payload with a duplicate id and a missing one would otherwise pass a
+// naive length+membership check and silently drop the missing entry from
+// data.accounts/data.spaces when mapped.
+function isExactPermutation(orderedIds, currentIds) {
+  if (!Array.isArray(orderedIds) || orderedIds.some((id) => typeof id !== 'string')) return false;
+  const orderedSet = new Set(orderedIds);
+  if (orderedSet.size !== orderedIds.length) return false; // duplicates
+  if (orderedSet.size !== currentIds.size) return false;
+  for (const id of orderedSet) if (!currentIds.has(id)) return false;
+  return true;
+}
+
+ipcMain.handle('accounts:reorder', (_e, orderedIds) => {
+  const currentIds = new Set(data.accounts.map((a) => a.id));
+  if (!isExactPermutation(orderedIds, currentIds)) return data;
+  const byId = new Map(data.accounts.map((a) => [a.id, a]));
+  data.accounts = orderedIds.map((id) => byId.get(id));
+  persist();
+  broadcastState();
+  return data;
+});
+
+ipcMain.handle('spaces:reorder', (_e, orderedIds) => {
+  const currentIds = new Set(data.spaces.map((s) => s.id));
+  if (!isExactPermutation(orderedIds, currentIds)) return data;
+  const byId = new Map(data.spaces.map((s) => [s.id, s]));
+  data.spaces = orderedIds.map((id) => byId.get(id));
+  persist();
+  broadcastState();
+  return data;
+});
+
 function removeSpace(id) {
   // The first space is pinned — always keep one guaranteed home base to work in.
   if (data.spaces.length <= 1 || id === data.spaces[0].id) return;
@@ -2173,6 +2207,7 @@ ipcMain.handle('accounts:muteAll', (_e, { muted }) => {
 // etc.) or isn't meant to be renderer-writable at all (extensions,
 // maximizedAccountId, activeAccountId are main-process-owned state).
 const SETTINGS_UPDATE_WHITELIST = new Set([
+  'theme',
   'startWithWindows',
   'reopenLastSpace',
   'hardwareAcceleration',
@@ -2584,6 +2619,7 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   seedDefaultExtensions();
   gameTelemetry.startHeartbeat();
+  gameTelemetry.startGoldDebugLogger();
   app.setLoginItemSettings({ openAtLogin: !!data.settings.startWithWindows });
   createWindow();
   mainWindow.webContents.once('did-finish-load', () => {

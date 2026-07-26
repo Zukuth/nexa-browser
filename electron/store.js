@@ -60,14 +60,15 @@ const DEFAULT_DATA = {
   // removes the extension later doesn't get it silently reinstalled on next launch.
   seededExtensions: [],
   settings: {
-    theme: 'dark',
+    // 'system' sigue la preferencia del SO (prefers-color-scheme); 'dark'/'light'
+    // fuerzan el tema explícitamente, elegido por el usuario en Configuración.
+    theme: 'system',
     layoutMode: 'single',
     activeAccountId: null,
     currentSpaceId: 'default',
     sidebarWidth: 260,
     sidebarCollapsed: false,
     language: 'es',
-    theme: 'dark',
     startWithWindows: false,
     reopenLastSpace: true,
     defaultStartUrl: 'https://www.google.com',

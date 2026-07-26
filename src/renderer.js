@@ -231,6 +231,22 @@ let panelsGeometry = [];
 // deferred, and runs once immediately after the drag ends.
 let dragInProgress = false;
 let editingSpaceId = null;
+
+// Same rebuild-mid-drag hazard as dragInProgress above, but for the sidebar
+// account list / space rail (native HTML5 drag-and-drop reorder) — those two
+// lists get torn down and rebuilt (`innerHTML = ''`) by render()'s 1s
+// interval, which would cancel a drag in progress since the dragged element
+// is a live DOM node the browser is tracking.
+let listDragInProgress = false;
+let draggedAccountId = null;
+let draggedSpaceId = null;
+
+function reorderIds(ids, draggedId, targetId) {
+  const next = ids.filter((id) => id !== draggedId);
+  const targetIndex = next.indexOf(targetId);
+  next.splice(targetIndex === -1 ? next.length : targetIndex, 0, draggedId);
+  return next;
+}
 let modalColor = SPACE_COLORS[0];
 let modalIcon = SPACE_ICONS[0];
 
@@ -262,6 +278,16 @@ function escapeHtmlClient(s) {
   return div.innerHTML;
 }
 
+// 'system' = sin atributo, sigue prefers-color-scheme (ver style.css);
+// 'dark'/'light' fuerzan el tema explícitamente.
+function applyTheme(theme) {
+  if (theme === 'light' || theme === 'dark') {
+    document.documentElement.setAttribute('data-theme', theme);
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+  }
+}
+
 function formatDuration(ms) {
   const seconds = Math.max(Math.floor(ms / 1000), 0);
   const m = Math.floor(seconds / 60);
@@ -270,7 +296,7 @@ function formatDuration(ms) {
 }
 
 function render() {
-  renderRail();
+  if (!listDragInProgress) renderRail();
 
   const collapsed = !!state.settings.sidebarCollapsed;
   const sidebarWidth = collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED;
@@ -285,13 +311,43 @@ function render() {
   const space = currentSpace();
   spaceNameEl.textContent = space?.name || '';
 
-  listEl.innerHTML = '';
   const spaceAccounts = currentSpaceAccounts();
+  if (!listDragInProgress) {
+  listEl.innerHTML = '';
   spaceAccounts.forEach((account, i) => {
     const item = document.createElement('div');
     item.className = 'account-item'
       + (account.id === state.settings.activeAccountId ? ' active' : '')
       + (account.closed ? ' closed' : '');
+    item.draggable = true;
+    item.dataset.accountId = account.id;
+    item.ondragstart = (e) => {
+      draggedAccountId = account.id;
+      listDragInProgress = true;
+      e.dataTransfer.effectAllowed = 'move';
+      item.classList.add('dragging');
+    };
+    item.ondragover = (e) => {
+      if (!draggedAccountId || draggedAccountId === account.id) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+    };
+    item.ondrop = (e) => {
+      e.preventDefault();
+      if (!draggedAccountId || draggedAccountId === account.id) return;
+      const spaceIds = spaceAccounts.map((a) => a.id);
+      const reordered = reorderIds(spaceIds, draggedAccountId, account.id);
+      let idx = 0;
+      const fullOrder = state.accounts.map((a) =>
+        a.spaceId === space?.id ? reordered[idx++] : a.id
+      );
+      window.api.reorderAccounts(fullOrder);
+    };
+    item.ondragend = () => {
+      draggedAccountId = null;
+      listDragInProgress = false;
+      render(); // catch up on anything held back during the drag
+    };
 
     const statusDot = document.createElement('div');
     statusDot.className = 'account-status-dot' + (account.closed ? '' : ' online');
@@ -370,6 +426,7 @@ function render() {
     };
     listEl.appendChild(item);
   });
+  }
 
   const allClosed = spaceAccounts.length > 0 && spaceAccounts.every((a) => a.closed);
   btnToggleAll.classList.toggle('all-closed', allClosed);
@@ -460,6 +517,29 @@ function renderRail() {
     icon.oncontextmenu = (e) => {
       e.preventDefault();
       window.api.showSpaceMenu(space.id);
+    };
+    icon.draggable = true;
+    icon.ondragstart = (e) => {
+      draggedSpaceId = space.id;
+      listDragInProgress = true;
+      e.dataTransfer.effectAllowed = 'move';
+      icon.classList.add('dragging');
+    };
+    icon.ondragover = (e) => {
+      if (!draggedSpaceId || draggedSpaceId === space.id) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+    };
+    icon.ondrop = (e) => {
+      e.preventDefault();
+      if (!draggedSpaceId || draggedSpaceId === space.id) return;
+      const order = reorderIds(state.spaces.map((s) => s.id), draggedSpaceId, space.id);
+      window.api.reorderSpaces(order);
+    };
+    icon.ondragend = () => {
+      draggedSpaceId = null;
+      listDragInProgress = false;
+      render();
     };
 
     const count = state.accounts.filter((a) => a.spaceId === space.id).length;
@@ -1440,6 +1520,7 @@ addressInput.addEventListener('blur', () => setTimeout(hideSuggestions, 100));
 
 function openSettingsModal() {
   const s = state.settings;
+  setTheme.value = s.theme || 'system';
   setStartWindows.checked = !!s.startWithWindows;
   setReopenSpace.checked = s.reopenLastSpace !== false;
   setAdblock.checked = s.adBlockEnabled !== false;
@@ -1653,6 +1734,11 @@ settingsNavItems.forEach((navItem) => {
   });
 });
 
+setTheme.addEventListener('change', () => {
+  applyTheme(setTheme.value);
+  window.api.updateSettings({ theme: setTheme.value });
+});
+
 setStartWindows.addEventListener('change', () => {
   window.api.updateSettings({ startWithWindows: setStartWindows.checked });
 });
@@ -1755,6 +1841,7 @@ setImportSpaces.addEventListener('click', async () => {
 
 window.api.onStateUpdate((data) => {
   state = data;
+  applyTheme(state.settings.theme);
   render();
 });
 
@@ -1963,6 +2050,7 @@ window.api.onOpenAccountEditor(({ id }) => {
 async function init() {
   appMeta = await window.api.getMeta();
   state = await window.api.getState();
+  applyTheme(state.settings.theme);
   render();
   requestAnimationFrame(fpsLoop);
   if (currentSpaceAccounts().length === 0) {

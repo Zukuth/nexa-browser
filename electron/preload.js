@@ -37,6 +37,8 @@ contextBridge.exposeInMainWorld('api', {
   activateSpace: (id) => ipcRenderer.invoke('spaces:activate', { id }),
   duplicateAccount: (id) => ipcRenderer.invoke('accounts:duplicate', { id }),
   updateAccount: (id, fields) => ipcRenderer.invoke('accounts:update', { id, ...fields }),
+  reorderAccounts: (orderedIds) => ipcRenderer.invoke('accounts:reorder', orderedIds),
+  reorderSpaces: (orderedIds) => ipcRenderer.invoke('spaces:reorder', orderedIds),
   clearSession: (id) => ipcRenderer.invoke('account:clearSession', { id }),
   showAccountMenu: (id) => ipcRenderer.send('accounts:contextmenu', { id }),
   showSpaceMenu: (id) => ipcRenderer.send('spaces:contextmenu', { id }),

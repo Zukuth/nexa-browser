@@ -1,12 +1,35 @@
 * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
 
-:root {
+:root, :root[data-theme="dark"] {
   --bg: #111318;
   --panel: #181b22;
   --border: #262a33;
   --text: #e6e8ee;
   --muted: #8890a0;
   --accent: #4f8cff;
+}
+
+:root[data-theme="light"] {
+  --bg: #f5f6f8;
+  --panel: #ffffff;
+  --border: #dde1e8;
+  --text: #1a1d24;
+  --muted: #6b7280;
+  --accent: #3a75e0;
+}
+
+/* "Sistema": sin data-theme explícito, sigue prefers-color-scheme del SO.
+   El bloque de arriba (:root sin atributo) ya cubre el caso oscuro por
+   defecto; acá solo se pisa para el caso claro. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg: #f5f6f8;
+    --panel: #ffffff;
+    --border: #dde1e8;
+    --text: #1a1d24;
+    --muted: #6b7280;
+    --accent: #3a75e0;
+  }
 }
 
 html, body {
@@ -411,6 +434,10 @@ html, body {
 
 .account-item:hover {
   background: rgba(255,255,255,0.04);
+}
+
+.account-item.dragging {
+  opacity: 0.4;
 }
 
 .account-item.active {
@@ -881,11 +908,15 @@ html, body {
   cursor: pointer;
   border: 2px solid transparent;
   background: var(--panel);
-  transition: border-color 0.15s ease-out, transform 0.1s ease-out;
+  transition: border-color 0.15s ease-out, transform 0.1s ease-out, opacity 0.15s ease-out;
 }
 
 .space-icon.active {
   border-color: var(--accent);
+}
+
+.space-icon.dragging {
+  opacity: 0.4;
 }
 
 .space-icon:active {
