@@ -15,10 +15,11 @@ import androidx.room.RoomDatabase
  * collectors. Good enough for Fase 2 — the account list re-reads on resume
  * rather than needing a push channel between processes.
  */
-@Database(entities = [Account::class, PasswordEntry::class], version = 2, exportSchema = false)
+@Database(entities = [Account::class, PasswordEntry::class, Space::class], version = 3, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun accountDao(): AccountDao
     abstract fun passwordDao(): PasswordDao
+    abstract fun spaceDao(): SpaceDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null

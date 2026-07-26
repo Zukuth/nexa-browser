@@ -13,7 +13,8 @@ import com.nexabrowser.app.data.Account
 
 class AccountAdapter(
     private val onOpen: (Account) -> Unit,
-    private val onDelete: (Account) -> Unit
+    private val onDelete: (Account) -> Unit,
+    private val onEdit: (Account) -> Unit
 ) : RecyclerView.Adapter<AccountAdapter.ViewHolder>() {
 
     private var accounts: List<Account> = emptyList()
@@ -42,6 +43,7 @@ class AccountAdapter(
         val drawable = (holder.swatch.background.mutate() as GradientDrawable)
         drawable.setColor(runCatching { Color.parseColor(account.colorHex) }.getOrDefault(Color.parseColor("#4F8CFF")))
         holder.itemView.setOnClickListener { onOpen(account) }
+        holder.itemView.setOnLongClickListener { onEdit(account); true }
         holder.btnDelete.setOnClickListener { onDelete(account) }
     }
 

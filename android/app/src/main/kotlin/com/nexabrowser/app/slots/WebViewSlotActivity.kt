@@ -27,9 +27,12 @@ import android.widget.Toast
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.webkit.ProxyConfig
+import androidx.webkit.ProxyController
 import androidx.webkit.WebViewFeature
 import com.nexabrowser.app.R
 import com.nexabrowser.app.adblock.AdBlocker
+import com.nexabrowser.app.data.Account
 import com.nexabrowser.app.data.AppDatabase
 import com.nexabrowser.app.security.PasswordCrypto
 import kotlinx.coroutines.launch
@@ -61,6 +64,12 @@ abstract class WebViewSlotActivity : androidx.appcompat.app.AppCompatActivity() 
     private var pendingPermissionRequest: PermissionRequest? = null
     private lateinit var accountId: String
     private val db by lazy { AppDatabase.getInstance(this) }
+
+    // Filled in by applyProxy() whenever the current account has proxy
+    // credentials, so onReceivedHttpAuthRequest can answer a proxy auth
+    // challenge without a second DB round-trip.
+    private var proxyUsername: String? = null
+    private var proxyPassword: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -148,9 +157,34 @@ abstract class WebViewSlotActivity : androidx.appcompat.app.AppCompatActivity() 
 
         lifecycleScope.launch {
             val account = db.accountDao().getById(id)
+            if (account != null) applyProxy(account)
             val url = account?.url?.takeIf { it.isNotBlank() } ?: "https://www.google.com/"
             addressBar.setText(url)
             webView.loadUrl(url)
+        }
+    }
+
+    // Fase 4. ProxyController.setProxyOverride() is process-scoped like
+    // setDataDirectorySuffix() but — unlike it — NOT one-shot, so it's safe
+    // to call again any time the account showing in this process changes.
+    // Equivalent to desktop's applyProxy()/ses.setProxy() in main.js.
+    private fun applyProxy(account: Account) {
+        proxyUsername = account.proxyUsername
+        proxyPassword = account.proxyPassword
+
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
+            Log.e(TAG, "ProxyController unsupported on this WebView build — proxy will NOT be applied")
+            return
+        }
+        val controller = ProxyController.getInstance()
+        val server = account.proxyServer?.trim()
+        if (server.isNullOrEmpty()) {
+            controller.clearProxyOverride(Runnable::run) {}
+            return
+        }
+        val config = ProxyConfig.Builder().addProxyRule(server).build()
+        controller.setProxyOverride(config, Runnable::run) {
+            Log.d(TAG, "${processName()}: proxy override applied ($server)")
         }
     }
 
@@ -168,6 +202,27 @@ abstract class WebViewSlotActivity : androidx.appcompat.app.AppCompatActivity() 
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean = false
+
+            // Fase 4 proxy auth. Android's WebView doesn't expose a distinct
+            // "this challenge came from the proxy, not the site" flag the
+            // way Electron's session 'login' event does with isProxy — this
+            // is the one public callback for any 401/407 challenge. Answer
+            // it with the account's proxy credentials when we have them;
+            // cancel() otherwise falls through to the site's own auth UI.
+            override fun onReceivedHttpAuthRequest(
+                view: WebView,
+                handler: android.webkit.HttpAuthHandler,
+                host: String?,
+                realm: String?
+            ) {
+                val user = proxyUsername
+                val pass = proxyPassword
+                if (!user.isNullOrEmpty()) {
+                    handler.proceed(user, pass ?: "")
+                } else {
+                    handler.cancel()
+                }
+            }
 
             // Fase 3 adblock. isForMainFrame() is the exact equivalent of the
             // desktop blocker's `resourceType === 'mainFrame'` skip (main.js)
