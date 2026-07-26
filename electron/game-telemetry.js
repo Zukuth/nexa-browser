@@ -131,7 +131,13 @@ function applyFrame(state, msg) {
     }
     case 'field-kill': {
       L.kills += 1;
-      const xpGained = typeof msg.xpGained === 'number' ? msg.xpGained : (msg.totalXp || 0);
+      // Confirmed against real frames (Fase A live testing): xpGained is the
+      // actual per-kill delta; totalXp is the character's lifetime XP
+      // counter (hundreds of millions at high level) and would silently
+      // wreck the rate math if ever used as a fallback here. No fallback —
+      // if a future game update ever drops xpGained, better to undercount
+      // (add 0) than to add a multi-hundred-million-XP number by mistake.
+      const xpGained = typeof msg.xpGained === 'number' ? msg.xpGained : 0;
       L.xp += xpGained;
       if (msg.leveledUp) L.levelUps += 1;
       if (msg.loot && typeof msg.loot === 'object') {
@@ -292,12 +298,33 @@ function startHeartbeat() {
   }, HEARTBEAT_CHECK_MS);
 }
 
+// TEMPORARY — Fase A manual verification aid. Logs a compact one-line
+// summary per tracked account to the main process console (visible in the
+// terminal that ran `npm start`), so the numbers can be sanity-checked
+// against the game's own analyzer panel without needing DevTools access on
+// an account WebContentsView (which the app's own context menu doesn't
+// expose an "Inspect" entry for). Remove once Fase B's real UI panel ships.
+function startDebugLogger() {
+  setInterval(() => {
+    if (stateByAccount.size === 0) return;
+    for (const [accountId, state] of stateByAccount.entries()) {
+      const r = computeRates(state);
+      console.log(
+        `[game-telemetry] ${accountId.slice(0, 8)} — kills/h=${r.killsPerHour} xp/h=${r.xpPerHour} ` +
+        `gold/h=${r.goldPerHour} captures=${r.captures} attempts=${r.attempts} ` +
+        `connected=${r.connected} lastEvent=${r.lastEvent ? r.lastEvent.type : 'none'}`
+      );
+    }
+  }, 10_000);
+}
+
 module.exports = {
   isGameUrl,
   attachCapture,
   getStats,
   getAllStats,
   startHeartbeat,
+  startDebugLogger,
   // exported for unit testing
   rarityFromQuality,
   applyFrame,

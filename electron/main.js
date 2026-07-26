@@ -2584,6 +2584,7 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   seedDefaultExtensions();
   gameTelemetry.startHeartbeat();
+  gameTelemetry.startDebugLogger();
   app.setLoginItemSettings({ openAtLogin: !!data.settings.startWithWindows });
   createWindow();
   mainWindow.webContents.once('did-finish-load', () => {
