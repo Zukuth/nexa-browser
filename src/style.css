@@ -1324,7 +1324,7 @@ html, body {
   flex-shrink: 0;
 }
 
-.settings-nav-item {
+.settings-nav-item, .poke-nav-item {
   padding: 9px 10px;
   border-radius: 6px;
   font-size: 13px;
@@ -1332,12 +1332,12 @@ html, body {
   cursor: pointer;
 }
 
-.settings-nav-item:hover {
+.settings-nav-item:hover, .poke-nav-item:hover {
   color: var(--text);
   background: rgba(255,255,255,0.05);
 }
 
-.settings-nav-item.active {
+.settings-nav-item.active, .poke-nav-item.active {
   color: var(--accent);
   background: rgba(79,140,255,0.12);
   font-weight: 600;
@@ -1349,13 +1349,13 @@ html, body {
   overflow-y: auto;
 }
 
-.settings-pane {
+.settings-pane, .poke-pane {
   display: none;
   flex-direction: column;
   gap: 4px;
 }
 
-.settings-pane.active {
+.settings-pane.active, .poke-pane.active {
   display: flex;
 }
 
@@ -1632,6 +1632,146 @@ html, body {
 @keyframes pokeNotableIn {
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+.poke-idle-modal {
+  width: 680px;
+  max-height: 82vh;
+  padding: 0;
+  overflow: hidden;
+}
+
+.poke-team-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.poke-team-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  gap: 16px;
+}
+
+.poke-team-sprite {
+  width: 60px;
+  height: 60px;
+  flex-shrink: 0;
+  image-rendering: pixelated;
+}
+
+.poke-team-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.poke-team-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.poke-team-name {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.poke-team-level {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.poke-type-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: #fff;
+}
+
+.poke-team-quality {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.poke-hp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  margin-bottom: 10px;
+}
+
+.poke-hp-label {
+  width: 28px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.poke-hp-track {
+  flex: 1;
+  height: 7px;
+  background: var(--panel);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.poke-hp-fill {
+  height: 100%;
+  background: #51cf66;
+  border-radius: 999px;
+}
+
+.poke-hp-value {
+  width: 90px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.poke-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+  gap: 6px 12px;
+  margin-bottom: 10px;
+  font-size: 11px;
+}
+
+.poke-stat-cell {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.poke-stat-cell span:last-child {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.poke-moves {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.poke-move-chip {
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--muted);
 }
 
 .ext-item {

@@ -59,6 +59,12 @@ const dlClear = document.getElementById('dl-clear');
 const cmdkModal = document.getElementById('cmdk-modal');
 const cmdkInput = document.getElementById('cmdk-input');
 const cmdkListEl = document.getElementById('cmdk-list');
+const pokeIdleModal = document.getElementById('poke-idle-modal');
+const btnClosePokeIdle = document.getElementById('btn-close-poke-idle');
+const tbPokeIdle = document.getElementById('tb-poke-idle');
+const pokeNavItems = document.querySelectorAll('.poke-nav-item');
+const pokePanes = document.querySelectorAll('.poke-pane');
+const pokeIdleTeamEl = document.getElementById('poke-idle-team');
 const btnLayoutMenu = document.getElementById('btn-layout-menu');
 const layoutMenu = document.getElementById('layout-menu');
 const layoutOptions = document.querySelectorAll('.layout-option');
@@ -1453,7 +1459,7 @@ function getCommandActions() {
   [
     ['general', 'General'], ['navegacion', 'Navegación'], ['descargas', 'Descargas'],
     ['extensiones', 'Extensiones'], ['contrasenas', 'Contraseñas'], ['red', 'Red'],
-    ['actualizaciones', 'Actualizaciones'], ['poke-idle', 'Poke Idle'], ['acerca', 'Acerca de']
+    ['actualizaciones', 'Actualizaciones'], ['acerca', 'Acerca de']
   ].forEach(([tab, label]) => {
     actions.push({
       icon: '⚙️',
@@ -1482,6 +1488,10 @@ function getCommandActions() {
     {
       icon: '⭐', label: 'Abrir Favoritos', keywords: 'favoritos bookmarks marcadores',
       run: () => openBookmarksModal()
+    },
+    {
+      icon: '🎮', label: 'Abrir Poke Idle World', keywords: 'poke idle pokemon equipo capturas alertas',
+      run: () => openPokeIdleModal()
     }
   );
 
@@ -1759,9 +1769,6 @@ function openSettingsModal() {
   renderPlugins();
   renderPasswords();
   renderNetworkTab();
-  renderPokeIdle();
-  renderPokeIdleNotable();
-  loadPokeIdleAlertFields();
 
   settingsModal.classList.remove('hidden');
   if (wasHidden) pushModal();
@@ -2029,6 +2036,116 @@ function renderPokeIdle() {
       </span>
     `;
     pokeIdleAccountsEl.appendChild(item);
+  });
+}
+
+const POKE_TYPE_COLORS = {
+  NORMAL: '#a8a878', FIRE: '#f08030', WATER: '#6890f0', ELECTRIC: '#f8d030',
+  GRASS: '#78c850', ICE: '#98d8d8', FIGHTING: '#c03028', POISON: '#a040a0',
+  GROUND: '#e0c068', FLYING: '#a890f0', PSYCHIC: '#f85888', BUG: '#a8b820',
+  ROCK: '#b8a038', GHOST: '#705898', DRAGON: '#7038f8', DARK: '#705848',
+  STEEL: '#b8b8d0', FAIRY: '#ee99ac'
+};
+
+function activatePokeTab(tab) {
+  pokeNavItems.forEach((n) => n.classList.toggle('active', n.dataset.pokeTab === tab));
+  pokePanes.forEach((p) => p.classList.toggle('active', p.dataset.pokePane === tab));
+}
+
+pokeNavItems.forEach((navItem) => {
+  navItem.addEventListener('click', () => activatePokeTab(navItem.dataset.pokeTab));
+});
+
+function openPokeIdleModal() {
+  pokeIdleModal.classList.remove('hidden');
+  pushModal();
+  renderPokeIdle();
+  renderPokeIdleNotable();
+  renderPokeIdleTeam();
+  loadPokeIdleAlertFields();
+}
+
+function closePokeIdleModal() {
+  pokeIdleModal.classList.add('hidden');
+  popModal();
+}
+
+tbPokeIdle.addEventListener('click', openPokeIdleModal);
+btnClosePokeIdle.addEventListener('click', closePokeIdleModal);
+pokeIdleModal.addEventListener('mousedown', (e) => {
+  if (e.target === pokeIdleModal) closePokeIdleModal();
+});
+
+function renderPokeIdleTeam() {
+  if (!pokeIdleTeamEl) return;
+  const tracked = state.accounts.filter((a) => !a.closed && gameStats[a.id] && (gameStats[a.id].team || []).length);
+
+  if (tracked.length === 0) {
+    pokeIdleTeamEl.innerHTML = '<div class="settings-hint">Ninguna cuenta abierta tiene un equipo activo detectado todavía.</div>';
+    return;
+  }
+
+  const showAccountName = tracked.length > 1;
+  pokeIdleTeamEl.innerHTML = '';
+  tracked.forEach((account, ai) => {
+    const gs = gameStats[account.id];
+    (gs.team || []).forEach((p) => {
+      const card = document.createElement('div');
+      card.className = 'poke-team-card';
+
+      const img = document.createElement('img');
+      img.className = 'poke-team-sprite';
+      img.src = pokeSpriteUrl(p.speciesId);
+      img.alt = p.name || '';
+      img.onerror = () => { img.style.visibility = 'hidden'; };
+
+      const main = document.createElement('div');
+      main.className = 'poke-team-main';
+
+      const typeBadges = [p.type1, p.type2]
+        .filter(Boolean)
+        .map((t) => `<span class="poke-type-badge" style="background:${POKE_TYPE_COLORS[t] || '#4f8cff'}">${escapeHtmlClient(t)}</span>`)
+        .join(' ');
+
+      const header = document.createElement('div');
+      header.className = 'poke-team-header';
+      header.innerHTML =
+        `<span class="poke-team-name">${p.shiny ? '✨ ' : ''}${escapeHtmlClient(p.name || '?')}${p.leader ? ' 👑' : ''}</span>` +
+        `<span class="poke-team-level">Lv.${p.level ?? '?'}${showAccountName ? ' · ' + escapeHtmlClient(displayName(account, ai)) : ''}</span>` +
+        typeBadges;
+
+      const quality = document.createElement('div');
+      quality.className = 'poke-team-quality';
+      const q = typeof p.quality === 'number' ? p.quality.toFixed(3) : '?';
+      quality.textContent = `Quality ${q} · IV ${p.ivTotal ?? '?'}/186 · Power ${p.power ?? '?'}`;
+
+      const hpPct = p.maxHp ? Math.max(0, Math.min(100, (p.hp / p.maxHp) * 100)) : 0;
+      const hpRow = document.createElement('div');
+      hpRow.className = 'poke-hp-row';
+      hpRow.innerHTML =
+        `<span class="poke-hp-label">HP</span>` +
+        `<span class="poke-hp-track"><span class="poke-hp-fill" style="width:${hpPct}%"></span></span>` +
+        `<span class="poke-hp-value">${formatCompactNumber(p.hp)} / ${formatCompactNumber(p.maxHp)}</span>`;
+
+      const stats = p.stats || {};
+      const statGrid = document.createElement('div');
+      statGrid.className = 'poke-stat-grid';
+      statGrid.innerHTML = [
+        ['ATK', stats.atk], ['DEF', stats.def], ['SpA', stats.spAtk],
+        ['SpD', stats.spDef], ['Vel', stats.speed]
+      ].map(([label, value]) => `<div class="poke-stat-cell"><span>${label}</span><span>${value ?? '?'}</span></div>`).join('');
+
+      const moves = document.createElement('div');
+      moves.className = 'poke-moves';
+      const moveList = p.moves || [];
+      moves.innerHTML = moveList.length
+        ? moveList.slice(0, 8).map((m) => `<span class="poke-move-chip">${escapeHtmlClient(m.name)} · ${m.power ?? '?'}</span>`).join('')
+        : '<span class="poke-move-chip">Sin movimientos detectados</span>';
+
+      main.append(header, quality, hpRow, statGrid, moves);
+      card.append(img, main);
+      pokeIdleTeamEl.appendChild(card);
+    });
   });
 }
 
@@ -2417,9 +2534,10 @@ setInterval(async () => {
 
 setInterval(async () => {
   gameStats = await window.api.getGameStats();
-  if (!settingsModal.classList.contains('hidden')) {
+  if (!pokeIdleModal.classList.contains('hidden')) {
     renderPokeIdle();
     renderPokeIdleNotable();
+    renderPokeIdleTeam();
   }
 }, 5000);
 

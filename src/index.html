@@ -84,6 +84,7 @@
       </div>
 
       <button id="tb-fullscreen" title="Pantalla completa">⛶</button>
+      <button id="tb-poke-idle" title="Poke Idle World">🎮</button>
       <button id="tb-downloads" title="Descargas">⬇</button>
       <button id="tb-settings" title="Configuración">⚙</button>
       <button id="tb-bookmarks" title="Favoritos">
@@ -264,7 +265,6 @@
           <div class="settings-nav-item" data-tab="contrasenas">Contraseñas</div>
           <div class="settings-nav-item" data-tab="red">Red</div>
           <div class="settings-nav-item" data-tab="actualizaciones">Actualizaciones</div>
-          <div class="settings-nav-item" data-tab="poke-idle">Poke Idle</div>
           <div class="settings-nav-item" data-tab="acerca">Acerca de</div>
         </div>
         <div class="settings-content">
@@ -412,46 +412,6 @@
             </div>
           </div>
 
-          <div class="settings-pane" data-pane="poke-idle">
-            <p class="settings-hint">
-              Estadísticas en vivo de Poke Idle World, leídas de los datos que el propio juego transmite por
-              WebSocket — solo lectura: nunca automatiza capturas ni toca el captcha.
-            </p>
-            <div id="poke-idle-summary" class="poke-summary-cards"></div>
-            <div class="settings-subheading">Por cuenta</div>
-            <div id="poke-idle-accounts" class="ext-list"></div>
-
-            <div class="settings-subheading">Capturas destacadas <span class="settings-hint" style="text-transform:none; letter-spacing:normal; font-weight:400;">— Lendária o más, y shiny</span></div>
-            <div id="poke-idle-notable" class="poke-notable-list"></div>
-
-            <div class="settings-subheading">Alertas</div>
-            <div class="settings-row">
-              <span>Activar notificaciones</span>
-              <label class="switch"><input type="checkbox" id="poke-alert-enabled" /><span class="slider"></span></label>
-            </div>
-            <div class="settings-row">
-              <span>✨ Shiny (capturado o visto)</span>
-              <label class="switch"><input type="checkbox" id="poke-alert-shiny" /><span class="slider"></span></label>
-            </div>
-            <div class="settings-row">
-              <span>⭐ Capturas raras (Lendária o más)</span>
-              <label class="switch"><input type="checkbox" id="poke-alert-rare" /><span class="slider"></span></label>
-            </div>
-            <div class="settings-row">
-              <span>🔌 Desconexión / reconexión</span>
-              <label class="switch"><input type="checkbox" id="poke-alert-disconnect" /><span class="slider"></span></label>
-            </div>
-            <div class="settings-row">
-              <div>
-                <div>🎯 Pocas bolas</div>
-                <div class="settings-hint">Avisar cuando el total de bolas caiga por debajo de:</div>
-              </div>
-              <div style="display:flex; align-items:center; gap:8px;">
-                <input type="number" id="poke-alert-balls-threshold" min="0" style="width:70px;" />
-                <label class="switch"><input type="checkbox" id="poke-alert-balls" /><span class="slider"></span></label>
-              </div>
-            </div>
-          </div>
 
           <div class="settings-pane" data-pane="acerca">
             <div class="settings-about-title">Nexa <span class="accent-text">Browser</span></div>
@@ -480,6 +440,78 @@
         <div class="modal-actions-right">
           <button id="bm-export">⬆ Exportar</button>
           <button id="btn-close-bookmarks" class="primary">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="poke-idle-modal" class="modal-overlay hidden">
+    <div class="modal settings-modal poke-idle-modal">
+      <div class="settings-header">
+        <div class="modal-title">🎮 Poke Idle World</div>
+        <button id="btn-close-poke-idle" class="icon-close">✕</button>
+      </div>
+      <div class="settings-body">
+        <div class="settings-nav">
+          <div class="poke-nav-item active" data-poke-tab="resumen">Resumen</div>
+          <div class="poke-nav-item" data-poke-tab="equipo">Mi Equipo</div>
+          <div class="poke-nav-item" data-poke-tab="capturas">Capturas destacadas</div>
+          <div class="poke-nav-item" data-poke-tab="alertas">Alertas</div>
+        </div>
+        <div class="settings-content">
+
+          <div class="poke-pane active" data-poke-pane="resumen">
+            <p class="settings-hint">
+              Estadísticas en vivo de Poke Idle World, leídas de los datos que el propio juego transmite por
+              WebSocket — solo lectura: nunca automatiza capturas ni toca el captcha.
+            </p>
+            <div id="poke-idle-summary" class="poke-summary-cards"></div>
+            <div class="settings-subheading">Por cuenta</div>
+            <div id="poke-idle-accounts" class="ext-list"></div>
+          </div>
+
+          <div class="poke-pane" data-poke-pane="equipo">
+            <p class="settings-hint">
+              El equipo activo de cada cuenta, con nivel, quality/IV, stats y los movimientos que ya debería tener
+              aprendidos según su nivel actual (calculado contra el catálogo del propio juego).
+            </p>
+            <div id="poke-idle-team" class="poke-team-list"></div>
+          </div>
+
+          <div class="poke-pane" data-poke-pane="capturas">
+            <p class="settings-hint">Lendária o más, y shiny.</p>
+            <div id="poke-idle-notable" class="poke-notable-list"></div>
+          </div>
+
+          <div class="poke-pane" data-poke-pane="alertas">
+            <div class="settings-row">
+              <span>Activar notificaciones</span>
+              <label class="switch"><input type="checkbox" id="poke-alert-enabled" /><span class="slider"></span></label>
+            </div>
+            <div class="settings-row">
+              <span>✨ Shiny (capturado o visto)</span>
+              <label class="switch"><input type="checkbox" id="poke-alert-shiny" /><span class="slider"></span></label>
+            </div>
+            <div class="settings-row">
+              <span>⭐ Capturas raras (Lendária o más)</span>
+              <label class="switch"><input type="checkbox" id="poke-alert-rare" /><span class="slider"></span></label>
+            </div>
+            <div class="settings-row">
+              <span>🔌 Desconexión / reconexión</span>
+              <label class="switch"><input type="checkbox" id="poke-alert-disconnect" /><span class="slider"></span></label>
+            </div>
+            <div class="settings-row">
+              <div>
+                <div>🎯 Pocas bolas</div>
+                <div class="settings-hint">Avisar cuando el total de bolas caiga por debajo de:</div>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <input type="number" id="poke-alert-balls-threshold" min="0" style="width:70px;" />
+                <label class="switch"><input type="checkbox" id="poke-alert-balls" /><span class="slider"></span></label>
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>

@@ -136,6 +136,42 @@ function ensureItemPriceCatalog() {
   return itemPriceCatalogPromise;
 }
 
+// Same fetch-once-and-cache pattern as the item price catalog above, for
+// /game/creatures.json — used to show which attacks a team member has
+// likely learned by now (creatures.json's per-species `attacks` array has a
+// `learnLevel` per move; the game's own WS frames don't carry a "currently
+// equipped moves" field for an individual owned poke, so this is the closest
+// derivable approximation from data the game actually publishes).
+let creatureCatalog = null; // pokeId (== speciesId in poke-delta/pokes frames) -> {name, rarity, attacks}
+let creatureCatalogPromise = null;
+function ensureCreatureCatalog() {
+  if (creatureCatalog || creatureCatalogPromise) return creatureCatalogPromise;
+  creatureCatalogPromise = fetch(`https://${GAME_HOSTNAME}/game/creatures.json`)
+    .then((res) => res.json())
+    .then((data) => {
+      const byId = new Map();
+      for (const c of (data && data.creatures) || []) {
+        if (c && c.pokeId != null) {
+          byId.set(c.pokeId, { name: c.name, rarity: c.rarity, attacks: Array.isArray(c.attacks) ? c.attacks : [] });
+        }
+      }
+      creatureCatalog = byId;
+    })
+    .catch((err) => {
+      console.error('[game-telemetry] no se pudo cargar el catálogo de criaturas', err);
+      creatureCatalogPromise = null;
+    });
+  return creatureCatalogPromise;
+}
+
+function learnedMoves(speciesId, level) {
+  const creature = creatureCatalog && creatureCatalog.get(speciesId);
+  if (!creature) return [];
+  return creature.attacks
+    .filter((a) => (a.learnLevel || 1) <= (level || 1))
+    .sort((a, b) => (b.power || 0) - (a.power || 0));
+}
+
 // Mirrors the documented frame-type behavior of game-parse.js — not its code.
 // Unknown/future frame types are ignored rather than throwing: the game is
 // under active development and its schema can change without notice.
@@ -341,6 +377,8 @@ function computeRates(state) {
     shinyCaught: L.shinyCaught,
     shinyLost: L.shinyLost,
     notableCaptures: L.notableCaptures,
+    team: (state.team || []).map((p) => ({ ...p, moves: learnedMoves(p.speciesId, p.level) })),
+    collectionSize: state.collectionSize || 0,
     lastEvent: state.lastEvent,
     connected: state.lastFrameTs != null && Date.now() - state.lastFrameTs < HEARTBEAT_STALE_MS
   };
@@ -368,6 +406,7 @@ function attachCapture(view, accountId) {
   const state = getOrCreateState(accountId);
   attachedAccounts.add(accountId);
   ensureItemPriceCatalog();
+  ensureCreatureCatalog();
 
   wc.debugger.on('message', (_event, method, params) => {
     if (method !== 'Network.webSocketFrameReceived') return;
