@@ -3,6 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <title>Nexa Browser</title>
+  <!-- Defense in depth for this shell document only — contextIsolation +
+       sandbox are already on for every webContents (main window and every
+       per-account WebContentsView), and each account's own page is a
+       separate document not covered by this CSP. This just makes sure that
+       if anything ever got XSS'd into this chrome UI (e.g. an unescaped
+       account name via innerHTML), it couldn't load or run a remote script.
+       style-src allows 'unsafe-inline' for the handful of static, non-user
+       layout `style="..."` attributes already in this file (flex/gap only —
+       no user data ever lands in one). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none';" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>

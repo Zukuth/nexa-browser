@@ -1467,9 +1467,9 @@ function renderExtensions() {
     const info = document.createElement('div');
     info.className = 'ext-info';
     info.innerHTML = `
-      <div class="ext-name">${ext.name} <span class="ext-version">${ext.version || ''}</span></div>
-      ${desc ? `<div class="ext-desc">${desc}</div>` : ''}
-      <div class="ext-id">ID: ${ext.id}</div>
+      <div class="ext-name">${escapeHtmlClient(ext.name)} <span class="ext-version">${escapeHtmlClient(ext.version || '')}</span></div>
+      ${desc ? `<div class="ext-desc">${escapeHtmlClient(desc)}</div>` : ''}
+      <div class="ext-id">ID: ${escapeHtmlClient(ext.id)}</div>
     `;
 
     const actions = document.createElement('div');

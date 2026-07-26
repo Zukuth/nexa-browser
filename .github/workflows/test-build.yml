@@ -1,0 +1,51 @@
+name: Test Build (Windows + Linux)
+
+# Build-only, on demand — no git tag and no GitHub Release involved. Meant
+# for "does this actually package and run" checks during development, unlike
+# build-windows.yml/build-linux.yml which publish to a real Release on a tag
+# push. Uploads as workflow-run artifacts (private to the repo's Actions tab,
+# downloadable via `gh run download`), never touching the public Releases page.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Rama o commit desde donde compilar'
+        required: true
+        default: 'main'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            flag: --win
+            artifact: windows-installer
+            glob: |
+              build/*.exe
+              build/*.blockmap
+          - os: ubuntu-latest
+            flag: --linux
+            artifact: linux-packages
+            glob: |
+              build/*.AppImage
+              build/*.deb
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - run: npx electron-builder ${{ matrix.flag }} --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.glob }}
+          if-no-files-found: error

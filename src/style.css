@@ -16,6 +16,17 @@ html, body {
   overflow: hidden;
 }
 
+/* Near-zero rather than `transition: none` so transitionend/animationend
+   (nothing currently listens for them, but this stays correct if that ever
+   changes) still fires — an instant snap instead of an animated one. */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.001ms !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
 #topbar {
   position: fixed;
   top: 0;
@@ -158,10 +169,23 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* Opacity/transform only — compositable, never forces layout. Kept always
+     "displayed" (position: absolute takes it out of flow already) and just
+     faded + scaled, with visibility delayed on the way out so it leaves the
+     a11y tree and stops accepting clicks only once the fade finishes. */
+  transform-origin: top right;
+  opacity: 1;
+  visibility: visible;
+  transform: scale(1) translateY(0);
+  transition: opacity 0.15s ease-out, transform 0.15s ease-out, visibility 0s linear 0s;
 }
 
 .dropdown-menu.hidden {
-  display: none;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: scale(0.96) translateY(-4px);
+  transition: opacity 0.12s ease-in, transform 0.12s ease-in, visibility 0s linear 0.12s;
 }
 
 .panel-zoom-menu {
@@ -382,6 +406,7 @@ html, body {
   border-radius: 10px;
   cursor: pointer;
   border: 1px solid transparent;
+  transition: background-color 0.15s ease-out, border-color 0.15s ease-out, opacity 0.15s ease-out;
 }
 
 .account-item:hover {
@@ -845,10 +870,15 @@ html, body {
   cursor: pointer;
   border: 2px solid transparent;
   background: var(--panel);
+  transition: border-color 0.15s ease-out, transform 0.1s ease-out;
 }
 
 .space-icon.active {
   border-color: var(--accent);
+}
+
+.space-icon:active {
+  transform: scale(0.92);
 }
 
 .space-icon svg {
@@ -942,10 +972,19 @@ html, body {
   align-items: center;
   justify-content: center;
   z-index: 50;
+  /* position: fixed already takes this out of document flow, so leaving it
+     "displayed" but invisible while hidden costs nothing — same
+     delayed-visibility trick as .dropdown-menu above. */
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.18s ease-out, visibility 0s linear 0s;
 }
 
 .modal-overlay.hidden {
-  display: none;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.15s ease-in, visibility 0s linear 0.15s;
 }
 
 .modal {
@@ -957,6 +996,12 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  transform: scale(1);
+  transition: transform 0.18s ease-out;
+}
+
+.modal-overlay.hidden .modal {
+  transform: scale(0.95);
 }
 
 .modal-title {

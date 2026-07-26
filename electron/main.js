@@ -79,9 +79,15 @@ function parseHostsFile(text, into) {
   }
 }
 
-function loadCachedBlocklist() {
+// Async and called after the first window is up (see app.whenReady() below) —
+// this used to be a synchronous fs.readFileSync() called before createWindow(),
+// which blocked the very first paint on however long it took to read+parse a
+// StevenBlack cache file that can run into the hundreds of KB. Adblock isn't
+// needed until a page actually loads in some account view, well after the
+// window itself has appeared, so there's no reason to make startup wait on it.
+async function loadCachedBlocklist() {
   try {
-    const raw = fs.readFileSync(BLOCKLIST_CACHE_FILE, 'utf-8');
+    const raw = await fs.promises.readFile(BLOCKLIST_CACHE_FILE, 'utf-8');
     parseHostsFile(raw, blockedDomains);
     console.log('[adblock] loaded cached list —', blockedDomains.size, 'domains');
   } catch {
@@ -313,7 +319,7 @@ if (widevineCdm) {
 }
 
 const appStartTime = Date.now();
-const APP_VERSION = '0.1.1';
+const APP_VERSION = '0.1.2';
 
 // Reset "online since" timers for accounts that aren't closed — elapsed time is per app session.
 data.accounts.forEach((a) => {
@@ -2554,13 +2560,16 @@ app.whenReady().then(() => {
   });
   Menu.setApplicationMenu(null);
   seedDefaultExtensions();
-  loadCachedBlocklist();
-  refreshBlocklistIfStale();
   app.setLoginItemSettings({ openAtLogin: !!data.settings.startWithWindows });
   createWindow();
   mainWindow.webContents.once('did-finish-load', () => {
     renderLayout();
     broadcastState();
+    // Deferred past first paint — see the comment on loadCachedBlocklist().
+    // blockedDomains already has the built-in list from module load, so
+    // adblock works from the very first page load either way; this just
+    // upgrades it to the fuller cached/fresh list a moment later.
+    loadCachedBlocklist().then(refreshBlocklistIfStale);
   });
 
   if (app.isPackaged && data.settings.autoCheckUpdates !== false) {
