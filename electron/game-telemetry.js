@@ -60,6 +60,7 @@ function emptyLive() {
     levelUps: 0,
     byRarity: {},
     loot: {},
+    namedLoot: {}, // item name -> qty, for events that give a name but no itemId (e.g. profession-photo)
     ballsUsed: {},
     captureGold: 0,
     shinyCaught: 0,
@@ -97,20 +98,24 @@ function getOrCreateState(accountId) {
 // mid-session. If the fetch ever fails, loot just contributes 0 to
 // goldPerHour instead of throwing — same honest-undercount policy as the
 // xpGained fallback above.
-let itemPriceCatalog = null;
+let itemPriceCatalog = null; // itemId -> npcPrice
+let itemPriceByName = null; // item name -> npcPrice (some events only give a name, e.g. profession-photo)
 let itemPriceCatalogPromise = null;
 function ensureItemPriceCatalog() {
   if (itemPriceCatalog || itemPriceCatalogPromise) return itemPriceCatalogPromise;
   itemPriceCatalogPromise = fetch(`https://${GAME_HOSTNAME}/game/items.json`)
     .then((res) => res.json())
     .then((data) => {
-      const map = new Map();
+      const byId = new Map();
+      const byName = new Map();
       for (const item of (data && data.items) || []) {
         if (item && item.id != null && typeof item.npcPrice === 'number') {
-          map.set(item.id, item.npcPrice);
+          byId.set(item.id, item.npcPrice);
+          if (item.name) byName.set(item.name, item.npcPrice);
         }
       }
-      itemPriceCatalog = map;
+      itemPriceCatalog = byId;
+      itemPriceByName = byName;
     })
     .catch((err) => {
       console.error('[game-telemetry] no se pudo cargar el catálogo de precios de items', err);
@@ -229,6 +234,16 @@ function applyFrame(state, msg) {
       state.lastEvent = { type: 'session_replaced', at: Date.now() };
       break;
     }
+    case 'profession-photo': {
+      // Confirmed against a real frame: gives an itemName (e.g. "Rare
+      // Pokémon Picture"), not an itemId — a separate income source from
+      // field-kill loot (the game's own Hunt Analyzer includes it in
+      // "Loot"), so it needs its own name-keyed bucket.
+      if (msg.ok && msg.itemName) {
+        L.namedLoot[msg.itemName] = (L.namedLoot[msg.itemName] || 0) + 1;
+      }
+      break;
+    }
     default:
       // analyzer / inventory / boosts / mail-badge / shiny-global / chat /
       // anything else — no counters depend on these for Fase A.
@@ -244,6 +259,11 @@ function computeRates(state) {
   if (itemPriceCatalog) {
     for (const [itemId, qty] of Object.entries(L.loot)) {
       lootGold += (itemPriceCatalog.get(Number(itemId)) || 0) * qty;
+    }
+  }
+  if (itemPriceByName) {
+    for (const [name, qty] of Object.entries(L.namedLoot)) {
+      lootGold += (itemPriceByName.get(name) || 0) * qty;
     }
   }
 
@@ -360,12 +380,28 @@ function startHeartbeat() {
   }, HEARTBEAT_CHECK_MS);
 }
 
+// TEMPORARY — one more live check of the gold breakdown (captureGold vs
+// lootGold vs supplyCost) against the game's own Hunt Analyzer numbers.
+// Remove once confirmed.
+function startGoldDebugLogger() {
+  setInterval(() => {
+    for (const [accountId, state] of stateByAccount.entries()) {
+      const r = computeRates(state);
+      console.log(
+        `[game-telemetry][GOLD] ${accountId.slice(0, 8)} — captures=$${r.captureGold} loot=$${r.lootGold} ` +
+        `supply=-$${r.supplyCost} net=$${r.netGold} (${r.captures} capturas, ${JSON.stringify(state.live.namedLoot)})`
+      );
+    }
+  }, 15_000);
+}
+
 module.exports = {
   isGameUrl,
   attachCapture,
   getStats,
   getAllStats,
   startHeartbeat,
+  startGoldDebugLogger,
   // exported for unit testing
   rarityFromQuality,
   applyFrame,
