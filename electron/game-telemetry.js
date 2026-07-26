@@ -140,7 +140,14 @@ function applyFrame(state, msg) {
       const xpGained = typeof msg.xpGained === 'number' ? msg.xpGained : 0;
       L.xp += xpGained;
       if (msg.leveledUp) L.levelUps += 1;
-      if (msg.loot && typeof msg.loot === 'object') {
+      if (Array.isArray(msg.loot)) {
+        // Confirmed against real frames: loot is an array of {itemId,name,qty},
+        // not a plain {itemId: qty} map.
+        for (const drop of msg.loot) {
+          if (!drop || drop.itemId == null) continue;
+          L.loot[drop.itemId] = (L.loot[drop.itemId] || 0) + (Number(drop.qty) || 0);
+        }
+      } else if (msg.loot && typeof msg.loot === 'object') {
         for (const [itemId, qty] of Object.entries(msg.loot)) {
           L.loot[itemId] = (L.loot[itemId] || 0) + (Number(qty) || 0);
         }

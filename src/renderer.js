@@ -195,6 +195,9 @@ const pwAddUser = document.getElementById('pw-add-user');
 const pwAddPass = document.getElementById('pw-add-pass');
 const pwAddSave = document.getElementById('pw-add-save');
 
+const pokeIdleSummaryEl = document.getElementById('poke-idle-summary');
+const pokeIdleAccountsEl = document.getElementById('poke-idle-accounts');
+
 const SPACE_COLORS = ['#4f8cff', '#ff6b6b', '#51cf66', '#fcc419', '#cc5de8', '#ff922b', '#f06595', '#22b8cf'];
 const SPACE_ICONS = ['grid', 'gamepad', 'swords', 'shield', 'flame', 'leaf', 'droplet', 'bolt', 'star', 'crown', 'ghost', 'rocket'];
 const SPACE_ICON_SVGS = {
@@ -214,6 +217,7 @@ const SPACE_ICON_SVGS = {
 
 let state = { spaces: [], accounts: [], bookmarks: [], passwords: [], history: [], downloads: [], settings: {} };
 let metrics = {};
+let gameStats = {}; // Fase B: {[accountId]: {killsPerHour, xpPerHour, goldPerHour, captures, ...} | null}
 let panelsGeometry = [];
 // While a drag (divider or free-mode move/resize) is in progress, the panel
 // headers being dragged are live DOM elements this code updates directly on
@@ -339,6 +343,24 @@ function render() {
       metricsRow.className = 'account-metrics-row';
       metricsRow.innerHTML = `<span>CPU ${m.cpu.toFixed(1)}%</span><span>RAM ${m.memoryMB} MB</span>`;
       item.append(metricsRow);
+    }
+
+    // Fase B: only present for accounts on poke.idleworld.online — getGameStats()
+    // returns null for every other account, same shape as getMetrics() returning
+    // nothing for a closed account above.
+    const gs = gameStats[account.id];
+    if (!account.closed && gs) {
+      const gameRow = document.createElement('div');
+      gameRow.className = 'account-game-stats-row';
+      gameRow.title = gs.connected ? 'Conectado a Poke Idle World' : 'Sin señal reciente del juego';
+      const dot = gs.connected ? '🟢' : '⚪';
+      gameRow.innerHTML =
+        `<span>${dot} ${formatCompactNumber(gs.killsPerHour)} kills/h</span>` +
+        `<span>${formatCompactNumber(gs.xpPerHour)} XP/h</span>` +
+        `<span>${formatCompactNumber(gs.goldPerHour)} 🪙/h</span>` +
+        (gs.captures ? `<span>${gs.captures} capturas</span>` : '') +
+        (gs.shinyCaught ? `<span>✨ ${gs.shinyCaught}</span>` : '');
+      item.append(gameRow);
     }
 
     item.onclick = () => window.api.activateAccount(account.id);
@@ -1177,6 +1199,18 @@ bmExport.addEventListener('click', async () => {
 
 // ---- Downloads modal ----
 
+// Compact K/M/B suffix for the game-stats row — xp/h routinely runs into
+// the millions on high-level accounts, and the raw digit count doesn't fit
+// a sidebar row.
+function formatCompactNumber(n) {
+  if (n == null) return '0';
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000_000) return (n / 1_000_000_000).toFixed(1) + 'B';
+  if (abs >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+  if (abs >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+  return String(Math.round(n));
+}
+
 function formatBytes(n) {
   if (!n && n !== 0) return '';
   const units = ['B', 'KB', 'MB', 'GB'];
@@ -1428,6 +1462,7 @@ function openSettingsModal() {
   renderExtensions();
   renderPlugins();
   renderPasswords();
+  renderPokeIdle();
 
   settingsModal.classList.remove('hidden');
   window.api.hideViews();
@@ -1518,6 +1553,54 @@ async function renderPlugins() {
 
     item.append(icon, info);
     pluginListEl.appendChild(item);
+  });
+}
+
+function renderPokeIdle() {
+  if (!pokeIdleSummaryEl || !pokeIdleAccountsEl) return;
+  const tracked = state.accounts.filter((a) => !a.closed && gameStats[a.id]);
+
+  if (tracked.length === 0) {
+    pokeIdleSummaryEl.innerHTML = '';
+    pokeIdleAccountsEl.innerHTML = '<div class="settings-hint">Ninguna cuenta abierta apunta a Poke Idle World todavía.</div>';
+    return;
+  }
+
+  let totalKills = 0, totalXp = 0, totalGold = 0, totalCaptures = 0, totalShiny = 0;
+  tracked.forEach((a) => {
+    const gs = gameStats[a.id];
+    totalKills += gs.killsPerHour || 0;
+    totalXp += gs.xpPerHour || 0;
+    totalGold += gs.goldPerHour || 0;
+    totalCaptures += gs.captures || 0;
+    totalShiny += gs.shinyCaught || 0;
+  });
+
+  pokeIdleSummaryEl.innerHTML = `
+    <div class="poke-summary-card"><div class="poke-summary-value">${formatCompactNumber(totalKills)}</div><div class="poke-summary-label">Kills/h</div></div>
+    <div class="poke-summary-card"><div class="poke-summary-value">${formatCompactNumber(totalXp)}</div><div class="poke-summary-label">XP/h</div></div>
+    <div class="poke-summary-card"><div class="poke-summary-value">${formatCompactNumber(totalGold)}</div><div class="poke-summary-label">Oro/h</div></div>
+    <div class="poke-summary-card"><div class="poke-summary-value">${totalCaptures}</div><div class="poke-summary-label">Capturas</div></div>
+    <div class="poke-summary-card"><div class="poke-summary-value">✨ ${totalShiny}</div><div class="poke-summary-label">Shiny</div></div>
+  `;
+
+  pokeIdleAccountsEl.innerHTML = '';
+  tracked.forEach((a) => {
+    const gs = gameStats[a.id];
+    const item = document.createElement('div');
+    item.className = 'poke-account-item';
+    const dot = gs.connected ? '🟢' : '⚪';
+    item.innerHTML = `
+      <span class="poke-account-name">${dot} ${escapeHtmlClient(a.name || 'Cuenta')}</span>
+      <span class="poke-account-stats">
+        <span>${formatCompactNumber(gs.killsPerHour)} kills/h</span>
+        <span>${formatCompactNumber(gs.xpPerHour)} XP/h</span>
+        <span>${formatCompactNumber(gs.goldPerHour)} oro/h</span>
+        <span>${gs.captures} capturas</span>
+        ${gs.shinyCaught ? `<span>✨ ${gs.shinyCaught}</span>` : ''}
+      </span>
+    `;
+    pokeIdleAccountsEl.appendChild(item);
   });
 }
 
@@ -1890,6 +1973,11 @@ async function init() {
 setInterval(async () => {
   metrics = await window.api.getMetrics();
 }, 3000);
+
+setInterval(async () => {
+  gameStats = await window.api.getGameStats();
+  if (!settingsModal.classList.contains('hidden')) renderPokeIdle();
+}, 5000);
 
 setInterval(render, 1000);
 

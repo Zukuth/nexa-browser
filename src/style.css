@@ -474,6 +474,16 @@ html, body {
   padding-left: 18px;
 }
 
+.account-game-stats-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 10px;
+  color: #8fd6a0;
+  padding-left: 18px;
+  padding-top: 2px;
+}
+
 .account-remove {
   background: none;
   border: none;
@@ -550,6 +560,7 @@ html, body {
 #sidebar.collapsed .account-name,
 #sidebar.collapsed .account-meta-row,
 #sidebar.collapsed .account-metrics-row,
+#sidebar.collapsed .account-game-stats-row,
 #sidebar.collapsed .account-status-dot {
   display: none;
 }
@@ -1386,6 +1397,63 @@ html, body {
   flex-direction: column;
   gap: 8px;
   margin-top: 14px;
+}
+
+.poke-summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.poke-summary-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.poke-summary-value {
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.poke-summary-label {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-top: 2px;
+}
+
+.poke-account-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.poke-account-name {
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.poke-account-stats {
+  display: flex;
+  gap: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  flex-wrap: wrap;
 }
 
 .ext-item {

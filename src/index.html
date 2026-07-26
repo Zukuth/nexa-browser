@@ -251,6 +251,7 @@
           <div class="settings-nav-item" data-tab="extensiones">Extensiones</div>
           <div class="settings-nav-item" data-tab="contrasenas">Contraseñas</div>
           <div class="settings-nav-item" data-tab="actualizaciones">Actualizaciones</div>
+          <div class="settings-nav-item" data-tab="poke-idle">Poke Idle</div>
           <div class="settings-nav-item" data-tab="acerca">Acerca de</div>
         </div>
         <div class="settings-content">
@@ -387,6 +388,16 @@
               <div id="set-update-status"></div>
               <button id="set-check-updates">🔄 Comprobar ahora</button>
             </div>
+          </div>
+
+          <div class="settings-pane" data-pane="poke-idle">
+            <p class="settings-hint">
+              Estadísticas en vivo de Poke Idle World, leídas de los datos que el propio juego transmite por
+              WebSocket — solo lectura: nunca automatiza capturas ni toca el captcha.
+            </p>
+            <div id="poke-idle-summary" class="poke-summary-cards"></div>
+            <div class="settings-subheading">Por cuenta</div>
+            <div id="poke-idle-accounts" class="ext-list"></div>
           </div>
 
           <div class="settings-pane" data-pane="acerca">
