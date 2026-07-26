@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, session, Menu, shell, dialog, clipboard } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, session, Menu, shell, dialog, clipboard, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
@@ -413,6 +413,51 @@ function displayName(account) {
   const siblings = data.accounts.filter((a) => a.spaceId === account.spaceId);
   const position = siblings.indexOf(account);
   return `Pestaña ${position + 1}`;
+}
+
+// Poke Idle World Fase C: native OS notifications for alert-worthy events
+// already tracked as `state.lastEvent` in game-telemetry.js — this loop just
+// diffs against the last event we already notified for per account (so a
+// still-low ball count doesn't re-notify every 5s) and maps event type to a
+// human message, gated by the toggles in data.settings.pokeIdleAlerts.
+const notifiedEventAt = new Map();
+function buildPokeIdleNotification(cfg, accountName, event) {
+  switch (event.type) {
+    case 'shiny_capture':
+      return cfg.shiny ? { title: `✨ ¡Shiny capturado! — ${accountName}`, body: event.payload?.name || '' } : null;
+    case 'shiny_wild':
+      return cfg.shiny ? { title: `✨ Shiny salvaje — ${accountName}`, body: event.payload?.name ? `${event.payload.name} apareció en el mapa` : '' } : null;
+    case 'rare_capture':
+      return cfg.rare ? { title: `⭐ Captura rara — ${accountName}`, body: `${event.payload?.name || ''} (${event.payload?.rarity || ''})` } : null;
+    case 'balls_low':
+      return cfg.ballsLow ? { title: `🎯 Pocas bolas — ${accountName}`, body: `${event.payload?.total ?? '?'} restantes` } : null;
+    case 'balls_out':
+      return cfg.ballsLow ? { title: `🎯 Sin bolas — ${accountName}`, body: 'Te quedaste sin bolas' } : null;
+    case 'disconnected':
+      return cfg.disconnect ? { title: `🔌 Desconectada — ${accountName}`, body: 'Sin señal del juego' } : null;
+    case 'reconnected':
+      return cfg.disconnect ? { title: `🔌 Reconectada — ${accountName}`, body: 'Volvió la señal' } : null;
+    default:
+      return null;
+  }
+}
+
+function startPokeIdleAlertLoop() {
+  setInterval(() => {
+    const cfg = data.settings.pokeIdleAlerts;
+    if (!cfg || !cfg.enabled || !Notification.isSupported()) return;
+    const stats = gameTelemetry.getAllStats();
+    for (const [accountId, s] of Object.entries(stats)) {
+      if (!s || !s.lastEvent) continue;
+      const lastAt = notifiedEventAt.get(accountId) || 0;
+      if (s.lastEvent.at <= lastAt) continue;
+      notifiedEventAt.set(accountId, s.lastEvent.at);
+      const account = getAccount(accountId);
+      if (!account) continue;
+      const notif = buildPokeIdleNotification(cfg, displayName(account), s.lastEvent);
+      if (notif) new Notification(notif).show();
+    }
+  }, 5000);
 }
 
 // Live DownloadItem handles, keyed by the same id as its `data.downloads`
@@ -2298,6 +2343,7 @@ ipcMain.handle('accounts:muteAll', (_e, { muted }) => {
 // maximizedAccountId, activeAccountId are main-process-owned state).
 const SETTINGS_UPDATE_WHITELIST = new Set([
   'theme',
+  'pokeIdleAlerts',
   'startWithWindows',
   'reopenLastSpace',
   'hardwareAcceleration',
@@ -2313,7 +2359,11 @@ ipcMain.handle('settings:update', (_e, fields) => {
   if (!fields || typeof fields !== 'object') return data;
   for (const key of Object.keys(fields)) {
     if (!SETTINGS_UPDATE_WHITELIST.has(key)) continue;
+    if (key === 'pokeIdleAlerts' && (typeof fields[key] !== 'object' || fields[key] === null)) continue;
     data.settings[key] = fields[key];
+  }
+  if (fields.pokeIdleAlerts && typeof fields.pokeIdleAlerts.ballsThreshold === 'number') {
+    gameTelemetry.setBallsLowThreshold(fields.pokeIdleAlerts.ballsThreshold);
   }
   if ('startWithWindows' in fields) {
     app.setLoginItemSettings({ openAtLogin: !!fields.startWithWindows });
@@ -2709,7 +2759,8 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   seedDefaultExtensions();
   gameTelemetry.startHeartbeat();
-  gameTelemetry.startGoldDebugLogger();
+  gameTelemetry.setBallsLowThreshold(data.settings.pokeIdleAlerts?.ballsThreshold ?? 20);
+  startPokeIdleAlertLoop();
   app.setLoginItemSettings({ openAtLogin: !!data.settings.startWithWindows });
   createWindow();
   mainWindow.webContents.once('did-finish-load', () => {

@@ -28,6 +28,12 @@ const GAME_HOSTNAME = 'poke.idleworld.online';
 const HEARTBEAT_STALE_MS = 60_000;
 const HEARTBEAT_CHECK_MS = 15_000;
 
+// Configurable from the "Poke Idle" settings tab (Fase C alerts).
+let ballsLowThreshold = 20;
+function setBallsLowThreshold(n) {
+  if (typeof n === 'number' && n >= 0) ballsLowThreshold = n;
+}
+
 // Umbrales oficiales de rareza del juego (pokepedia /systems/quality),
 // replicados del schema documentado en el launcher de referencia.
 const RARITY_THRESHOLDS = [
@@ -230,6 +236,23 @@ function applyFrame(state, msg) {
       if (Array.isArray(msg.catalog)) state.ballCatalog = msg.catalog;
       break;
     }
+    case 'inventory': {
+      // Real per-item quantities ({itemId, quantity}), same itemId space as
+      // loot/balls — cross-referenced against the ball catalog (from the
+      // 'balls' frame above) to get the real ball count for the low/out alert.
+      if (Array.isArray(msg.items) && state.ballCatalog) {
+        const ballIds = new Set(state.ballCatalog.map((b) => b.id));
+        const total = msg.items
+          .filter((it) => it && ballIds.has(it.itemId))
+          .reduce((sum, it) => sum + (Number(it.quantity) || 0), 0);
+        if (total <= 0) {
+          state.lastEvent = { type: 'balls_out', at: Date.now() };
+        } else if (total <= ballsLowThreshold) {
+          state.lastEvent = { type: 'balls_low', at: Date.now(), payload: { total } };
+        }
+      }
+      break;
+    }
     case 'session-replaced': {
       state.lastEvent = { type: 'session_replaced', at: Date.now() };
       break;
@@ -380,28 +403,13 @@ function startHeartbeat() {
   }, HEARTBEAT_CHECK_MS);
 }
 
-// TEMPORARY — one more live check of the gold breakdown (captureGold vs
-// lootGold vs supplyCost) against the game's own Hunt Analyzer numbers.
-// Remove once confirmed.
-function startGoldDebugLogger() {
-  setInterval(() => {
-    for (const [accountId, state] of stateByAccount.entries()) {
-      const r = computeRates(state);
-      console.log(
-        `[game-telemetry][GOLD] ${accountId.slice(0, 8)} — captures=$${r.captureGold} loot=$${r.lootGold} ` +
-        `supply=-$${r.supplyCost} net=$${r.netGold} (${r.captures} capturas, ${JSON.stringify(state.live.namedLoot)})`
-      );
-    }
-  }, 15_000);
-}
-
 module.exports = {
   isGameUrl,
   attachCapture,
   getStats,
   getAllStats,
   startHeartbeat,
-  startGoldDebugLogger,
+  setBallsLowThreshold,
   // exported for unit testing
   rarityFromQuality,
   applyFrame,

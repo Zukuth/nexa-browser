@@ -416,6 +416,34 @@
             <div id="poke-idle-summary" class="poke-summary-cards"></div>
             <div class="settings-subheading">Por cuenta</div>
             <div id="poke-idle-accounts" class="ext-list"></div>
+
+            <div class="settings-subheading">Alertas</div>
+            <div class="settings-row">
+              <span>Activar notificaciones</span>
+              <label class="switch"><input type="checkbox" id="poke-alert-enabled" /><span class="slider"></span></label>
+            </div>
+            <div class="settings-row">
+              <span>✨ Shiny (capturado o visto)</span>
+              <label class="switch"><input type="checkbox" id="poke-alert-shiny" /><span class="slider"></span></label>
+            </div>
+            <div class="settings-row">
+              <span>⭐ Capturas raras (Lendária o más)</span>
+              <label class="switch"><input type="checkbox" id="poke-alert-rare" /><span class="slider"></span></label>
+            </div>
+            <div class="settings-row">
+              <span>🔌 Desconexión / reconexión</span>
+              <label class="switch"><input type="checkbox" id="poke-alert-disconnect" /><span class="slider"></span></label>
+            </div>
+            <div class="settings-row">
+              <div>
+                <div>🎯 Pocas bolas</div>
+                <div class="settings-hint">Avisar cuando el total de bolas caiga por debajo de:</div>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <input type="number" id="poke-alert-balls-threshold" min="0" style="width:70px;" />
+                <label class="switch"><input type="checkbox" id="poke-alert-balls" /><span class="slider"></span></label>
+              </div>
+            </div>
           </div>
 
           <div class="settings-pane" data-pane="acerca">

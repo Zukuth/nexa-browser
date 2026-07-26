@@ -81,7 +81,15 @@ const DEFAULT_DATA = {
     extensions: [],
     maximizedAccountId: null,
     adBlockEnabled: true,
-    hardwareAcceleration: true
+    hardwareAcceleration: true,
+    pokeIdleAlerts: {
+      enabled: true,
+      shiny: true,
+      rare: true,
+      ballsLow: true,
+      disconnect: true,
+      ballsThreshold: 20
+    }
   }
 };
 

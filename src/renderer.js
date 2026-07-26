@@ -202,6 +202,12 @@ const pwAddSave = document.getElementById('pw-add-save');
 
 const pokeIdleSummaryEl = document.getElementById('poke-idle-summary');
 const pokeIdleAccountsEl = document.getElementById('poke-idle-accounts');
+const pokeAlertEnabled = document.getElementById('poke-alert-enabled');
+const pokeAlertShiny = document.getElementById('poke-alert-shiny');
+const pokeAlertRare = document.getElementById('poke-alert-rare');
+const pokeAlertDisconnect = document.getElementById('poke-alert-disconnect');
+const pokeAlertBalls = document.getElementById('poke-alert-balls');
+const pokeAlertBallsThreshold = document.getElementById('poke-alert-balls-threshold');
 const networkListEl = document.getElementById('network-list');
 
 const SPACE_COLORS = ['#4f8cff', '#ff6b6b', '#51cf66', '#fcc419', '#cc5de8', '#ff922b', '#f06595', '#22b8cf'];
@@ -1753,6 +1759,7 @@ function openSettingsModal() {
   renderPasswords();
   renderNetworkTab();
   renderPokeIdle();
+  loadPokeIdleAlertFields();
 
   settingsModal.classList.remove('hidden');
   if (wasHidden) pushModal();
@@ -1868,6 +1875,34 @@ function renderNetworkTab() {
     networkListEl.appendChild(item);
   });
 }
+
+function loadPokeIdleAlertFields() {
+  const cfg = state.settings.pokeIdleAlerts || {};
+  pokeAlertEnabled.checked = cfg.enabled !== false;
+  pokeAlertShiny.checked = cfg.shiny !== false;
+  pokeAlertRare.checked = cfg.rare !== false;
+  pokeAlertDisconnect.checked = cfg.disconnect !== false;
+  pokeAlertBalls.checked = cfg.ballsLow !== false;
+  pokeAlertBallsThreshold.value = cfg.ballsThreshold ?? 20;
+}
+
+function savePokeIdleAlertFields() {
+  window.api.updateSettings({
+    pokeIdleAlerts: {
+      enabled: pokeAlertEnabled.checked,
+      shiny: pokeAlertShiny.checked,
+      rare: pokeAlertRare.checked,
+      disconnect: pokeAlertDisconnect.checked,
+      ballsLow: pokeAlertBalls.checked,
+      ballsThreshold: Math.max(0, Number(pokeAlertBallsThreshold.value) || 0)
+    }
+  });
+}
+
+[pokeAlertEnabled, pokeAlertShiny, pokeAlertRare, pokeAlertDisconnect, pokeAlertBalls].forEach((el) => {
+  el.addEventListener('change', savePokeIdleAlertFields);
+});
+pokeAlertBallsThreshold.addEventListener('change', savePokeIdleAlertFields);
 
 function renderPokeIdle() {
   if (!pokeIdleSummaryEl || !pokeIdleAccountsEl) return;
