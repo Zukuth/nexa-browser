@@ -71,6 +71,7 @@ contextBridge.exposeInMainWorld('api', {
   toggleExtension: (id, enabled) => ipcRenderer.invoke('extensions:toggle', { id, enabled }),
   removeExtension: (id) => ipcRenderer.invoke('extensions:remove', { id }),
   getMetrics: () => ipcRenderer.invoke('metrics:get'),
+  getGameStats: () => ipcRenderer.invoke('gameStats:get'),
   addBookmark: (payload) => ipcRenderer.invoke('bookmarks:add', payload),
   removeBookmark: (id) => ipcRenderer.invoke('bookmarks:remove', { id }),
   exportBookmarks: () => ipcRenderer.invoke('bookmarks:export'),

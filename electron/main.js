@@ -7,6 +7,7 @@ const extractZip = require('extract-zip');
 const store = require('./store');
 const { autoUpdater } = require('electron-updater');
 const { GAP, GRID_MAX_PANELS, MIN_SPLIT_FRAC, resolveFracs, cellsForMode, freeCells, normalizeFracsWithMin } = require('./layout-utils');
+const gameTelemetry = require('./game-telemetry');
 
 // Last-resort net: an ipcMain.on (not .handle) listener that throws crashes the
 // whole app with no trace, since Electron only auto-catches .handle rejections.
@@ -901,6 +902,15 @@ function createViewForAccount(account) {
         .then(() => console.log('[ext] loaded', e.name, 'into', account.id))
         .catch((err) => console.error('[ext] FAILED to load', e.name, 'into', account.id, err));
     });
+  // Must attach before the first loadURL — CDP's Network.enable needs to be
+  // on before the game's own page connects its WebSocket, or the connection
+  // (and the frames that arrive right after it) is missed entirely. Only
+  // ever attaches for accounts already pointed at the game, per the
+  // telemetry feature's scoping rule (main.js never runs this for a random
+  // account someone happens to point elsewhere).
+  if (account.url && gameTelemetry.isGameUrl(account.url)) {
+    gameTelemetry.attachCapture(view, account.id);
+  }
   if (account.url && account.url !== 'about:blank') {
     view.webContents.loadURL(account.url);
   }
@@ -922,6 +932,12 @@ function createViewForAccount(account) {
   view.webContents.on('did-finish-load', () => {
     view.webContents.setZoomFactor(account.zoom || data.settings.defaultZoom || 1);
     injectGameOverlayButtons(view.webContents);
+    // Covers an account that started elsewhere and only just navigated to
+    // the game — attachCapture() is idempotent (checks debugger.isAttached())
+    // so this is a no-op for accounts that already attached before loadURL.
+    if (gameTelemetry.isGameUrl(view.webContents.getURL())) {
+      gameTelemetry.attachCapture(view, account.id);
+    }
   });
   view.webContents.on('page-title-updated', (_e, title) => updateHistoryTitle(view.webContents.getURL(), title));
   view.webContents.on('render-process-gone', (_e, details) => {
@@ -2512,6 +2528,13 @@ ipcMain.handle('passwords:remove', (_e, { id }) => {
   return data;
 });
 
+// Fase A del motor de telemetría — calcado exactamente del patrón de
+// metrics:get de arriba abajo (poll-based, sin push): el renderer llama esto
+// cada pocos segundos y solo le importa a las cuentas de poke.idleworld.online
+// (getStats devuelve null para cualquier otra, que el renderer simplemente no
+// muestra).
+ipcMain.handle('gameStats:get', () => gameTelemetry.getAllStats());
+
 ipcMain.handle('metrics:get', () => {
   const metrics = app.getAppMetrics();
   const byPid = new Map(metrics.map((m) => [m.pid, m]));
@@ -2560,6 +2583,7 @@ app.whenReady().then(() => {
   });
   Menu.setApplicationMenu(null);
   seedDefaultExtensions();
+  gameTelemetry.startHeartbeat();
   app.setLoginItemSettings({ openAtLogin: !!data.settings.startWithWindows });
   createWindow();
   mainWindow.webContents.once('did-finish-load', () => {
