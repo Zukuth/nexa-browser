@@ -71,6 +71,10 @@ const calcLevelEl = document.getElementById('calc-level');
 const calcQualityEl = document.getElementById('calc-quality');
 const calcProjLevelEl = document.getElementById('calc-proj-level');
 const calcResultEl = document.getElementById('calc-result');
+const huntAttackerEl = document.getElementById('hunt-attacker');
+const huntKphEl = document.getElementById('hunt-kph');
+const huntSortEl = document.getElementById('hunt-sort');
+const huntTableWrapEl = document.getElementById('hunt-table-wrap');
 const calcStatInputs = {
   hp: document.getElementById('calc-stat-hp'),
   atk: document.getElementById('calc-stat-atk'),
@@ -2073,7 +2077,10 @@ function activatePokeTab(tab) {
 }
 
 pokeNavItems.forEach((navItem) => {
-  navItem.addEventListener('click', () => activatePokeTab(navItem.dataset.pokeTab));
+  navItem.addEventListener('click', () => {
+    activatePokeTab(navItem.dataset.pokeTab);
+    if (navItem.dataset.pokeTab === 'caza') runHuntTable();
+  });
 });
 
 function openPokeIdleModal() {
@@ -2084,6 +2091,7 @@ function openPokeIdleModal() {
   renderPokeIdleTeam();
   loadPokeIdleAlertFields();
   populateCalcSourceDropdown();
+  populateHuntAttackerDropdown();
 }
 
 function closePokeIdleModal() {
@@ -2202,7 +2210,8 @@ function collectLiveCalcSources() {
     (gs.team || []).forEach((p) => {
       sources.push({
         label: `🟢 ${displayName(account, ai)} · ${p.name} Lv.${p.level} (equipo)`,
-        speciesId: p.speciesId, level: p.level, quality: p.quality, stats: p.stats
+        speciesId: p.speciesId, level: p.level, quality: p.quality, stats: p.stats,
+        killsPerHour: gs.killsPerHour
       });
     });
     (gs.notableCaptures || []).slice(0, 15).forEach((c) => {
@@ -2293,6 +2302,90 @@ async function runCalculator() {
 }
 
 populateCalcSpeciesDropdown();
+
+// ---- Caza & XP / Ruta de Farmeo ----
+
+let huntAttackers = [];
+
+function populateHuntAttackerDropdown() {
+  const sources = collectLiveCalcSources().filter((s) => s.label.includes('(equipo)'));
+  huntAttackers = sources;
+  const current = huntAttackerEl.value;
+  huntAttackerEl.innerHTML = '<option value="">Ninguno (solo XP/oro)</option>' +
+    sources.map((s, i) => `<option value="${i}">${escapeHtmlClient(s.label)}</option>`).join('');
+  if (current && [...huntAttackerEl.options].some((o) => o.value === current)) huntAttackerEl.value = current;
+}
+
+huntAttackerEl.addEventListener('change', () => {
+  const idx = huntAttackerEl.value;
+  if (idx === '') { runHuntTable(); return; }
+  const src = huntAttackers[Number(idx)];
+  if (src && src.killsPerHour) huntKphEl.value = src.killsPerHour;
+  runHuntTable();
+});
+huntKphEl.addEventListener('change', runHuntTable);
+huntSortEl.addEventListener('change', runHuntTable);
+
+let huntTableCache = [];
+
+function matchupChipClass(m) {
+  if (m == null) return '';
+  if (m === 0) return 'poke-matchup-x0';
+  if (m < 1) return 'poke-matchup-xweak';
+  if (m === 1) return 'poke-matchup-x1';
+  return 'poke-matchup-xstrong';
+}
+
+async function runHuntTable() {
+  const idx = huntAttackerEl.value;
+  const attacker = idx !== '' ? huntAttackers[Number(idx)] : null;
+  const creature = attacker ? (await ensureCreatureCatalogRenderer()).find((c) => c.pokeId === attacker.speciesId) : null;
+  const kph = Number(huntKphEl.value) || 650;
+
+  huntTableWrapEl.innerHTML = '<div class="settings-hint">Calculando…</div>';
+  const rows = await window.api.getHuntTable({
+    attackerType1: creature ? creature.type1 : null,
+    attackerType2: creature ? creature.type2 : null,
+    killsPerHour: kph
+  });
+  huntTableCache = rows;
+  renderHuntTable();
+}
+
+function renderHuntTable() {
+  const sortMode = huntSortEl.value;
+  const rows = huntTableCache.slice().sort((a, b) => {
+    if (sortMode === 'gold') return b.goldPerHour - a.goldPerHour;
+    if (sortMode === 'matchup') return (b.matchup ?? -1) - (a.matchup ?? -1);
+    if (sortMode === 'level') return (a.huntLevel ?? 0) - (b.huntLevel ?? 0);
+    return b.xpPerHour - a.xpPerHour;
+  });
+
+  const body = rows.map((r) => {
+    const typeBadges = [r.type1, r.type2]
+      .filter(Boolean)
+      .map((t) => `<span class="poke-type-badge" style="background:${POKE_TYPE_COLORS[t] || '#4f8cff'}">${escapeHtmlClient(t)}</span>`)
+      .join(' ');
+    const matchupHtml = r.matchup != null
+      ? `<span class="poke-matchup-chip ${matchupChipClass(r.matchup)}">×${r.matchup}</span>`
+      : '—';
+    return `<tr>
+      <td><div class="poke-hunt-row-name"><img class="poke-hunt-sprite" src="${pokeSpriteUrl(r.pokeId)}" onerror="this.style.visibility='hidden'" alt="" />${escapeHtmlClient(r.name)}</div></td>
+      <td>${typeBadges}</td>
+      <td class="poke-hunt-num">${r.huntLevel ?? '?'}</td>
+      <td>${matchupHtml}</td>
+      <td class="poke-hunt-num">${formatCompactNumber(r.xpPerHour)}</td>
+      <td class="poke-hunt-num">${formatCompactNumber(r.goldPerHour)}</td>
+    </tr>`;
+  }).join('');
+
+  huntTableWrapEl.innerHTML = `
+    <table class="poke-hunt-table">
+      <thead><tr><th>Pokémon</th><th>Tipo</th><th>Nivel</th><th>Matchup</th><th>XP/h</th><th>Oro/h</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+  `;
+}
 
 extInstallBtn.addEventListener('click', async () => {
   const value = extInput.value.trim();

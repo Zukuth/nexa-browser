@@ -89,6 +89,7 @@ contextBridge.exposeInMainWorld('api', {
   getGameStats: () => ipcRenderer.invoke('gameStats:get'),
   getCreatureCatalog: () => ipcRenderer.invoke('pokeFormulas:getCreatureCatalog'),
   computeGrowthCalc: (payload) => ipcRenderer.invoke('pokeFormulas:computeGrowth', payload),
+  getHuntTable: (payload) => ipcRenderer.invoke('pokeFormulas:getHuntTable', payload),
   addBookmark: (payload) => ipcRenderer.invoke('bookmarks:add', payload),
   removeBookmark: (id) => ipcRenderer.invoke('bookmarks:remove', { id }),
   exportBookmarks: () => ipcRenderer.invoke('bookmarks:export'),

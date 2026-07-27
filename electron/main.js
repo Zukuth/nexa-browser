@@ -2747,6 +2747,28 @@ ipcMain.handle('pokeFormulas:computeGrowth', async (_e, payload) => {
   return { creatureName: creature.name, rows, ivMin, ivMax, projectedPower, band, quality };
 });
 
+// Caza & XP / Ruta de Farmeo: every huntable species with XP/h, oro/h (using
+// a real or estimated kills-per-hour rate) and, if an attacker type was
+// given, the damage matchup multiplier against it — same 650 kills/h default
+// as the reference site when no real rate is available.
+ipcMain.handle('pokeFormulas:getHuntTable', async (_e, payload) => {
+  const { attackerType1, attackerType2, killsPerHour } = payload || {};
+  await gameTelemetry.ensureCreatureCatalog();
+  const kph = killsPerHour && killsPerHour > 0 ? killsPerHour : 650;
+  return gameTelemetry.getCreatureCatalogArray().map((c) => ({
+    pokeId: c.pokeId,
+    name: c.name,
+    type1: c.type1,
+    type2: c.type2 || null,
+    rarity: c.rarity,
+    huntLevel: c.huntLevel,
+    matchup: attackerType1 ? pokeFormulas.matchupFor(attackerType1, c.type1, c.type2) : null,
+    matchup2: attackerType2 ? pokeFormulas.matchupFor(attackerType2, c.type1, c.type2) : null,
+    xpPerHour: Math.round(pokeFormulas.xpPerHour(c.experience || 0, kph)),
+    goldPerHour: Math.round(pokeFormulas.goldPerHour(c.sellValue || 0, kph))
+  }));
+});
+
 ipcMain.handle('metrics:get', () => {
   const metrics = app.getAppMetrics();
   const byPid = new Map(metrics.map((m) => [m.pid, m]));

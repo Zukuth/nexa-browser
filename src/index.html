@@ -456,6 +456,7 @@
           <div class="poke-nav-item active" data-poke-tab="resumen">Resumen</div>
           <div class="poke-nav-item" data-poke-tab="equipo">Mi Equipo</div>
           <div class="poke-nav-item" data-poke-tab="calculadora">Calculadora IV</div>
+          <div class="poke-nav-item" data-poke-tab="caza">Caza &amp; XP</div>
           <div class="poke-nav-item" data-poke-tab="capturas">Capturas destacadas</div>
           <div class="poke-nav-item" data-poke-tab="alertas">Alertas</div>
         </div>
@@ -515,6 +516,31 @@
               <input type="number" id="calc-proj-level" min="1" max="200" value="100" />
             </div>
             <div id="calc-result"></div>
+          </div>
+
+          <div class="poke-pane" data-poke-pane="caza">
+            <p class="settings-hint">
+              XP/hora y oro/hora de cada especie cazable, con el multiplicador de daño real de tu atacante contra
+              cada tipo — igual que la Ruta de Farmeo de tu página, pero con tu equipo real.
+            </p>
+            <div class="settings-row">
+              <span>Atacante</span>
+              <select id="hunt-attacker"></select>
+            </div>
+            <div class="settings-row">
+              <span>Abates por hora</span>
+              <input type="number" id="hunt-kph" min="1" value="650" />
+            </div>
+            <div class="settings-row">
+              <span>Ordenar por</span>
+              <select id="hunt-sort">
+                <option value="xp">XP/h</option>
+                <option value="gold">Oro/h</option>
+                <option value="matchup">Matchup</option>
+                <option value="level">Nivel</option>
+              </select>
+            </div>
+            <div id="hunt-table-wrap" class="poke-hunt-table-wrap"></div>
           </div>
 
           <div class="poke-pane" data-poke-pane="capturas">

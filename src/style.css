@@ -1715,6 +1715,67 @@ html, body {
   display: block;
 }
 
+.poke-hunt-table-wrap {
+  max-height: 420px;
+  overflow-y: auto;
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.poke-hunt-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.poke-hunt-table th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.poke-hunt-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.poke-hunt-row-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.poke-hunt-sprite {
+  width: 24px;
+  height: 24px;
+  image-rendering: pixelated;
+}
+
+.poke-hunt-num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.poke-matchup-chip {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  display: inline-block;
+}
+.poke-matchup-x0 { background: #3a1c1c; color: #ff8a8a; }
+.poke-matchup-xweak { background: #3a1c1c; color: #ff8a8a; }
+.poke-matchup-x1 { background: var(--panel); color: var(--muted); }
+.poke-matchup-xstrong { background: #14361f; color: #6ee787; }
+
 .poke-team-list {
   display: flex;
   flex-direction: column;
