@@ -339,7 +339,12 @@ if (widevineCdm) {
 }
 
 const appStartTime = Date.now();
-const APP_VERSION = '0.1.2';
+// Read straight from Electron/package.json instead of a hand-maintained
+// literal — a hardcoded string here (and a second one in preload.js's
+// getVersions()) went stale for multiple releases in a row before this,
+// always showing an old version in Configuración → Acerca de regardless of
+// what was actually installed.
+const APP_VERSION = app.getVersion();
 
 // Reset "online since" timers for accounts that aren't closed — elapsed time is per app session.
 data.accounts.forEach((a) => {
@@ -2051,6 +2056,10 @@ ipcMain.on('account:goForward', (_e, payload) => {
 });
 
 ipcMain.handle('app:getMeta', () => ({ startTime: appStartTime, version: APP_VERSION }));
+// Settings → Acerca de reads this synchronously (window.api.getVersions() is
+// called as a plain sync function, not awaited) — sendSync/returnValue is the
+// only way to answer that without changing the call site to async.
+ipcMain.on('app:getVersionSync', (e) => { e.returnValue = APP_VERSION; });
 
 ipcMain.handle('shortcuts:list', () => {
   const lang = data.settings.language || 'es';

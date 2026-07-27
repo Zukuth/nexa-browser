@@ -12,7 +12,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   getState: () => ipcRenderer.invoke('state:get'),
-  getVersions: () => ({ app: '0.1.0', electron: process.versions.electron, chrome: process.versions.chrome }),
+  getVersions: () => ({ app: ipcRenderer.sendSync('app:getVersionSync'), electron: process.versions.electron, chrome: process.versions.chrome }),
   addAccount: (payload) => ipcRenderer.invoke('accounts:add', payload),
   quickAddAccount: () => ipcRenderer.invoke('accounts:quickAdd'),
   removeAccount: (id) => ipcRenderer.invoke('accounts:remove', { id }),
