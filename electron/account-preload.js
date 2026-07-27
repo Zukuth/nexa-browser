@@ -237,29 +237,17 @@ function installFingerprintNoise(accountId) {
     // if the page already froze/replaced these prototypes, just skip noise rather than throw
   }
 
-  const GPU_POOL = [
-    { vendor: 'Google Inc. (Intel)', renderer: 'ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)' },
-    { vendor: 'Google Inc. (NVIDIA)', renderer: 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1660 Direct3D11 vs_5_0 ps_5_0, D3D11)' },
-    { vendor: 'Google Inc. (AMD)', renderer: 'ANGLE (AMD, AMD Radeon RX 580 Direct3D11 vs_5_0 ps_5_0, D3D11)' }
-  ];
-  const gpuPick = GPU_POOL[hashSeed(accountId + ':gpu') % GPU_POOL.length];
-
-  function patchGl(proto) {
-    if (!proto || !proto.getParameter) return;
-    const origGetParameter = proto.getParameter;
-    proto.getParameter = function (param) {
-      if (param === 0x9245) return gpuPick.vendor; // UNMASKED_VENDOR_WEBGL
-      if (param === 0x9246) return gpuPick.renderer; // UNMASKED_RENDERER_WEBGL
-      return origGetParameter.call(this, param);
-    };
-  }
-
-  try {
-    if (window.WebGLRenderingContext) patchGl(WebGLRenderingContext.prototype);
-    if (window.WebGL2RenderingContext) patchGl(WebGL2RenderingContext.prototype);
-  } catch {
-    // no WebGL in this context — nothing to patch
-  }
+  // GPU vendor/renderer spoofing via WebGL getParameter() was removed here —
+  // it claimed a fake GPU (e.g. "AMD Radeon RX 580") while every OTHER WebGL
+  // capability (extensions, getInternalformatParameter, etc.) still reported
+  // the real underlying GPU, an internally-inconsistent fingerprint that is
+  // itself a strong bot signal. Confirmed live: this was the direct cause of
+  // Cloudflare Turnstile failing with error 600010 (and a flood of "WebGL:
+  // INVALID_ENUM: getInternalformatParameter" console errors) on fresh
+  // installs trying to log into poke.idleworld.online — Turnstile's own
+  // challenge relies on WebGL behavior being self-consistent. The canvas
+  // pixel-noise above stays: it only perturbs readback data, never touches
+  // WebGL state, and never caused a Turnstile failure.
 }
 
 try {

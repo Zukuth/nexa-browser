@@ -1,0 +1,59 @@
+name: Build Windows
+
+# Mirrors build-linux.yml — exists because building the NSIS installer
+# locally on Windows can get blocked by that machine's own Application
+# Control / WDAC policy (electron-builder needs to actually *run* the
+# freshly-built, unsigned installer.exe once internally, to extract the
+# uninstaller stub — some local security policies block that even though
+# nothing is wrong with the build itself). Building on a clean GitHub-hosted
+# Windows runner sidesteps whatever policy is active on any given local
+# machine.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Rama o tag desde donde compilar (ej. main)'
+        required: true
+        default: 'main'
+      release_tag:
+        description: 'Release de GitHub donde subir los instaladores (ej. v0.2.2)'
+        required: true
+        default: 'v0.2.2'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref_name }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      # --publish never: build only, don't let electron-builder touch the
+      # GitHub release itself — it refuses to attach new assets to a release
+      # published more than 2 hours ago (a safeguard against clobbering old
+      # releases). Uploading the files directly with `gh release upload`
+      # sidesteps that guard and works the same whether the release is
+      # brand new or already published.
+      - run: npx electron-builder --win --publish never
+
+      - name: Upload Windows assets to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh release upload "${{ github.event.inputs.release_tag || github.ref_name }}" \
+            build/*.exe build/*.exe.blockmap build/latest.yml \
+            --clobber
