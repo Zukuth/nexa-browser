@@ -2298,6 +2298,24 @@ calcSourceEl.addEventListener('change', () => {
 
 const CALC_STAT_LABELS = { hp: 'HP', atk: 'ATK', def: 'DEF', spatk: 'SpA', spdef: 'SpD', speed: 'Vel' };
 
+const QUALITY_BAND_ES = {
+  Weak: 'Malo', Common: 'Normal', Uncommon: 'Normal', Rare: 'Bueno', Epic: 'Bueno', Legendary: 'Excelente'
+};
+const QUALITY_TIER_INDEX = { Weak: 0, Common: 1, Uncommon: 2, Rare: 3, Epic: 4, Legendary: 5 };
+
+// Combines both axes the user asked for — Quality (game's own rarity roll)
+// and IV total (0-192, the "genetics" roll) — into one plain-language
+// verdict, instead of making them read two separate numbers and guess.
+function pokeVerdict(ivMin, ivMax, bandLabel) {
+  const ivPct = ((ivMin + ivMax) / 2) / 192;
+  const qTier = (QUALITY_TIER_INDEX[bandLabel] ?? 0) / 5;
+  const combined = (ivPct + qTier) / 2;
+  if (combined < 0.35) return { text: 'Malo', color: '#ff6b6b' };
+  if (combined < 0.6) return { text: 'Normal', color: '#8890a0' };
+  if (combined < 0.85) return { text: 'Bueno', color: '#51cf66' };
+  return { text: 'Excelente', color: '#ffb020' };
+}
+
 async function runCalculator() {
   const speciesId = Number(calcSpeciesEl.value);
   const level = Number(calcLevelEl.value);
@@ -2325,11 +2343,13 @@ async function runCalculator() {
 
   const clampedQ = Math.max(0.8, Math.min(2.6, quality));
   const markerPct = ((clampedQ - 0.8) / 1.8) * 100;
+  const verdict = pokeVerdict(result.ivMin, result.ivMax, result.band.label);
 
   calcResultEl.innerHTML = `
     <div class="poke-calc-summary">
       <div><b>${escapeHtmlClient(result.creatureName)}</b>Especie</div>
-      <div><b>${quality.toFixed(3)}</b>Quality (${result.band.label})</div>
+      <div><b style="color:${verdict.color}">${verdict.text}</b>Veredicto (Quality + IV)</div>
+      <div><b>${quality.toFixed(3)}</b>Quality (${QUALITY_BAND_ES[result.band.label] || result.band.label})</div>
       <div><b>${Math.round(result.ivMin)}–${Math.round(result.ivMax)}</b>IV total (6–192)</div>
       <div><b>${result.projectedPower}</b>Power proyectado Lv.${projLevel}</div>
     </div>
