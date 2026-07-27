@@ -1948,8 +1948,40 @@ const POKE_RARITY_COLORS = {
 // creatures.json (checked live) has no image URL, only a numeric `looktype`
 // that isn't the dex number; `speciesId` in poke-delta frames IS the real
 // dex number (confirmed: 18 = Pidgeot), which this CDN indexes by directly.
-function pokeSpriteUrl(speciesId) {
-  return speciesId ? `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${speciesId}.png` : '';
+// Confirmed live against the game's own creatures.json: "boosted hunt"
+// variants (e.g. pokeId 10501 "Brave Blastoise") use custom ids way outside
+// the real Pokédex range, so the PokeAPI sprite CDN 404s for them — but
+// their name is always "{Adjective} {RealSpeciesName}", and the real species
+// (e.g. plain "Blastoise") is itself somewhere else in the SAME catalog with
+// a normal id. Resolve by matching the name's trailing word(s) against every
+// normal-range name already in the cached catalog, so this works for any
+// prefix the game adds later, not just the ones seen so far.
+let speciesNameToDexIdCache = null;
+function getSpeciesNameToDexIdMap() {
+  if (speciesNameToDexIdCache || !creatureCatalogCache) return speciesNameToDexIdCache;
+  const map = new Map();
+  for (const c of creatureCatalogCache) {
+    if (c.pokeId < 10000 && c.name) map.set(c.name, c.pokeId);
+  }
+  speciesNameToDexIdCache = map;
+  return map;
+}
+
+function resolveSpriteDexId(pokeId, name) {
+  if (pokeId != null && pokeId < 10000) return pokeId;
+  const nameMap = getSpeciesNameToDexIdMap();
+  if (!name || !nameMap) return null;
+  const words = name.split(' ');
+  for (let i = 0; i < words.length; i++) {
+    const suffix = words.slice(i).join(' ');
+    if (nameMap.has(suffix)) return nameMap.get(suffix);
+  }
+  return null;
+}
+
+function pokeSpriteUrl(pokeId, name) {
+  const dexId = resolveSpriteDexId(pokeId, name);
+  return dexId ? `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${dexId}.png` : '';
 }
 
 function formatRelativeTime(ts) {
@@ -1991,7 +2023,7 @@ function renderPokeIdleNotable() {
     const img = document.createElement('img');
     img.className = 'poke-notable-sprite';
     img.loading = 'lazy';
-    img.src = pokeSpriteUrl(c.speciesId);
+    img.src = pokeSpriteUrl(c.speciesId, c.name);
     img.alt = c.name || '';
     img.onerror = () => { img.style.visibility = 'hidden'; };
 
@@ -2126,7 +2158,7 @@ function renderPokeIdleTeam() {
       const img = document.createElement('img');
       img.className = 'poke-team-sprite';
       img.loading = 'lazy';
-      img.src = pokeSpriteUrl(p.speciesId);
+      img.src = pokeSpriteUrl(p.speciesId, p.name);
       img.alt = p.name || '';
       img.onerror = () => { img.style.visibility = 'hidden'; };
 
@@ -2372,7 +2404,7 @@ function renderHuntTable() {
       ? `<span class="poke-matchup-chip ${matchupChipClass(r.matchup)}">×${r.matchup}</span>`
       : '—';
     return `<tr>
-      <td><div class="poke-hunt-row-name"><img class="poke-hunt-sprite" loading="lazy" src="${pokeSpriteUrl(r.pokeId)}" onerror="this.style.visibility='hidden'" alt="" />${escapeHtmlClient(r.name)}</div></td>
+      <td><div class="poke-hunt-row-name"><img class="poke-hunt-sprite" loading="lazy" src="${pokeSpriteUrl(r.pokeId, r.name)}" onerror="this.style.visibility='hidden'" alt="" />${escapeHtmlClient(r.name)}</div></td>
       <td>${typeBadges}</td>
       <td class="poke-hunt-num">${r.huntLevel ?? '?'}</td>
       <td>${matchupHtml}</td>
