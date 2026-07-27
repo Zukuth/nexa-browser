@@ -45,6 +45,36 @@ El navegador se actualiza solo — no tenés que estar pendiente de bajar la úl
 ### 🖥️ Se instala como cualquier programa de Windows
 Instalador estándar (NSIS) que se integra en `C:\Program Files`, con su acceso directo en el Escritorio y entrada en "Aplicaciones instaladas" — igual que cualquier navegador conocido.
 
+### 🌐 Idioma en tiempo real (Español / Português / English)
+Elegí tu idioma en Configuración y toda la interfaz cambia al instante — sin reiniciar la app — incluidas todas las herramientas de Poke Idle World, menús contextuales, atajos de teclado y notificaciones.
+
+### 🎨 Tema claro y oscuro
+Seguí el tema del sistema operativo o forzalo manualmente, a gusto.
+
+### 🚀 Command Palette (`Ctrl + K`)
+Buscá cuentas, espacios, acciones o navegá directo a una URL desde un solo cuadro, sin sacar las manos del teclado.
+
+### 🔀 Reordená todo con drag & drop
+Arrastrá cuentas y espacios para reorganizarlos como quieras.
+
+### ⬇️ Gestor de descargas completo
+Pausá, reanudá o cancelá descargas en curso, elegí carpeta de destino por descarga y accedé al historial completo desde el navegador.
+
+### 🌱 Modo Eco por cuenta
+Activalo en las cuentas que dejás en segundo plano (por ejemplo, un juego idle) para reducir el consumo de CPU sin frenar el progreso real de la cuenta.
+
+## 🎮 Poke Idle World — panel de herramientas integrado
+
+Para quienes juegan [Poke Idle World](https://poke.idleworld.online), Nexa Browser trae un panel propio (botón 🎮 en la barra superior) que lee en vivo los datos que el propio juego transmite — **de solo lectura: nunca automatiza capturas ni toca el captcha**.
+
+- **📊 Resumen en vivo**: muertes/hora, XP/hora, oro/hora, capturas/hora y shinies, sumado en tiempo real por cada cuenta abierta.
+- **🧬 Calculadora de Growth/IV y Quality**: la fórmula real del juego, portada y verificada — elegí una captura o un Pokémon del equipo para autocompletar, sin tipear nada, y mirá el veredicto (Excepcional a Bajo) según el % de IV real.
+- **🏆 Tier List**: ranking del roster completo por percentil de stats base, con bono de Clan opcional. Al elegir un Pokémon se muestra su línea evolutiva y sus matchups de tipo más fuertes y más débiles.
+- **⚔️ Caza & XP**: XP/hora y oro/hora reales de cada especie cazable, con el multiplicador de daño de tu atacante actual contra cada tipo.
+- **💰 Drops en vivo**: todo lo que sueltan tus kills en la sesión actual, con ícono e valor real a precio NPC — separado por cuenta si tenés varias abiertas.
+- **✨ Capturas destacadas**: log en tiempo real de todo lo capturado en la sesión, con sprite, quality e IV.
+- **🔔 Alertas nativas**: notificaciones de Windows para shiny, capturas raras, desconexión/reconexión y pocas balls, configurables una por una.
+
 ## Instalación
 
 1. Andá a la [última versión publicada](https://github.com/Zukuth/nexa-browser/releases/latest).
@@ -61,6 +91,7 @@ Instalador estándar (NSIS) que se integra en `C:\Program Files`, con su acceso 
 | `Ctrl + Tab` | Siguiente panel |
 | `Ctrl + N` | Nueva cuenta |
 | `Ctrl + Shift + N` | Nuevo espacio |
+| `Ctrl + K` | Paleta de comandos |
 | `Ctrl + R` | Recargar panel activo |
 | `Ctrl + M` | Silenciar panel activo |
 | `Ctrl + L` | Enfocar barra de direcciones |
