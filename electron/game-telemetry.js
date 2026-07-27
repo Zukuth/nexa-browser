@@ -170,6 +170,10 @@ function getCreatureCatalogArray() {
   return creatureCatalog ? Array.from(creatureCatalog.values()) : [];
 }
 
+function getItemPriceByNameMap() {
+  return itemPriceByName;
+}
+
 function learnedMoves(speciesId, level) {
   const creature = creatureCatalog && creatureCatalog.get(speciesId);
   if (!creature) return [];
@@ -491,6 +495,8 @@ module.exports = {
   setBallsLowThreshold,
   ensureCreatureCatalog,
   getCreatureCatalogArray,
+  ensureItemPriceCatalog,
+  getItemPriceByNameMap,
   // exported for unit testing
   rarityFromQuality,
   applyFrame,

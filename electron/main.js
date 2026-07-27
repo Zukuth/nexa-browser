@@ -2747,26 +2747,58 @@ ipcMain.handle('pokeFormulas:computeGrowth', async (_e, payload) => {
   return { creatureName: creature.name, rows, ivMin, ivMax, projectedPower, band, quality };
 });
 
+// Documented in the user's own reference tool: "Oro esperado por kill = Σ
+// (chance% × cantidad media × precio NPC del item)" — NOT the species'
+// sellValue/capturePrice (that's what you get for CATCHING it, gated by a
+// capture chance the game never reveals; killing-for-loot is a completely
+// different economy). `chance` in creatures.json's loot entries is out of
+// 100000 (confirmed: 71498 there reads as "71.498%"). Each creature —
+// including the 10000+ "flavor variant" hunts (Brave X, Furious X, etc.) —
+// carries its OWN loot table in the same catalog already cached, so this
+// stays correct per-variant without needing a separate lookup.
+function lootGoldPerKill(creature, itemPriceByName) {
+  if (!Array.isArray(creature.loot) || !itemPriceByName) return 0;
+  let total = 0;
+  for (const drop of creature.loot) {
+    if (!drop || !drop.name) continue;
+    const price = itemPriceByName.get(drop.name) || 0;
+    const avgCount = ((drop.minCount || 0) + (drop.maxCount || 0)) / 2;
+    const chanceFrac = (drop.chance || 0) / 100000;
+    total += chanceFrac * avgCount * price;
+  }
+  return total;
+}
+
+// Species documented in the Poképedia but manually confirmed by the user
+// (in-game, not just from the catalog) to not actually be spawnable as a
+// hunt yet — their catalog entries have placeholder/unreliable loot data
+// (that's what caused the anomalously-high gold/h the user first flagged).
+// Ported verbatim from their own verified list rather than guessed.
+const UNCONFIRMED_HUNT_SPECIES = new Set(['Sentret', 'Furret', 'Ledyba', 'Ledian', 'Yanma', 'Dunsparce', 'Slowking']);
+
 // Caza & XP / Ruta de Farmeo: every huntable species with XP/h, oro/h (using
 // a real or estimated kills-per-hour rate) and, if an attacker type was
 // given, the damage matchup multiplier against it — same 650 kills/h default
 // as the reference site when no real rate is available.
 ipcMain.handle('pokeFormulas:getHuntTable', async (_e, payload) => {
   const { attackerType1, attackerType2, killsPerHour } = payload || {};
-  await gameTelemetry.ensureCreatureCatalog();
+  await Promise.all([gameTelemetry.ensureCreatureCatalog(), gameTelemetry.ensureItemPriceCatalog()]);
   const kph = killsPerHour && killsPerHour > 0 ? killsPerHour : 650;
-  return gameTelemetry.getCreatureCatalogArray().map((c) => ({
-    pokeId: c.pokeId,
-    name: c.name,
-    type1: c.type1,
-    type2: c.type2 || null,
-    rarity: c.rarity,
-    huntLevel: c.huntLevel,
-    matchup: attackerType1 ? pokeFormulas.matchupFor(attackerType1, c.type1, c.type2) : null,
-    matchup2: attackerType2 ? pokeFormulas.matchupFor(attackerType2, c.type1, c.type2) : null,
-    xpPerHour: Math.round(pokeFormulas.xpPerHour(c.experience || 0, kph)),
-    goldPerHour: Math.round(pokeFormulas.goldPerHour(c.sellValue || 0, kph))
-  }));
+  const itemPriceByName = gameTelemetry.getItemPriceByNameMap();
+  return gameTelemetry.getCreatureCatalogArray()
+    .filter((c) => !UNCONFIRMED_HUNT_SPECIES.has(c.name))
+    .map((c) => ({
+      pokeId: c.pokeId,
+      name: c.name,
+      type1: c.type1,
+      type2: c.type2 || null,
+      rarity: c.rarity,
+      huntLevel: c.huntLevel,
+      matchup: attackerType1 ? pokeFormulas.matchupFor(attackerType1, c.type1, c.type2) : null,
+      matchup2: attackerType2 ? pokeFormulas.matchupFor(attackerType2, c.type1, c.type2) : null,
+      xpPerHour: Math.round(pokeFormulas.xpPerHour(c.experience || 0, kph)),
+      goldPerHour: Math.round(pokeFormulas.goldPerHour(lootGoldPerKill(c, itemPriceByName), kph))
+    }));
 });
 
 ipcMain.handle('metrics:get', () => {
