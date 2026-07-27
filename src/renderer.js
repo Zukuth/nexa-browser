@@ -1990,6 +1990,7 @@ function renderPokeIdleNotable() {
 
     const img = document.createElement('img');
     img.className = 'poke-notable-sprite';
+    img.loading = 'lazy';
     img.src = pokeSpriteUrl(c.speciesId);
     img.alt = c.name || '';
     img.onerror = () => { img.style.visibility = 'hidden'; };
@@ -2124,6 +2125,7 @@ function renderPokeIdleTeam() {
 
       const img = document.createElement('img');
       img.className = 'poke-team-sprite';
+      img.loading = 'lazy';
       img.src = pokeSpriteUrl(p.speciesId);
       img.alt = p.name || '';
       img.onerror = () => { img.style.visibility = 'hidden'; };
@@ -2370,7 +2372,7 @@ function renderHuntTable() {
       ? `<span class="poke-matchup-chip ${matchupChipClass(r.matchup)}">×${r.matchup}</span>`
       : '—';
     return `<tr>
-      <td><div class="poke-hunt-row-name"><img class="poke-hunt-sprite" src="${pokeSpriteUrl(r.pokeId)}" onerror="this.style.visibility='hidden'" alt="" />${escapeHtmlClient(r.name)}</div></td>
+      <td><div class="poke-hunt-row-name"><img class="poke-hunt-sprite" loading="lazy" src="${pokeSpriteUrl(r.pokeId)}" onerror="this.style.visibility='hidden'" alt="" />${escapeHtmlClient(r.name)}</div></td>
       <td>${typeBadges}</td>
       <td class="poke-hunt-num">${r.huntLevel ?? '?'}</td>
       <td>${matchupHtml}</td>
