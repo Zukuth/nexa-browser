@@ -1971,10 +1971,16 @@ function resolveSpriteDexId(pokeId, name) {
   if (pokeId != null && pokeId < 10000) return pokeId;
   const nameMap = getSpeciesNameToDexIdMap();
   if (!name || !nameMap) return null;
-  const words = name.split(' ');
-  for (let i = 0; i < words.length; i++) {
-    const suffix = words.slice(i).join(' ');
-    if (nameMap.has(suffix)) return nameMap.get(suffix);
+  if (nameMap.has(name)) return nameMap.get(name);
+  // Strip one leading "{Prefix}{separator}" at a time — the prefix word can
+  // be separator by a space ("Brave Blastoise") or a hyphen ("Milch-Miltank"
+  // confirmed live), so split on whichever comes first rather than assuming
+  // one or the other.
+  let rest = name;
+  let match;
+  while ((match = rest.match(/^[^\s-]+[\s-]+(.+)$/))) {
+    rest = match[1];
+    if (nameMap.has(rest)) return nameMap.get(rest);
   }
   return null;
 }
