@@ -72,13 +72,14 @@ function emptyLive() {
     shinyCaught: 0,
     shinyLost: 0,
     ballsOnShiny: 0,
-    // Most-recent-first, capped — captures worth showing off (Lendária+ or
-    // shiny), each with enough detail for a real capture-log UI card.
+    // Most-recent-first, capped — every capture (any rarity), each with
+    // enough detail for a real capture-log UI card, à la the game's own
+    // "Capture Log" panel.
     notableCaptures: []
   };
 }
 
-const NOTABLE_CAPTURE_CAP = 30;
+const NOTABLE_CAPTURE_CAP = 100;
 const NOTABLE_RARITIES = new Set(['Lendária', 'Mythic', 'Ancient', 'Divine']);
 
 // One of these per account id that's ever matched isGameUrl().
@@ -217,8 +218,7 @@ function applyFrame(state, msg) {
       if (typeof poke.sellValue === 'number') L.captureGold += poke.sellValue;
       const rarity = poke.rarity || rarityFromQuality(poke.quality);
       if (rarity) L.byRarity[rarity] = (L.byRarity[rarity] || 0) + 1;
-      const isNotable = poke.shiny || NOTABLE_RARITIES.has(rarity);
-      if (isNotable) {
+      {
         L.notableCaptures.unshift({
           name: poke.name,
           speciesId: poke.speciesId,

@@ -1913,9 +1913,15 @@ function savePokeIdleAlertFields() {
 });
 pokeAlertBallsThreshold.addEventListener('change', savePokeIdleAlertFields);
 
+// Mirrors RARITY_THRESHOLDS in game-telemetry.js, low to high.
 const POKE_RARITY_COLORS = {
+  'Fraca': '#6b7280',
+  'Comum': '#9ca3af',
+  'Incomum': '#51cf66',
+  'Rara': '#4f8cff',
+  'Épica': '#a855f7',
   'Lendária': '#ffb020',
-  'Mythic': '#b076ff',
+  'Mythic': '#f43f5e',
   'Ancient': '#34d3c4',
   'Divine': '#ff5fa8'
 };
@@ -1952,7 +1958,7 @@ function renderPokeIdleNotable() {
   const top = all.slice(0, 20);
 
   if (top.length === 0) {
-    el.innerHTML = '<div class="settings-hint">Todavía no hay capturas Lendária o superiores (ni shinies) en esta sesión.</div>';
+    el.innerHTML = '<div class="settings-hint">Todavía no hay capturas en esta sesión.</div>';
     return;
   }
 
