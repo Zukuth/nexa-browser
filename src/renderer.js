@@ -2262,46 +2262,32 @@ async function runCalculator() {
     return;
   }
 
-  const catalog = await ensureCreatureCatalogRenderer();
-  const creature = catalog.find((c) => c.pokeId === speciesId);
-  if (!creature) {
+  const projLevel = Number(calcProjLevelEl.value) || level;
+  const result = await window.api.computeGrowthCalc({ speciesId, level, quality, observed, projLevel });
+  if (!result || result.error) {
     calcResultEl.innerHTML = '<div class="settings-hint">No encontré esa especie en el catálogo.</div>';
     return;
   }
-  const base = {
-    hp: creature.baseHp, atk: creature.baseAtk, def: creature.baseDef,
-    spatk: creature.baseSpAtk, spdef: creature.baseSpDef, speed: creature.baseSpeed
-  };
-  const projLevel = Number(calcProjLevelEl.value) || level;
 
-  let ivMin = 0, ivMax = 0, statsSumAtProj = 0;
-  const rows = Object.keys(CALC_STAT_LABELS).map((key) => {
-    const res = window.pokeFormulas.inferGrowth(base[key], level, quality, observed[key], key);
-    const min = Math.min(...res.values), max = Math.max(...res.values);
-    const mid = Math.round((min + max) / 2);
-    ivMin += min; ivMax += max;
-    const projected = window.pokeFormulas.growthStat(base[key], mid, projLevel, quality, key);
-    statsSumAtProj += projected;
-    const range = min === max ? String(min) : `${min}–${max}`;
-    return `<tr><td>${CALC_STAT_LABELS[key]}</td><td>${range}</td><td>${observed[key]}</td><td>${projected}</td></tr>`;
-  });
+  const rowsHtml = result.rows.map((r) => {
+    const range = r.min === r.max ? String(r.min) : `${r.min}–${r.max}`;
+    return `<tr><td>${CALC_STAT_LABELS[r.key]}</td><td>${range}</td><td>${r.observed}</td><td>${r.projected}</td></tr>`;
+  }).join('');
 
-  const projectedPower = window.pokeFormulas.powerFor(statsSumAtProj, quality);
-  const band = window.pokeFormulas.qualityBand(quality);
   const clampedQ = Math.max(0.8, Math.min(2.6, quality));
   const markerPct = ((clampedQ - 0.8) / 1.8) * 100;
 
   calcResultEl.innerHTML = `
     <div class="poke-calc-summary">
-      <div><b>${escapeHtmlClient(creature.name)}</b>Especie</div>
-      <div><b>${quality.toFixed(3)}</b>Quality (${band.label})</div>
-      <div><b>${Math.round(ivMin)}–${Math.round(ivMax)}</b>IV total (6–192)</div>
-      <div><b>${projectedPower}</b>Power proyectado Lv.${projLevel}</div>
+      <div><b>${escapeHtmlClient(result.creatureName)}</b>Especie</div>
+      <div><b>${quality.toFixed(3)}</b>Quality (${result.band.label})</div>
+      <div><b>${Math.round(result.ivMin)}–${Math.round(result.ivMax)}</b>IV total (6–192)</div>
+      <div><b>${result.projectedPower}</b>Power proyectado Lv.${projLevel}</div>
     </div>
     <div class="poke-calc-quality-gauge"><div class="poke-calc-quality-marker" style="left:${markerPct}%"></div></div>
     <table class="poke-calc-table">
       <thead><tr><th>Stat</th><th>Growth (IV)</th><th>Actual Lv.${level}</th><th>Proyectado Lv.${projLevel}</th></tr></thead>
-      <tbody>${rows.join('')}</tbody>
+      <tbody>${rowsHtml}</tbody>
     </table>
   `;
 }

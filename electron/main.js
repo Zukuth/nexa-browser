@@ -8,6 +8,7 @@ const store = require('./store');
 const { autoUpdater } = require('electron-updater');
 const { GAP, GRID_MAX_PANELS, MIN_SPLIT_FRAC, resolveFracs, cellsForMode, freeCells, normalizeFracsWithMin } = require('./layout-utils');
 const gameTelemetry = require('./game-telemetry');
+const pokeFormulas = require('./poke-formulas');
 
 // Last-resort net: an ipcMain.on (not .handle) listener that throws crashes the
 // whole app with no trace, since Electron only auto-catches .handle rejections.
@@ -2716,6 +2717,34 @@ ipcMain.handle('gameStats:get', () => gameTelemetry.getAllStats());
 ipcMain.handle('pokeFormulas:getCreatureCatalog', async () => {
   await gameTelemetry.ensureCreatureCatalog();
   return gameTelemetry.getCreatureCatalogArray();
+});
+
+const CALC_STAT_KEYS = ['hp', 'atk', 'def', 'spatk', 'spdef', 'speed'];
+ipcMain.handle('pokeFormulas:computeGrowth', async (_e, payload) => {
+  const { speciesId, level, quality, observed, projLevel } = payload || {};
+  if (!speciesId || !level || !quality || !observed) return { error: 'missing_fields' };
+  await gameTelemetry.ensureCreatureCatalog();
+  const creature = gameTelemetry.getCreatureCatalogArray().find((c) => c.pokeId === speciesId);
+  if (!creature) return { error: 'unknown_species' };
+  const base = {
+    hp: creature.baseHp, atk: creature.baseAtk, def: creature.baseDef,
+    spatk: creature.baseSpAtk, spdef: creature.baseSpDef, speed: creature.baseSpeed
+  };
+  const targetLevel = projLevel || level;
+  let ivMin = 0, ivMax = 0, statsSumAtProj = 0;
+  const rows = CALC_STAT_KEYS.map((key) => {
+    const obs = Number(observed[key]);
+    const res = pokeFormulas.inferGrowth(base[key], level, quality, obs, key);
+    const min = Math.min(...res.values), max = Math.max(...res.values);
+    const mid = Math.round((min + max) / 2);
+    ivMin += min; ivMax += max;
+    const projected = pokeFormulas.growthStat(base[key], mid, targetLevel, quality, key);
+    statsSumAtProj += projected;
+    return { key, min, max, observed: obs, projected };
+  });
+  const projectedPower = pokeFormulas.powerFor(statsSumAtProj, quality);
+  const band = pokeFormulas.qualityBand(quality);
+  return { creatureName: creature.name, rows, ivMin, ivMax, projectedPower, band, quality };
 });
 
 ipcMain.handle('metrics:get', () => {
