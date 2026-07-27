@@ -265,6 +265,22 @@ if (data.settings.hardwareAcceleration === false) {
   app.disableHardwareAcceleration();
 }
 
+// Electron ships its own, fixed copy of Chromium's GPU allow/block-list —
+// unlike a real installed Chrome, which auto-updates that list independently
+// of the browser version. Confirmed live: a machine where the game's login
+// page (Cloudflare Turnstile) worked fine in real Chrome still failed with
+// Turnstile error 600010 in Nexa Browser, with WebGL throwing
+// "INVALID_ENUM: getInternalformatParameter" and WebGPU reporting "No
+// available adapters" — with hardwareAcceleration correctly enabled in
+// settings. That combination (GPU acceleration nominally on, but WebGL/WebGPU
+// unavailable to a specific page) matches this Electron version's bundled
+// GPU block-list rejecting a driver/GPU combination that Chrome's own,
+// separately-updated list already allows. --ignore-gpu-blocklist is
+// Chromium's own standard flag for exactly this mismatch — it does not
+// disable or weaken any actual capability check, it only stops Chromium's
+// static list from vetoing hardware the driver itself supports.
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+
 // Vanilla Electron doesn't ship Widevine (it's Google-licensed DRM, not something
 // an open-source build can bundle) — this borrows the CDM binary that a real,
 // already-licensed Chrome or Edge install has on disk, so DRM sites (Netflix,
