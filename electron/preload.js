@@ -1,4 +1,10 @@
 const { contextBridge, ipcRenderer } = require('electron');
+const pokeFormulas = require('./poke-formulas');
+
+// Pure game-math (type chart, growth/IV, tier score, xp/gold per hour) — safe
+// to expose directly since it's all deterministic, side-effect-free
+// functions with no filesystem/network/IPC access of their own.
+contextBridge.exposeInMainWorld('pokeFormulas', pokeFormulas);
 
 contextBridge.exposeInMainWorld('api', {
   getState: () => ipcRenderer.invoke('state:get'),
@@ -77,6 +83,7 @@ contextBridge.exposeInMainWorld('api', {
   removeExtension: (id) => ipcRenderer.invoke('extensions:remove', { id }),
   getMetrics: () => ipcRenderer.invoke('metrics:get'),
   getGameStats: () => ipcRenderer.invoke('gameStats:get'),
+  getCreatureCatalog: () => ipcRenderer.invoke('pokeFormulas:getCreatureCatalog'),
   addBookmark: (payload) => ipcRenderer.invoke('bookmarks:add', payload),
   removeBookmark: (id) => ipcRenderer.invoke('bookmarks:remove', { id }),
   exportBookmarks: () => ipcRenderer.invoke('bookmarks:export'),

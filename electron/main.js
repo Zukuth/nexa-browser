@@ -2710,6 +2710,14 @@ ipcMain.handle('passwords:remove', (_e, { id }) => {
 // muestra).
 ipcMain.handle('gameStats:get', () => gameTelemetry.getAllStats());
 
+// For the Tier List / Comparador / Caza & XP tools — works even if the user
+// opens them before any account has attached to the game (triggers the same
+// cached fetch attachCapture() would have).
+ipcMain.handle('pokeFormulas:getCreatureCatalog', async () => {
+  await gameTelemetry.ensureCreatureCatalog();
+  return gameTelemetry.getCreatureCatalogArray();
+});
+
 ipcMain.handle('metrics:get', () => {
   const metrics = app.getAppMetrics();
   const byPid = new Map(metrics.map((m) => [m.pid, m]));

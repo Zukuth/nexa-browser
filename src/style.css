@@ -1635,10 +1635,84 @@ html, body {
 }
 
 .poke-idle-modal {
-  width: 680px;
-  max-height: 82vh;
+  width: 860px;
+  max-height: 84vh;
   padding: 0;
   overflow: hidden;
+}
+
+.poke-calc-manual.hidden {
+  display: none;
+}
+
+.poke-calc-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 4px 0 14px;
+}
+
+.poke-calc-stat-grid label {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.poke-calc-stat-grid input {
+  width: 100%;
+}
+
+.poke-calc-quality-gauge {
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #6b7280, #51cf66, #4f8cff, #a855f7, #ffb020);
+  position: relative;
+  margin: 8px 0 4px;
+}
+
+.poke-calc-quality-marker {
+  position: absolute;
+  top: -3px;
+  width: 3px;
+  height: 14px;
+  background: #fff;
+  border-radius: 2px;
+  box-shadow: 0 0 4px rgba(0,0,0,0.6);
+}
+
+.poke-calc-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.poke-calc-table th, .poke-calc-table td {
+  text-align: right;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+
+.poke-calc-table th:first-child, .poke-calc-table td:first-child {
+  text-align: left;
+  color: var(--muted);
+}
+
+.poke-calc-summary {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  font-size: 12px;
+}
+
+.poke-calc-summary b {
+  font-size: 15px;
+  display: block;
 }
 
 .poke-team-list {

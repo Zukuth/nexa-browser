@@ -455,6 +455,7 @@
         <div class="settings-nav">
           <div class="poke-nav-item active" data-poke-tab="resumen">Resumen</div>
           <div class="poke-nav-item" data-poke-tab="equipo">Mi Equipo</div>
+          <div class="poke-nav-item" data-poke-tab="calculadora">Calculadora IV</div>
           <div class="poke-nav-item" data-poke-tab="capturas">Capturas destacadas</div>
           <div class="poke-nav-item" data-poke-tab="alertas">Alertas</div>
         </div>
@@ -476,6 +477,44 @@
               aprendidos según su nivel actual (calculado contra el catálogo del propio juego).
             </p>
             <div id="poke-idle-team" class="poke-team-list"></div>
+          </div>
+
+          <div class="poke-pane" data-poke-pane="calculadora">
+            <p class="settings-hint">
+              Fórmula real de Growth (IV) y Quality del juego, portada de tu propia calculadora. Elegí una captura o
+              un pokémon del equipo para auto-completar, o cargá los datos a mano.
+            </p>
+            <div class="settings-row">
+              <span>Fuente</span>
+              <select id="calc-source"></select>
+            </div>
+            <div id="calc-manual-fields" class="poke-calc-manual">
+              <div class="settings-row">
+                <span>Pokémon</span>
+                <select id="calc-species"></select>
+              </div>
+              <div class="settings-row">
+                <span>Nivel</span>
+                <input type="number" id="calc-level" min="1" max="200" />
+              </div>
+              <div class="settings-row">
+                <span>Quality</span>
+                <input type="number" id="calc-quality" min="0" step="0.001" />
+              </div>
+              <div class="poke-calc-stat-grid">
+                <div><label>HP</label><input type="number" id="calc-stat-hp" /></div>
+                <div><label>ATK</label><input type="number" id="calc-stat-atk" /></div>
+                <div><label>DEF</label><input type="number" id="calc-stat-def" /></div>
+                <div><label>SpA</label><input type="number" id="calc-stat-spatk" /></div>
+                <div><label>SpD</label><input type="number" id="calc-stat-spdef" /></div>
+                <div><label>Vel</label><input type="number" id="calc-stat-speed" /></div>
+              </div>
+            </div>
+            <div class="settings-row">
+              <span>Nivel de proyección</span>
+              <input type="number" id="calc-proj-level" min="1" max="200" value="100" />
+            </div>
+            <div id="calc-result"></div>
           </div>
 
           <div class="poke-pane" data-poke-pane="capturas">

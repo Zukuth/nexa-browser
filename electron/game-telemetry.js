@@ -138,12 +138,15 @@ function ensureItemPriceCatalog() {
 }
 
 // Same fetch-once-and-cache pattern as the item price catalog above, for
-// /game/creatures.json — used to show which attacks a team member has
+// /game/creatures.json — used both to show which attacks a team member has
 // likely learned by now (creatures.json's per-species `attacks` array has a
 // `learnLevel` per move; the game's own WS frames don't carry a "currently
 // equipped moves" field for an individual owned poke, so this is the closest
-// derivable approximation from data the game actually publishes).
-let creatureCatalog = null; // pokeId (== speciesId in poke-delta/pokes frames) -> {name, rarity, attacks}
+// derivable approximation from data the game actually publishes) and to feed
+// the Tier List / Comparador / Caza & XP tools (poke-formulas.js), which need
+// the full per-species record (base stats, type, huntLevel, sellValue,
+// experience, loot), not just name/rarity/attacks.
+let creatureCatalog = null; // pokeId (== speciesId in poke-delta/pokes frames) -> full creatures.json record
 let creatureCatalogPromise = null;
 function ensureCreatureCatalog() {
   if (creatureCatalog || creatureCatalogPromise) return creatureCatalogPromise;
@@ -152,9 +155,7 @@ function ensureCreatureCatalog() {
     .then((data) => {
       const byId = new Map();
       for (const c of (data && data.creatures) || []) {
-        if (c && c.pokeId != null) {
-          byId.set(c.pokeId, { name: c.name, rarity: c.rarity, attacks: Array.isArray(c.attacks) ? c.attacks : [] });
-        }
+        if (c && c.pokeId != null) byId.set(c.pokeId, c);
       }
       creatureCatalog = byId;
     })
@@ -163,6 +164,10 @@ function ensureCreatureCatalog() {
       creatureCatalogPromise = null;
     });
   return creatureCatalogPromise;
+}
+
+function getCreatureCatalogArray() {
+  return creatureCatalog ? Array.from(creatureCatalog.values()) : [];
 }
 
 function learnedMoves(speciesId, level) {
@@ -225,6 +230,7 @@ function applyFrame(state, msg) {
           level: poke.level,
           quality: poke.quality,
           ivTotal: poke.ivTotal,
+          stats: poke.stats,
           rarity,
           shiny: !!poke.shiny,
           sellValue: poke.sellValue,
@@ -472,6 +478,8 @@ module.exports = {
   getAllStats,
   startHeartbeat,
   setBallsLowThreshold,
+  ensureCreatureCatalog,
+  getCreatureCatalogArray,
   // exported for unit testing
   rarityFromQuality,
   applyFrame,

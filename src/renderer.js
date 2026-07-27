@@ -65,6 +65,20 @@ const tbPokeIdle = document.getElementById('tb-poke-idle');
 const pokeNavItems = document.querySelectorAll('.poke-nav-item');
 const pokePanes = document.querySelectorAll('.poke-pane');
 const pokeIdleTeamEl = document.getElementById('poke-idle-team');
+const calcSourceEl = document.getElementById('calc-source');
+const calcSpeciesEl = document.getElementById('calc-species');
+const calcLevelEl = document.getElementById('calc-level');
+const calcQualityEl = document.getElementById('calc-quality');
+const calcProjLevelEl = document.getElementById('calc-proj-level');
+const calcResultEl = document.getElementById('calc-result');
+const calcStatInputs = {
+  hp: document.getElementById('calc-stat-hp'),
+  atk: document.getElementById('calc-stat-atk'),
+  def: document.getElementById('calc-stat-def'),
+  spatk: document.getElementById('calc-stat-spatk'),
+  spdef: document.getElementById('calc-stat-spdef'),
+  speed: document.getElementById('calc-stat-speed')
+};
 const btnLayoutMenu = document.getElementById('btn-layout-menu');
 const layoutMenu = document.getElementById('layout-menu');
 const layoutOptions = document.querySelectorAll('.layout-option');
@@ -1981,7 +1995,7 @@ function renderPokeIdleNotable() {
     const quality = typeof c.quality === 'number' ? c.quality.toFixed(3) : '?';
     info.innerHTML = `
       <div class="poke-notable-name">${c.shiny ? '✨' : ''} ${escapeHtmlClient(c.name || '?')} <span style="color:var(--muted); font-weight:400;">Lv.${c.level ?? '?'}</span></div>
-      <div class="poke-notable-meta">${showAccountName ? escapeHtmlClient(c.accountName) + ' · ' : ''}Quality ${quality} · IV ${c.ivTotal ?? '?'}/186</div>
+      <div class="poke-notable-meta">${showAccountName ? escapeHtmlClient(c.accountName) + ' · ' : ''}Quality ${quality} · IV ${c.ivTotal ?? '?'}/192</div>
     `;
 
     const rarity = document.createElement('div');
@@ -2069,6 +2083,7 @@ function openPokeIdleModal() {
   renderPokeIdleNotable();
   renderPokeIdleTeam();
   loadPokeIdleAlertFields();
+  populateCalcSourceDropdown();
 }
 
 function closePokeIdleModal() {
@@ -2123,7 +2138,7 @@ function renderPokeIdleTeam() {
       const quality = document.createElement('div');
       quality.className = 'poke-team-quality';
       const q = typeof p.quality === 'number' ? p.quality.toFixed(3) : '?';
-      quality.textContent = `Quality ${q} · IV ${p.ivTotal ?? '?'}/186 · Power ${p.power ?? '?'}`;
+      quality.textContent = `Quality ${q} · IV ${p.ivTotal ?? '?'}/192 · Power ${p.power ?? '?'}`;
 
       const hpPct = p.maxHp ? Math.max(0, Math.min(100, (p.hp / p.maxHp) * 100)) : 0;
       const hpRow = document.createElement('div');
@@ -2154,6 +2169,144 @@ function renderPokeIdleTeam() {
     });
   });
 }
+
+// ---- Calculadora Growth/IV (fórmula real portada de pokemon-360.web.app) ----
+
+let creatureCatalogCache = null;
+let creatureCatalogPromise = null;
+function ensureCreatureCatalogRenderer() {
+  if (creatureCatalogCache) return Promise.resolve(creatureCatalogCache);
+  if (!creatureCatalogPromise) {
+    creatureCatalogPromise = window.api.getCreatureCatalog().then((list) => {
+      creatureCatalogCache = list;
+      return list;
+    });
+  }
+  return creatureCatalogPromise;
+}
+
+async function populateCalcSpeciesDropdown() {
+  const catalog = await ensureCreatureCatalogRenderer();
+  const sorted = catalog.slice().sort((a, b) => a.name.localeCompare(b.name));
+  calcSpeciesEl.innerHTML = '<option value="">Elegí un Pokémon…</option>' +
+    sorted.map((c) => `<option value="${c.pokeId}">${escapeHtmlClient(c.name)}</option>`).join('');
+}
+
+let calcSources = [];
+
+function collectLiveCalcSources() {
+  const sources = [];
+  const tracked = state.accounts.filter((a) => !a.closed && gameStats[a.id]);
+  tracked.forEach((account, ai) => {
+    const gs = gameStats[account.id];
+    (gs.team || []).forEach((p) => {
+      sources.push({
+        label: `🟢 ${displayName(account, ai)} · ${p.name} Lv.${p.level} (equipo)`,
+        speciesId: p.speciesId, level: p.level, quality: p.quality, stats: p.stats
+      });
+    });
+    (gs.notableCaptures || []).slice(0, 15).forEach((c) => {
+      if (!c.stats) return;
+      sources.push({
+        label: `📋 ${displayName(account, ai)} · ${c.name} Lv.${c.level} (${formatRelativeTime(c.at)})`,
+        speciesId: c.speciesId, level: c.level, quality: c.quality, stats: c.stats
+      });
+    });
+  });
+  return sources;
+}
+
+function populateCalcSourceDropdown() {
+  calcSources = collectLiveCalcSources();
+  const current = calcSourceEl.value;
+  calcSourceEl.innerHTML = '<option value="manual">Manual</option>' +
+    calcSources.map((s, i) => `<option value="${i}">${escapeHtmlClient(s.label)}</option>`).join('');
+  if (current && [...calcSourceEl.options].some((o) => o.value === current)) calcSourceEl.value = current;
+}
+
+calcSourceEl.addEventListener('change', () => {
+  const idx = calcSourceEl.value;
+  if (idx === 'manual') return;
+  const src = calcSources[Number(idx)];
+  if (!src) return;
+  calcSpeciesEl.value = src.speciesId;
+  calcLevelEl.value = src.level ?? '';
+  calcQualityEl.value = src.quality ?? '';
+  const st = src.stats || {};
+  calcStatInputs.hp.value = st.hp ?? '';
+  calcStatInputs.atk.value = st.atk ?? '';
+  calcStatInputs.def.value = st.def ?? '';
+  calcStatInputs.spatk.value = st.spAtk ?? st.spatk ?? '';
+  calcStatInputs.spdef.value = st.spDef ?? st.spdef ?? '';
+  calcStatInputs.speed.value = st.speed ?? '';
+  calcProjLevelEl.value = src.level ?? 100;
+  runCalculator();
+});
+
+[calcSpeciesEl, calcLevelEl, calcQualityEl, calcProjLevelEl, ...Object.values(calcStatInputs)].forEach((el) => {
+  el.addEventListener('input', runCalculator);
+});
+
+const CALC_STAT_LABELS = { hp: 'HP', atk: 'ATK', def: 'DEF', spatk: 'SpA', spdef: 'SpD', speed: 'Vel' };
+
+async function runCalculator() {
+  const speciesId = Number(calcSpeciesEl.value);
+  const level = Number(calcLevelEl.value);
+  const quality = Number(calcQualityEl.value);
+  const observed = {
+    hp: Number(calcStatInputs.hp.value), atk: Number(calcStatInputs.atk.value), def: Number(calcStatInputs.def.value),
+    spatk: Number(calcStatInputs.spatk.value), spdef: Number(calcStatInputs.spdef.value), speed: Number(calcStatInputs.speed.value)
+  };
+  if (!speciesId || !level || !quality || Object.values(observed).some((v) => !v)) {
+    calcResultEl.innerHTML = '<div class="settings-hint">Elegí una fuente en vivo arriba, o completá especie/nivel/quality/stats a mano.</div>';
+    return;
+  }
+
+  const catalog = await ensureCreatureCatalogRenderer();
+  const creature = catalog.find((c) => c.pokeId === speciesId);
+  if (!creature) {
+    calcResultEl.innerHTML = '<div class="settings-hint">No encontré esa especie en el catálogo.</div>';
+    return;
+  }
+  const base = {
+    hp: creature.baseHp, atk: creature.baseAtk, def: creature.baseDef,
+    spatk: creature.baseSpAtk, spdef: creature.baseSpDef, speed: creature.baseSpeed
+  };
+  const projLevel = Number(calcProjLevelEl.value) || level;
+
+  let ivMin = 0, ivMax = 0, statsSumAtProj = 0;
+  const rows = Object.keys(CALC_STAT_LABELS).map((key) => {
+    const res = window.pokeFormulas.inferGrowth(base[key], level, quality, observed[key], key);
+    const min = Math.min(...res.values), max = Math.max(...res.values);
+    const mid = Math.round((min + max) / 2);
+    ivMin += min; ivMax += max;
+    const projected = window.pokeFormulas.growthStat(base[key], mid, projLevel, quality, key);
+    statsSumAtProj += projected;
+    const range = min === max ? String(min) : `${min}–${max}`;
+    return `<tr><td>${CALC_STAT_LABELS[key]}</td><td>${range}</td><td>${observed[key]}</td><td>${projected}</td></tr>`;
+  });
+
+  const projectedPower = window.pokeFormulas.powerFor(statsSumAtProj, quality);
+  const band = window.pokeFormulas.qualityBand(quality);
+  const clampedQ = Math.max(0.8, Math.min(2.6, quality));
+  const markerPct = ((clampedQ - 0.8) / 1.8) * 100;
+
+  calcResultEl.innerHTML = `
+    <div class="poke-calc-summary">
+      <div><b>${escapeHtmlClient(creature.name)}</b>Especie</div>
+      <div><b>${quality.toFixed(3)}</b>Quality (${band.label})</div>
+      <div><b>${Math.round(ivMin)}–${Math.round(ivMax)}</b>IV total (6–192)</div>
+      <div><b>${projectedPower}</b>Power proyectado Lv.${projLevel}</div>
+    </div>
+    <div class="poke-calc-quality-gauge"><div class="poke-calc-quality-marker" style="left:${markerPct}%"></div></div>
+    <table class="poke-calc-table">
+      <thead><tr><th>Stat</th><th>Growth (IV)</th><th>Actual Lv.${level}</th><th>Proyectado Lv.${projLevel}</th></tr></thead>
+      <tbody>${rows.join('')}</tbody>
+    </table>
+  `;
+}
+
+populateCalcSpeciesDropdown();
 
 extInstallBtn.addEventListener('click', async () => {
   const value = extInput.value.trim();
