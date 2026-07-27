@@ -279,6 +279,17 @@ function applyFrame(state, msg) {
       // Confirmed against a real frame: the array is under `list` (the full
       // collection, each entry flagged `team:true/false`), not `team`.
       if (Array.isArray(msg.list)) {
+        // Seeds _knownIds from the player's WHOLE existing collection (not
+        // just the team) — without this, the first poke-delta update to any
+        // pokemon the player already owned before this session (a level-up,
+        // a stat resync, etc.) had never been seen as an id before and got
+        // logged as a brand new capture. Confirmed live: the user's own
+        // long-owned team member (Golem) showed up in the capture log after
+        // it leveled up mid-hunt.
+        if (!state._knownIds) state._knownIds = new Set();
+        for (const p of msg.list) {
+          if (p && p.id != null) state._knownIds.add(p.id);
+        }
         const activeTeam = msg.list.filter((p) => p.team);
         const wasAlive = state.team.some((p) => p.hp > 0);
         const leader = activeTeam[0];
