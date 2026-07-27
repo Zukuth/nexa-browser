@@ -106,6 +106,15 @@ function getOrCreateState(accountId) {
   return s;
 }
 
+// Called when an account is permanently deleted (removeAccountCompletely in
+// main.js) — without this, stateByAccount/attachedAccounts grow forever
+// across the app's lifetime as accounts are created and deleted, since
+// nothing else in this module ever removes an entry.
+function removeState(accountId) {
+  stateByAccount.delete(accountId);
+  attachedAccounts.delete(accountId);
+}
+
 // Fetched once (shared across every account — it's the same game server for
 // all of them) and cached for the app's lifetime: item prices don't change
 // mid-session. If the fetch ever fails, loot just contributes 0 to
@@ -113,6 +122,9 @@ function getOrCreateState(accountId) {
 // xpGained fallback above.
 let itemPriceCatalog = null; // itemId -> npcPrice
 let itemPriceByName = null; // item name -> npcPrice (some events only give a name, e.g. profession-photo)
+let itemNameById = null; // itemId -> name, for resolving field-kill loot (which only carries itemId+qty) into a readable drops list
+let itemIconById = null; // itemId -> icon URL, for the "Drops en vivo" panel
+let itemIconByName = null; // item name -> icon URL, for namedLoot (profession-photo)
 let itemPriceCatalogPromise = null;
 function ensureItemPriceCatalog() {
   if (itemPriceCatalog || itemPriceCatalogPromise) return itemPriceCatalogPromise;
@@ -121,14 +133,29 @@ function ensureItemPriceCatalog() {
     .then((data) => {
       const byId = new Map();
       const byName = new Map();
+      const nameById = new Map();
+      const iconById = new Map();
+      const iconByName = new Map();
       for (const item of (data && data.items) || []) {
         if (item && item.id != null && typeof item.npcPrice === 'number') {
           byId.set(item.id, item.npcPrice);
-          if (item.name) byName.set(item.name, item.npcPrice);
+          if (item.name) { byName.set(item.name, item.npcPrice); nameById.set(item.id, item.name); }
+          // The game's own items.json serves icon as either a full external
+          // URL (pokexguides.com) or a path relative to its own origin
+          // (/assets/stones/...) — resolve the relative case here so the
+          // renderer always gets a ready-to-use absolute URL.
+          if (item.icon) {
+            const iconUrl = /^https?:\/\//.test(item.icon) ? item.icon : `https://${GAME_HOSTNAME}${item.icon}`;
+            iconById.set(item.id, iconUrl);
+            if (item.name) iconByName.set(item.name, iconUrl);
+          }
         }
       }
       itemPriceCatalog = byId;
       itemPriceByName = byName;
+      itemNameById = nameById;
+      itemIconById = iconById;
+      itemIconByName = iconByName;
     })
     .catch((err) => {
       console.error('[game-telemetry] no se pudo cargar el catálogo de precios de items', err);
@@ -358,16 +385,28 @@ function computeRates(state) {
   const L = state.live;
 
   let lootGold = 0;
+  // Per-item breakdown (name/qty/value), for a real-time "session drops" list
+  // — mirrors the game's own Hunt Analyzer panel, built from the same raw
+  // per-item counters that already feed lootGold above.
+  const lootBreakdown = [];
   if (itemPriceCatalog) {
     for (const [itemId, qty] of Object.entries(L.loot)) {
-      lootGold += (itemPriceCatalog.get(Number(itemId)) || 0) * qty;
+      const price = itemPriceCatalog.get(Number(itemId)) || 0;
+      lootGold += price * qty;
+      const name = (itemNameById && itemNameById.get(Number(itemId))) || `Item #${itemId}`;
+      const icon = itemIconById && itemIconById.get(Number(itemId));
+      lootBreakdown.push({ name, qty, value: Math.round(price * qty), icon: icon || null });
     }
   }
   if (itemPriceByName) {
     for (const [name, qty] of Object.entries(L.namedLoot)) {
-      lootGold += (itemPriceByName.get(name) || 0) * qty;
+      const price = itemPriceByName.get(name) || 0;
+      lootGold += price * qty;
+      const icon = itemIconByName && itemIconByName.get(name);
+      lootBreakdown.push({ name, qty, value: Math.round(price * qty), icon: icon || null });
     }
   }
+  lootBreakdown.sort((a, b) => b.value - a.value);
 
   let supplyCost = 0;
   if (state.ballCatalog) {
@@ -393,6 +432,7 @@ function computeRates(state) {
     ballsUsed: L.ballsUsed,
     captureGold: L.captureGold,
     lootGold: Math.round(lootGold),
+    lootBreakdown,
     supplyCost: Math.round(supplyCost),
     netGold: Math.round(netGold),
     shinyCaught: L.shinyCaught,
@@ -491,6 +531,7 @@ module.exports = {
   attachCapture,
   getStats,
   getAllStats,
+  removeState,
   startHeartbeat,
   setBallsLowThreshold,
   ensureCreatureCatalog,

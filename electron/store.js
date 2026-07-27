@@ -54,11 +54,6 @@ const DEFAULT_DATA = {
   passwords: [],
   history: [],
   downloads: [],
-  // IDs of bundled default extensions (electron/default-extensions/) already
-  // seeded into this profile at least once — see seedDefaultExtensions() in
-  // main.js. Tracked separately from settings.extensions so that a user who
-  // removes the extension later doesn't get it silently reinstalled on next launch.
-  seededExtensions: [],
   settings: {
     // 'system' sigue la preferencia del SO (prefers-color-scheme); 'dark'/'light'
     // fuerzan el tema explícitamente, elegido por el usuario en Configuración.

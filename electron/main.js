@@ -9,6 +9,15 @@ const { autoUpdater } = require('electron-updater');
 const { GAP, GRID_MAX_PANELS, MIN_SPLIT_FRAC, resolveFracs, cellsForMode, freeCells, normalizeFracsWithMin } = require('./layout-utils');
 const gameTelemetry = require('./game-telemetry');
 const pokeFormulas = require('./poke-formulas');
+// Catálogo único de traducciones compartido con el renderer — ver el comentario
+// de cabecera en src/i18n-data.js. El proceso main no tiene sandbox, así que
+// requerir un archivo bajo src/ funciona igual que con game-telemetry.js.
+const I18N = require('../src/i18n-data.js');
+function mt(lang, key, vars) {
+  let str = (I18N[lang] && I18N[lang][key]) ?? I18N.es[key] ?? key;
+  if (vars) for (const k of Object.keys(vars)) str = str.replace(`{${k}}`, vars[k]);
+  return str;
+}
 
 // Last-resort net: an ipcMain.on (not .handle) listener that throws crashes the
 // whole app with no trace, since Electron only auto-catches .handle rejections.
@@ -413,7 +422,7 @@ function displayName(account) {
   if (account.name) return account.name;
   const siblings = data.accounts.filter((a) => a.spaceId === account.spaceId);
   const position = siblings.indexOf(account);
-  return `Pestaña ${position + 1}`;
+  return mt(data.settings.language || 'es', 'main.defaultTabName', { n: position + 1 });
 }
 
 // Poke Idle World Fase C: native OS notifications for alert-worthy events
@@ -423,21 +432,22 @@ function displayName(account) {
 // human message, gated by the toggles in data.settings.pokeIdleAlerts.
 const notifiedEventAt = new Map();
 function buildPokeIdleNotification(cfg, accountName, event) {
+  const lang = data.settings.language || 'es';
   switch (event.type) {
     case 'shiny_capture':
-      return cfg.shiny ? { title: `✨ ¡Shiny capturado! — ${accountName}`, body: event.payload?.name || '' } : null;
+      return cfg.shiny ? { title: mt(lang, 'notif.shinyCaptureTitle', { account: accountName }), body: event.payload?.name || '' } : null;
     case 'shiny_wild':
-      return cfg.shiny ? { title: `✨ Shiny salvaje — ${accountName}`, body: event.payload?.name ? `${event.payload.name} apareció en el mapa` : '' } : null;
+      return cfg.shiny ? { title: mt(lang, 'notif.shinyWildTitle', { account: accountName }), body: event.payload?.name ? mt(lang, 'notif.shinyWildBody', { name: event.payload.name }) : '' } : null;
     case 'rare_capture':
-      return cfg.rare ? { title: `⭐ Captura rara — ${accountName}`, body: `${event.payload?.name || ''} (${event.payload?.rarity || ''})` } : null;
+      return cfg.rare ? { title: mt(lang, 'notif.rareCaptureTitle', { account: accountName }), body: `${event.payload?.name || ''} (${event.payload?.rarity || ''})` } : null;
     case 'balls_low':
-      return cfg.ballsLow ? { title: `🎯 Pocas bolas — ${accountName}`, body: `${event.payload?.total ?? '?'} restantes` } : null;
+      return cfg.ballsLow ? { title: mt(lang, 'notif.ballsLowTitle', { account: accountName }), body: mt(lang, 'notif.ballsLowBody', { total: event.payload?.total ?? '?' }) } : null;
     case 'balls_out':
-      return cfg.ballsLow ? { title: `🎯 Sin bolas — ${accountName}`, body: 'Te quedaste sin bolas' } : null;
+      return cfg.ballsLow ? { title: mt(lang, 'notif.ballsOutTitle', { account: accountName }), body: mt(lang, 'notif.ballsOutBody') } : null;
     case 'disconnected':
-      return cfg.disconnect ? { title: `🔌 Desconectada — ${accountName}`, body: 'Sin señal del juego' } : null;
+      return cfg.disconnect ? { title: mt(lang, 'notif.disconnectedTitle', { account: accountName }), body: mt(lang, 'notif.disconnectedBody') } : null;
     case 'reconnected':
-      return cfg.disconnect ? { title: `🔌 Reconectada — ${accountName}`, body: 'Volvió la señal' } : null;
+      return cfg.disconnect ? { title: mt(lang, 'notif.reconnectedTitle', { account: accountName }), body: mt(lang, 'notif.reconnectedBody') } : null;
     default:
       return null;
   }
@@ -539,7 +549,7 @@ function downloadCrx(id) {
     `&x=id%3D${id}%26uc`;
   return new Promise((resolve, reject) => {
     const get = (u, redirects) => {
-      if (redirects > 5) return reject(new Error('Demasiadas redirecciones'));
+      if (redirects > 5) return reject(new Error(mt(data.settings.language || 'es', 'main.tooManyRedirects')));
       https
         .get(u, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' } }, (res) => {
           if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
@@ -549,7 +559,7 @@ function downloadCrx(id) {
           }
           if (res.statusCode !== 200) {
             res.resume();
-            reject(new Error(`Descarga falló (HTTP ${res.statusCode})`));
+            reject(new Error(mt(data.settings.language || 'es', 'main.downloadFailed', { status: res.statusCode })));
             return;
           }
           const chunks = [];
@@ -564,7 +574,7 @@ function downloadCrx(id) {
 }
 
 function crxToZip(buf) {
-  if (buf.toString('utf8', 0, 4) !== 'Cr24') throw new Error('Archivo CRX inválido');
+  if (buf.toString('utf8', 0, 4) !== 'Cr24') throw new Error(mt(data.settings.language || 'es', 'main.invalidCrxFile'));
   const version = buf.readUInt32LE(4);
   let offset;
   if (version === 2) {
@@ -575,7 +585,7 @@ function crxToZip(buf) {
     const headerLen = buf.readUInt32LE(8);
     offset = 12 + headerLen;
   } else {
-    throw new Error('Versión de CRX no soportada');
+    throw new Error(mt(data.settings.language || 'es', 'main.unsupportedCrxVersion'));
   }
   return buf.subarray(offset);
 }
@@ -603,8 +613,8 @@ function readManifest(dir) {
 
 async function installExtensionFromStore(input) {
   const id = extensionIdFromInput(input);
-  if (!id) throw new Error('No se pudo reconocer un ID de extensión válido en ese texto.');
-  if (data.settings.extensions.some((e) => e.id === id)) throw new Error('Esa extensión ya está instalada.');
+  if (!id) throw new Error(mt(data.settings.language || 'es', 'main.noValidExtensionId'));
+  if (data.settings.extensions.some((e) => e.id === id)) throw new Error(mt(data.settings.language || 'es', 'main.extensionAlreadyInstalled'));
 
   const crxBuf = await downloadCrx(id);
   const zipBuf = crxToZip(crxBuf);
@@ -636,34 +646,26 @@ async function finishInstall(id, dir) {
   return entry;
 }
 
-// Extensions a fresh profile should have without the user having to find and
-// paste in the Chrome Web Store ID manually. IMPORTANT: this fetches the real
-// CRX from Google's official update servers each time (same code path as
-// Configuración → Extensiones → Agregar) — it must NOT bundle or copy a local
-// modified copy of a third-party extension into the app package. IV Helper's
-// own LICENSE.txt is explicit: "uso é permitido exclusivamente na forma da
-// extensão oficial publicada pelo autor na Chrome Web Store" (redistribution,
-// modification and derivative works are all expressly prohibited) — shipping
-// a bundled/edited copy inside our installer would violate that.
-const DEFAULT_EXTENSION_IDS = ['cpapjpndggpeepabijbaikmapdceldnl']; // IV Helper (Poke IdleWorld)
-
-// Runs once per id ever: seededExtensions (persisted, separate from the live
-// settings.extensions list) is checked so a user who later removes the
-// extension doesn't have it silently reinstalled on the next launch.
-async function seedDefaultExtensions() {
-  const alreadyInstalled = new Set(data.settings.extensions.map((e) => e.id));
-  const alreadySeeded = new Set(data.seededExtensions || []);
+// IV Helper (Poke IdleWorld) used to be auto-seeded into fresh profiles as a
+// stopgap before Nexa had its own IV/Growth tooling (Calculadora IV, Tier
+// List, Caza & XP — see poke-formulas.js). Now that those exist natively,
+// the extension (and the in-game Gengar button that toggled its panel, see
+// removed injectGameOverlayButtons code) is redundant — this removes it from
+// any profile that still has it from that earlier seeding, one time.
+const RETIRED_EXTENSION_IDS = ['cpapjpndggpeepabijbaikmapdceldnl']; // IV Helper (Poke IdleWorld)
+function removeRetiredExtensions() {
   let changed = false;
-  for (const id of DEFAULT_EXTENSION_IDS) {
-    if (alreadySeeded.has(id)) continue;
-    data.seededExtensions = [...(data.seededExtensions || []), id];
-    changed = true;
-    if (alreadyInstalled.has(id)) continue;
+  for (const id of RETIRED_EXTENSION_IDS) {
+    const ext = data.settings.extensions.find((e) => e.id === id);
+    if (!ext) continue;
+    unloadExtensionFromAllSessions(id);
     try {
-      await installExtensionFromStore(id);
-    } catch (err) {
-      console.error('[ext] failed to seed default extension', id, err);
+      if (ext.path.startsWith(EXTENSIONS_DIR)) fs.rmSync(ext.path, { recursive: true, force: true });
+    } catch {
+      // best-effort cleanup
     }
+    data.settings.extensions = data.settings.extensions.filter((e) => e.id !== id);
+    changed = true;
   }
   if (changed) persist();
 }
@@ -682,27 +684,27 @@ const SPACE_COLORS = ['#4f8cff', '#ff6b6b', '#51cf66', '#fcc419', '#cc5de8', '#f
 const SPACE_ICON_KEYS = ['grid', 'gamepad', 'swords', 'shield', 'flame', 'leaf', 'droplet', 'bolt', 'star', 'crown', 'ghost', 'rocket'];
 
 const SHORTCUTS = [
-  { combo: 'Ctrl + 1–9', label: 'Seleccionar panel 1–9' },
-  { combo: 'Ctrl + Tab', label: 'Siguiente panel' },
-  { combo: 'Ctrl + Shift + N', label: 'Nuevo espacio' },
-  { combo: 'Ctrl + N', label: 'Nueva cuenta' },
-  { combo: 'Ctrl + R', label: 'Recargar panel activo' },
-  { combo: 'Ctrl + Shift + R', label: 'Recargar ignorando caché' },
-  { combo: 'Ctrl + Alt + R', label: 'Recargar todo' },
-  { combo: 'Ctrl + M', label: 'Silenciar panel activo' },
-  { combo: 'Ctrl + Shift + M', label: 'Silenciar todo' },
-  { combo: 'Ctrl + L', label: 'Enfocar barra de direcciones' },
-  { combo: 'Ctrl + F', label: 'Buscar en la página' },
-  { combo: 'Ctrl + / Ctrl -', label: 'Zoom + / -' },
-  { combo: 'Ctrl + 0', label: 'Restablecer zoom' },
-  { combo: 'F11', label: 'Pantalla completa' },
-  { combo: 'Ctrl + ,', label: 'Configuración' },
-  { combo: 'Ctrl + K', label: 'Paleta de comandos' },
-  { combo: 'Ctrl + W', label: 'Cerrar cuenta activa' },
-  { combo: 'Ctrl + Shift + T', label: 'Reabrir última cuenta cerrada' },
-  { combo: 'Ctrl + B', label: 'Colapsar/expandir barra lateral' },
-  { combo: 'Ctrl + D', label: 'Guardar página actual en favoritos' },
-  { combo: 'Ctrl + Shift + Supr', label: 'Borrar datos de sesión de la cuenta activa' }
+  { combo: 'Ctrl + 1–9', key: 'shortcut.selectPanel' },
+  { combo: 'Ctrl + Tab', key: 'shortcut.nextPanel' },
+  { combo: 'Ctrl + Shift + N', key: 'shortcut.newSpace' },
+  { combo: 'Ctrl + N', key: 'shortcut.newAccount' },
+  { combo: 'Ctrl + R', key: 'shortcut.reloadActive' },
+  { combo: 'Ctrl + Shift + R', key: 'shortcut.reloadHardActive' },
+  { combo: 'Ctrl + Alt + R', key: 'shortcut.reloadAll' },
+  { combo: 'Ctrl + M', key: 'shortcut.muteActive' },
+  { combo: 'Ctrl + Shift + M', key: 'shortcut.muteAll' },
+  { combo: 'Ctrl + L', key: 'shortcut.focusAddress' },
+  { combo: 'Ctrl + F', key: 'shortcut.findInPage' },
+  { combo: 'Ctrl + / Ctrl -', key: 'shortcut.zoomInOut' },
+  { combo: 'Ctrl + 0', key: 'shortcut.zoomReset' },
+  { combo: 'F11', key: 'shortcut.fullscreen' },
+  { combo: 'Ctrl + ,', key: 'shortcut.settings' },
+  { combo: 'Ctrl + K', key: 'shortcut.commandPalette' },
+  { combo: 'Ctrl + W', key: 'shortcut.closeActive' },
+  { combo: 'Ctrl + Shift + T', key: 'shortcut.reopenClosed' },
+  { combo: 'Ctrl + B', key: 'shortcut.toggleSidebar' },
+  { combo: 'Ctrl + D', key: 'shortcut.bookmarkPage' },
+  { combo: 'Ctrl + Shift + Supr', key: 'shortcut.clearSessionData' }
 ];
 
 let lastClosedAccountId = null;
@@ -730,7 +732,7 @@ function createRandomSpace() {
   const icon = SPACE_ICON_KEYS[Math.floor(Math.random() * SPACE_ICON_KEYS.length)];
   const space = {
     id: crypto.randomUUID(),
-    name: `Espacio ${data.spaces.length + 1}`,
+    name: mt(data.settings.language || 'es', 'main.defaultSpaceName', { n: data.spaces.length + 1 }),
     color,
     icon,
     defaultUrl: data.settings.defaultStartUrl || 'https://www.google.com',
@@ -1059,17 +1061,6 @@ function createViewForAccount(account) {
   return view;
 }
 
-const GENGAR_ICON_B64 = (() => {
-  try {
-    const raw = fs.readFileSync(path.join(__dirname, 'assets', 'gengar-icon-b64.txt'), 'utf-8').trim();
-    console.log('[gengar-icon] loaded, length =', raw.length);
-    return raw;
-  } catch (err) {
-    console.error('[gengar-icon] FAILED to load from', path.join(__dirname, 'assets', 'gengar-icon-b64.txt'), err);
-    return '';
-  }
-})();
-
 // "Modo Eco" — opt-in per account (off by default, never forced), throttles
 // window.requestAnimationFrame to a fixed low fps by rerouting it through
 // setTimeout. Deliberately leaves setInterval/setTimeout/WebSocket/fetch
@@ -1108,12 +1099,9 @@ function disableEcoMode(wc) {
   ).catch(() => {});
 }
 
-// Site-specific enhancement: on poke.idleworld.online's /play page only, add two
-// floating buttons top-right — a Pokéball that manually collapses/expands the
-// game's own top toolbar, and a Gengar ball right below it that shows/hides the
-// IV Helper extension's panel directly (no page reload, no session-level
-// enable/disable — just toggling the same panel element the extension's own
-// Alt+I shortcut controls). Both are purely user-controlled, no auto-hide.
+// Site-specific enhancement: on poke.idleworld.online's /play page only, add a
+// floating Pokéball button top-right that manually collapses/expands the
+// game's own top toolbar. Purely user-controlled, no auto-hide.
 // The toolbar's own class names are hashed/generated (Next.js), so instead of a
 // hardcoded selector (which would break on the next deploy) this heuristically
 // finds a fixed/sticky bar pinned near the top spanning most of the width with
@@ -1136,7 +1124,7 @@ function injectGameOverlayButtons(wc) {
         let best = null;
         let bestWidth = 0;
         for (const el of all) {
-          if (el.id === 'cb-toggle-ball' || el.id === 'cb-ext-toggle-ball') continue;
+          if (el.id === 'cb-toggle-ball') continue;
           const cs = getComputedStyle(el);
           if (cs.position !== 'fixed' && cs.position !== 'sticky' && cs.position !== 'absolute') continue;
           const r = el.getBoundingClientRect();
@@ -1186,32 +1174,11 @@ function injectGameOverlayButtons(wc) {
         (document.body || document.documentElement).appendChild(ball);
       }
 
-      function ensureExtBall() {
-        if (document.getElementById('cb-ext-toggle-ball') || !'${GENGAR_ICON_B64}') return;
-        const gengar = document.createElement('div');
-        gengar.id = 'cb-ext-toggle-ball';
-        gengar.title = 'Mostrar/ocultar panel de IV Helper';
-        Object.assign(gengar.style, {
-          position: 'fixed', top: '160px', right: '8px', width: '34px', height: '34px',
-          borderRadius: '50%', cursor: 'pointer', zIndex: '2147483000',
-          boxShadow: '0 2px 8px rgba(0,0,0,.5)', border: '2px solid #1a1a1a',
-          backgroundImage: 'url(data:image/png;base64,${GENGAR_ICON_B64})',
-          backgroundSize: 'cover', backgroundPosition: 'center'
-        });
-        gengar.addEventListener('click', () => {
-          const panel = document.getElementById('iv-helper-panel');
-          if (!panel) return;
-          panel.style.display = panel.style.display === 'none' ? '' : 'none';
-        });
-        (document.body || document.documentElement).appendChild(gengar);
-      }
-
-      // Self-healing: re-adds either button if the page's own re-renders ever
-      // strip them out, so they survive both reloads and in-page SPA routing
-      // without us having to detect either from the outside.
+      // Self-healing: re-adds the button if the page's own re-renders ever
+      // strip it out, so it survives both reloads and in-page SPA routing
+      // without us having to detect that from the outside.
       window.__cbOverlayWatchdog = function() {
         ensureToggleBall();
-        ensureExtBall();
       };
       window.__cbOverlayWatchdog();
       window.__cbOverlayWatchdogTimer = setInterval(window.__cbOverlayWatchdog, 2000);
@@ -1242,17 +1209,18 @@ function stopGameOverlayWatchdogIfLeft(wc, url) {
 }
 
 function showPageContextMenu(wc, params) {
+  const lang = data.settings.language || 'es';
   const items = [
-    { label: 'Atrás', enabled: wc.navigationHistory.canGoBack(), click: () => wc.navigationHistory.goBack() },
-    { label: 'Adelante', enabled: wc.navigationHistory.canGoForward(), click: () => wc.navigationHistory.goForward() },
-    { label: 'Volver a cargar', click: () => wc.reload() },
+    { label: mt(lang, 'ctx.back'), enabled: wc.navigationHistory.canGoBack(), click: () => wc.navigationHistory.goBack() },
+    { label: mt(lang, 'ctx.forward'), enabled: wc.navigationHistory.canGoForward(), click: () => wc.navigationHistory.goForward() },
+    { label: mt(lang, 'ctx.reload'), click: () => wc.reload() },
     { type: 'separator' }
   ];
 
   if (params.linkURL) {
     items.push(
-      { label: 'Abrir enlace', click: () => wc.loadURL(params.linkURL) },
-      { label: 'Copiar enlace', click: () => clipboard.writeText(params.linkURL) },
+      { label: mt(lang, 'ctx.openLink'), click: () => wc.loadURL(params.linkURL) },
+      { label: mt(lang, 'ctx.copyLink'), click: () => clipboard.writeText(params.linkURL) },
       { type: 'separator' }
     );
   }
@@ -1260,7 +1228,7 @@ function showPageContextMenu(wc, params) {
   if (params.mediaType === 'video') {
     items.push(
       {
-        label: 'Picture-in-Picture',
+        label: mt(lang, 'ctx.pip'),
         click: () => {
           wc.executeJavaScript(
             `(function() {
@@ -1279,36 +1247,36 @@ function showPageContextMenu(wc, params) {
   }
 
   if (params.selectionText) {
-    items.push({ label: 'Copiar', click: () => clipboard.writeText(params.selectionText) }, { type: 'separator' });
+    items.push({ label: mt(lang, 'ctx.copy'), click: () => clipboard.writeText(params.selectionText) }, { type: 'separator' });
   }
 
   if (params.isEditable) {
     items.push(
-      { label: 'Cortar', click: () => wc.cut() },
-      { label: 'Copiar', click: () => wc.copy() },
-      { label: 'Pegar', click: () => wc.paste() },
+      { label: mt(lang, 'ctx.cut'), click: () => wc.cut() },
+      { label: mt(lang, 'ctx.copy'), click: () => wc.copy() },
+      { label: mt(lang, 'ctx.paste'), click: () => wc.paste() },
       { type: 'separator' }
     );
   }
 
   items.push(
     {
-      label: 'Guardar como...',
+      label: mt(lang, 'ctx.saveAs'),
       click: async () => {
-        const result = await dialog.showSaveDialog(mainWindow, { defaultPath: wc.getTitle() || 'pagina' });
+        const result = await dialog.showSaveDialog(mainWindow, { defaultPath: wc.getTitle() || 'page' });
         if (!result.canceled && result.filePath) wc.savePage(result.filePath, 'HTMLComplete').catch(() => {});
       }
     },
-    { label: 'Imprimir...', click: () => wc.print() },
+    { label: mt(lang, 'ctx.print'), click: () => wc.print() },
     { type: 'separator' },
     {
-      label: 'Ver código fuente',
+      label: mt(lang, 'ctx.viewSource'),
       click: () => {
-        const srcWindow = new BrowserWindow({ width: 900, height: 700, title: 'Código fuente', icon: APP_ICON_PATH });
+        const srcWindow = new BrowserWindow({ width: 900, height: 700, title: mt(lang, 'ctx.sourceWindowTitle'), icon: APP_ICON_PATH });
         srcWindow.loadURL('view-source:' + wc.getURL());
       }
     },
-    { label: 'Inspeccionar', click: () => wc.inspectElement(params.x, params.y) }
+    { label: mt(lang, 'ctx.inspect'), click: () => wc.inspectElement(params.x, params.y) }
   );
 
   Menu.buildFromTemplate(items).popup({ window: mainWindow });
@@ -1508,7 +1476,7 @@ ipcMain.handle('accounts:add', (_e, { name, url, spaceId, color }) => {
   const targetSpaceId = spaceId || getCurrentSpace()?.id || 'default';
   const account = {
     id: crypto.randomUUID(),
-    name: name || 'Cuenta',
+    name: name || mt(data.settings.language || 'es', 'main.defaultAccountName'),
     url: /^https?:\/\//.test(url) ? url : `https://${url}`,
     spaceId: targetSpaceId,
     color: color || '#4f8cff',
@@ -1560,6 +1528,8 @@ function removeAccountCompletely(id) {
   ses.clearStorageData().then(() => ses.clearCache()).catch((err) => console.error('[remove-account] failed to clear session for', id, err));
   blockedCounts.delete(id);
   crashCounts.delete(id);
+  gameTelemetry.removeState(id);
+  notifiedEventAt.delete(id);
   if (data.settings.activeAccountId === id) {
     data.settings.activeAccountId = accountsInCurrentSpace()[0]?.id || null;
   }
@@ -1578,7 +1548,7 @@ ipcMain.handle('accounts:duplicate', (_e, { id }) => {
   if (!source) return data;
   const copy = {
     id: crypto.randomUUID(),
-    name: `${displayName(source)} (copia)`,
+    name: `${displayName(source)} ${mt(data.settings.language || 'es', 'ctx.copySuffix')}`,
     url: source.url,
     spaceId: source.spaceId,
     color: source.color,
@@ -1609,10 +1579,11 @@ ipcMain.on('accounts:contextmenu', (_e, payload) => {
   const account = getAccount(id);
   if (!account) return;
   const space = getSpace(account.spaceId);
+  const lang = data.settings.language || 'es';
   const menu = Menu.buildFromTemplate([
-    { label: 'Recargar', click: () => views.get(id)?.webContents.reload() },
+    { label: mt(lang, 'ctx.reload'), click: () => views.get(id)?.webContents.reload() },
     {
-      label: 'Ir a la URL predeterminada',
+      label: mt(lang, 'ctx.goToDefaultUrl'),
       click: () => {
         const target = space?.defaultUrl || 'https://www.google.com';
         account.url = target;
@@ -1623,7 +1594,7 @@ ipcMain.on('accounts:contextmenu', (_e, payload) => {
       }
     },
     {
-      label: account.muted ? 'Activar sonido' : 'Silenciar panel',
+      label: account.muted ? mt(lang, 'ctx.unmutePanel') : mt(lang, 'topbar.mute'),
       click: () => {
         account.muted = !account.muted;
         views.get(id)?.webContents.setAudioMuted(account.muted);
@@ -1634,7 +1605,7 @@ ipcMain.on('accounts:contextmenu', (_e, payload) => {
     },
     { type: 'separator' },
     {
-      label: 'Cerrar cuenta',
+      label: mt(lang, 'ctx.closeAccount'),
       click: async () => {
         const closed = await closeAccountView(account);
         if (!closed) return;
@@ -1646,18 +1617,18 @@ ipcMain.on('accounts:contextmenu', (_e, payload) => {
         broadcastState();
       }
     },
-    { label: 'Editar cuenta', click: () => mainWindow.webContents.send('ui:open-account-editor', { id }) },
+    { label: mt(lang, 'ctx.editAccount'), click: () => mainWindow.webContents.send('ui:open-account-editor', { id }) },
     {
-      label: 'Abrir en ventana nueva',
+      label: mt(lang, 'ctx.openInNewWindow'),
       enabled: !poppedOutIds.has(id),
       click: () => openAccountInNewWindow(id)
     },
     {
-      label: 'Duplicar cuenta',
+      label: mt(lang, 'ctx.duplicateAccount'),
       click: () => {
         const copy = {
           id: crypto.randomUUID(),
-          name: `${displayName(account)} (copia)`,
+          name: `${displayName(account)} ${mt(lang, 'ctx.copySuffix')}`,
           url: account.url,
           spaceId: account.spaceId,
           color: account.color,
@@ -1673,7 +1644,7 @@ ipcMain.on('accounts:contextmenu', (_e, payload) => {
     },
     { type: 'separator' },
     {
-      label: 'Borrar datos de sesión',
+      label: mt(lang, 'ctx.clearSessionData'),
       click: async () => {
         const view = views.get(id);
         const ses = view ? view.webContents.session : session.fromPartition(`persist:account-${id}`);
@@ -1683,7 +1654,7 @@ ipcMain.on('accounts:contextmenu', (_e, payload) => {
       }
     },
     {
-      label: 'Eliminar cuenta',
+      label: mt(lang, 'ctx.deleteAccount'),
       click: () => removeAccountCompletely(id)
     }
   ]);
@@ -1781,7 +1752,7 @@ function duplicateSpace(id) {
   if (!source) return;
   const newSpace = {
     id: crypto.randomUUID(),
-    name: `${source.name} (copia)`,
+    name: `${source.name} ${mt(data.settings.language || 'es', 'ctx.copySuffix')}`,
     color: source.color,
     icon: source.icon,
     defaultUrl: source.defaultUrl,
@@ -2006,6 +1977,7 @@ ipcMain.handle('accounts:openAll', () => {
 ipcMain.handle('account:setFreeRect', (_e, { id, rect }) => {
   const account = getAccount(id);
   if (!account) return data;
+  if (!rect || [rect.x, rect.y, rect.width, rect.height].some((n) => typeof n !== 'number' || !Number.isFinite(n))) return data;
   account.freeRect = rect;
   persist();
   renderLayout();
@@ -2080,7 +2052,10 @@ ipcMain.on('account:goForward', (_e, payload) => {
 
 ipcMain.handle('app:getMeta', () => ({ startTime: appStartTime, version: APP_VERSION }));
 
-ipcMain.handle('shortcuts:list', () => SHORTCUTS);
+ipcMain.handle('shortcuts:list', () => {
+  const lang = data.settings.language || 'es';
+  return SHORTCUTS.map((s) => ({ combo: s.combo, label: mt(lang, s.key) }));
+});
 
 ipcMain.handle('account:mute', (_e, { id, muted }) => {
   const account = getAccount(id);
@@ -2095,7 +2070,7 @@ ipcMain.handle('account:mute', (_e, { id, muted }) => {
 ipcMain.handle('spaces:add', (_e, payload = {}) => {
   const space = {
     id: crypto.randomUUID(),
-    name: payload.name || 'Espacio',
+    name: payload.name || mt(data.settings.language || 'es', 'main.defaultSpaceNameGeneric'),
     color: payload.color || '#4f8cff',
     icon: payload.icon || '🔲',
     defaultUrl: payload.defaultUrl || data.settings.defaultStartUrl || 'https://www.google.com',
@@ -2112,10 +2087,13 @@ ipcMain.handle('spaces:add', (_e, payload = {}) => {
   return data;
 });
 
+const SPACE_UPDATE_WHITELIST = new Set(['name', 'color', 'icon', 'defaultUrl', 'defaultLayout']);
 ipcMain.handle('spaces:update', (_e, { id, ...fields }) => {
   const space = getSpace(id);
   if (!space) return data;
-  Object.assign(space, fields);
+  for (const key of Object.keys(fields)) {
+    if (SPACE_UPDATE_WHITELIST.has(key)) space[key] = fields[key];
+  }
   persist();
   broadcastState();
   return data;
@@ -2137,12 +2115,13 @@ ipcMain.on('spaces:contextmenu', (_e, payload) => {
   const space = getSpace(id);
   if (!space) return;
   const isFirst = data.spaces[0]?.id === id;
+  const lang = data.settings.language || 'es';
   const menu = Menu.buildFromTemplate([
-    { label: 'Editar espacio', click: () => mainWindow.webContents.send('ui:open-space-editor', { id }) },
-    { label: 'Duplicar espacio', click: () => duplicateSpace(id) },
+    { label: mt(lang, 'ctx.editSpace'), click: () => mainWindow.webContents.send('ui:open-space-editor', { id }) },
+    { label: mt(lang, 'ctx.duplicateSpace'), click: () => duplicateSpace(id) },
     { type: 'separator' },
     {
-      label: 'Eliminar espacio',
+      label: mt(lang, 'ctx.deleteSpace'),
       enabled: !isFirst && data.spaces.length > 1,
       click: () => removeSpace(id)
     }
@@ -2208,7 +2187,7 @@ ipcMain.handle('extensions:loadUnpacked', async () => {
   const manifest = readManifest(dir);
   if (!manifest.manifest_version) return { ok: false, error: 'La carpeta no contiene un manifest.json válido.' };
   const id = crypto.createHash('sha1').update(dir).digest('hex').slice(0, 32).replace(/[0-9]/g, (d) => 'abcdefghij'[d]);
-  if (data.settings.extensions.some((e) => e.path === dir)) return { ok: false, error: 'Esa carpeta ya está cargada.' };
+  if (data.settings.extensions.some((e) => e.path === dir)) return { ok: false, error: mt(data.settings.language || 'es', 'main.folderAlreadyLoaded') };
   try {
     await finishInstall(id, dir);
     return { ok: true };
@@ -2344,6 +2323,7 @@ ipcMain.handle('accounts:muteAll', (_e, { muted }) => {
 // maximizedAccountId, activeAccountId are main-process-owned state).
 const SETTINGS_UPDATE_WHITELIST = new Set([
   'theme',
+  'language',
   'pokeIdleAlerts',
   'startWithWindows',
   'reopenLastSpace',
@@ -2361,6 +2341,7 @@ ipcMain.handle('settings:update', (_e, fields) => {
   for (const key of Object.keys(fields)) {
     if (!SETTINGS_UPDATE_WHITELIST.has(key)) continue;
     if (key === 'pokeIdleAlerts' && (typeof fields[key] !== 'object' || fields[key] === null)) continue;
+    if (key === 'language' && !Object.prototype.hasOwnProperty.call(I18N, fields[key])) continue;
     data.settings[key] = fields[key];
   }
   if (fields.pokeIdleAlerts && typeof fields.pokeIdleAlerts.ballsThreshold === 'number') {
@@ -2398,19 +2379,19 @@ autoUpdater.on('update-downloaded', (info) => sendUpdateStatus('downloaded', { v
 autoUpdater.on('error', (err) => sendUpdateStatus('error', { message: err?.message || String(err) }));
 
 ipcMain.handle('plugins:list', () => {
+  const lang = data.settings.language || 'es';
   return [
     {
       name: 'Widevine Content Decryption Module',
       description: widevineCdm
-        ? `Habilita reproducción de video con DRM (Netflix, Spotify Web Player, etc.) — tomado de ${widevineCdm.source} ${widevineCdm.browserVersion}.`
-        : 'No se encontró un módulo compatible en este equipo — la reproducción de video con DRM no va a funcionar. Instala Chrome o Edge para habilitarlo automáticamente.',
+        ? mt(lang, 'plugin.widevineDesc', { source: widevineCdm.source, version: widevineCdm.browserVersion })
+        : mt(lang, 'plugin.widevineMissing'),
       version: widevineCdm ? widevineCdm.version : null,
       enabled: !!widevineCdm
     },
     {
-      name: 'Códec de video H.264',
-      description:
-        'Incluido de fábrica en Electron (a diferencia de Firefox, que lo agrega como plugin aparte de Cisco) — no requiere nada adicional.',
+      name: mt(lang, 'plugin.h264Name'),
+      description: mt(lang, 'plugin.h264Desc'),
       version: null,
       enabled: true
     }
@@ -2418,14 +2399,9 @@ ipcMain.handle('plugins:list', () => {
 });
 
 ipcMain.handle('settings:checkUpdates', () => {
-  if (!app.isPackaged) {
-    return {
-      message:
-        'Estás corriendo la versión de desarrollo (sin empaquetar) — todavía no hay ninguna release publicada para revisar. Esto queda listo para funcionar automático apenas empaquetemos y publiquemos una versión.'
-    };
-  }
+  if (!app.isPackaged) return { devMode: true };
   autoUpdater.checkForUpdates().catch((err) => sendUpdateStatus('error', { message: err?.message || String(err) }));
-  return { message: 'Buscando actualizaciones…' };
+  return { checking: true };
 });
 
 ipcMain.handle('settings:installUpdate', () => {
@@ -2626,7 +2602,7 @@ ipcMain.handle('passwords:import', async () => {
   try {
     const raw = fs.readFileSync(result.filePaths[0], 'utf-8');
     const rows = parseCsv(raw);
-    if (!rows.length) return { ok: false, error: 'Archivo vacío o formato no reconocido.' };
+    if (!rows.length) return { ok: false, error: mt(data.settings.language || 'es', 'main.emptyOrUnrecognizedFile') };
     const header = rows[0].map((h) => h.trim().toLowerCase());
     const idx = {
       name: header.indexOf('name'),
@@ -2687,7 +2663,7 @@ ipcMain.handle('passwords:list', () => {
 });
 
 ipcMain.handle('passwords:add', (_e, { name, url, username, password }) => {
-  if (!url || !password) return { ok: false, error: 'La URL y la contraseña son obligatorias.' };
+  if (!url || !password) return { ok: false, error: mt(data.settings.language || 'es', 'main.urlPasswordRequired') };
   const id = crypto.randomUUID();
   data.passwords.push({ id, name: name || url, url, username: username || '' });
   passwordSecrets.set(id, password);
@@ -2848,7 +2824,7 @@ app.whenReady().then(() => {
     return meta;
   });
   Menu.setApplicationMenu(null);
-  seedDefaultExtensions();
+  removeRetiredExtensions();
   gameTelemetry.startHeartbeat();
   gameTelemetry.setBallsLowThreshold(data.settings.pokeIdleAlerts?.ballsThreshold ?? 20);
   startPokeIdleAlertLoop();

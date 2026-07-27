@@ -12,82 +12,85 @@
        style-src allows 'unsafe-inline' for the handful of static, non-user
        layout `style="..."` attributes already in this file (flex/gap only —
        no user data ever lands in one). -->
-  <!-- img-src also allows raw.githubusercontent.com: the Poke Idle "capturas
-       destacadas" panel loads Pokémon sprites from PokeAPI's public sprite
-       CDN (the game's own creatures.json has no image URL, only an internal
-       looktype id) — no other external origin is allowed. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://raw.githubusercontent.com; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none';" />
+  <!-- img-src also allows: raw.githubusercontent.com (PokeAPI sprite CDN, used
+       by the Poke Idle "capturas destacadas"/equipo/tier list panels — the
+       game's own creatures.json has no image URL, only an internal looktype
+       id); poke.idleworld.online and (www.)pokexguides.com (the game's own
+       items.json icon URLs, used by the "Drops en vivo" panel — verified via
+       curl: pokexguides.com 301s to www.pokexguides.com, so both are listed).
+       No other external origin is allowed. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://raw.githubusercontent.com https://poke.idleworld.online https://pokexguides.com https://www.pokexguides.com; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none';" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div id="topbar">
-    <button id="tb-back" class="nav-btn" title="Atrás">
+    <button id="tb-back" class="nav-btn" title="Atrás" data-i18n-title="topbar.back">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15,5 8,12 15,19"/></svg>
     </button>
-    <button id="tb-forward" class="nav-btn" title="Adelante">
+    <button id="tb-forward" class="nav-btn" title="Adelante" data-i18n-title="topbar.forward">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9,5 16,12 9,19"/></svg>
     </button>
-    <button id="tb-reload" class="nav-btn" title="Recargar">⟳</button>
-    <button id="tb-home" class="nav-btn" title="Inicio">
+    <button id="tb-reload" class="nav-btn" title="Recargar" data-i18n-title="topbar.reload">⟳</button>
+    <button id="tb-home" class="nav-btn" title="Inicio" data-i18n-title="topbar.home">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11.5 12 4l8 7.5"/><path d="M6 10v9a1 1 0 0 0 1 1h3v-6h4v6h3a1 1 0 0 0 1-1v-9"/></svg>
     </button>
 
-    <input id="input-address" type="text" placeholder="Escribe una URL y presiona Enter" />
+    <input id="input-address" type="text" placeholder="Escribe una URL y presiona Enter" data-i18n-placeholder="topbar.addressPlaceholder" />
 
-    <button id="tb-copy-url" class="nav-btn" title="Copiar enlace">
+    <button id="tb-copy-url" class="nav-btn" title="Copiar enlace" data-i18n-title="topbar.copyLink">
       <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22,2 15,22 11,13 2,9"/></svg>
     </button>
 
     <div id="toolbar">
-      <button id="tb-reload-2" title="Recargar">⟳</button>
-      <button id="tb-mute" title="Silenciar panel">🔊</button>
-      <button id="tb-mute-all" title="Silenciar todo">🔇</button>
+      <button id="tb-reload-2" title="Recargar" data-i18n-title="topbar.reload">⟳</button>
+      <button id="tb-mute" title="Silenciar panel" data-i18n-title="topbar.mute">🔊</button>
+      <button id="tb-mute-all" title="Silenciar todo" data-i18n-title="topbar.muteAll">🔇</button>
 
-      <button id="tb-shield" class="shield-btn" title="Bloqueador de anuncios">
+      <button id="tb-shield" class="shield-btn" title="Bloqueador de anuncios" data-i18n-title="topbar.adblock">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/></svg>
         <span id="tb-shield-count" class="shield-count"></span>
       </button>
 
       <div class="menu-wrap">
-        <button id="btn-zoom-menu" class="menu-btn" title="Zoom">
+        <button id="btn-zoom-menu" class="menu-btn" title="Zoom" data-i18n-title="topbar.zoom">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/><line x1="8" y1="11" x2="14" y2="11"/><line x1="11" y1="8" x2="11" y2="14"/></svg>
         </button>
         <div id="zoom-menu" class="dropdown-menu hidden"></div>
       </div>
 
       <div class="menu-wrap">
-        <button id="btn-layout-menu" class="menu-btn" title="Diseño">
+        <button id="btn-layout-menu" class="menu-btn" title="Diseño" data-i18n-title="topbar.layout">
           <svg viewBox="0 0 24 24" width="15" height="15"><rect x="3" y="3" width="8" height="8" rx="1.5" fill="currentColor"/><rect x="13" y="3" width="8" height="8" rx="1.5" fill="currentColor"/><rect x="3" y="13" width="8" height="8" rx="1.5" fill="currentColor"/><rect x="13" y="13" width="8" height="8" rx="1.5" fill="currentColor"/></svg>
         </button>
         <div id="layout-menu" class="dropdown-menu hidden">
           <div class="layout-option" data-mode="grid">
             <svg viewBox="0 0 24 24" width="15" height="15"><rect x="3" y="3" width="8" height="8" rx="1.5" fill="currentColor"/><rect x="13" y="3" width="8" height="8" rx="1.5" fill="currentColor"/><rect x="3" y="13" width="8" height="8" rx="1.5" fill="currentColor"/><rect x="13" y="13" width="8" height="8" rx="1.5" fill="currentColor"/></svg>
-            <span>Cuadrícula automática</span>
+            <span data-i18n="layout.grid">Cuadrícula automática</span>
           </div>
           <div class="layout-option" data-mode="single">
             <svg viewBox="0 0 24 24" width="15" height="15"><rect x="3" y="3" width="18" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2"/></svg>
-            <span>Panel único</span>
+            <span data-i18n="layout.single">Panel único</span>
           </div>
           <div class="layout-option" data-mode="columns">
             <svg viewBox="0 0 24 24" width="15" height="15"><rect x="3" y="3" width="4.5" height="18" fill="currentColor"/><rect x="9.75" y="3" width="4.5" height="18" fill="currentColor"/><rect x="16.5" y="3" width="4.5" height="18" fill="currentColor"/></svg>
-            <span>Columnas</span>
+            <span data-i18n="layout.columns">Columnas</span>
           </div>
           <div class="layout-option" data-mode="rows">
             <svg viewBox="0 0 24 24" width="15" height="15"><rect x="3" y="3" width="18" height="4.5" fill="currentColor"/><rect x="3" y="9.75" width="18" height="4.5" fill="currentColor"/><rect x="3" y="16.5" width="18" height="4.5" fill="currentColor"/></svg>
-            <span>Filas</span>
+            <span data-i18n="layout.rows">Filas</span>
           </div>
           <div class="layout-option" data-mode="free">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="10" height="8" rx="1"/><rect x="14" y="6" width="7" height="6" rx="1"/><rect x="6" y="14" width="8" height="7" rx="1"/><rect x="16" y="15" width="5" height="6" rx="1"/></svg>
-            <span>Libre</span>
+            <span data-i18n="layout.free">Libre</span>
           </div>
         </div>
       </div>
 
-      <button id="tb-fullscreen" title="Pantalla completa">⛶</button>
+      <button id="tb-fullscreen" title="Pantalla completa" data-i18n-title="topbar.fullscreen">⛶</button>
       <button id="tb-poke-idle" title="Poke Idle World">🎮</button>
-      <button id="tb-downloads" title="Descargas">⬇</button>
-      <button id="tb-settings" title="Configuración">⚙</button>
-      <button id="tb-bookmarks" title="Favoritos">
+      <button id="tb-downloads" title="Descargas" data-i18n-title="topbar.downloads">⬇</button>
+      <button id="tb-settings" title="Configuración" data-i18n-title="topbar.settings">⚙</button>
+      <button id="tb-bookmarks" title="Favoritos" data-i18n-title="topbar.bookmarks">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"/></svg>
       </button>
     </div>
@@ -96,27 +99,27 @@
   <div id="panel-headers"></div>
 
   <div id="findbar" class="hidden">
-    <input id="findbar-input" type="text" placeholder="Buscar en la página..." />
+    <input id="findbar-input" type="text" placeholder="Buscar en la página..." data-i18n-placeholder="findbar.placeholder" />
     <span id="findbar-count"></span>
-    <button id="findbar-prev" title="Anterior">▲</button>
-    <button id="findbar-next" title="Siguiente">▼</button>
-    <button id="findbar-close" title="Cerrar">✕</button>
+    <button id="findbar-prev" title="Anterior" data-i18n-title="findbar.prev">▲</button>
+    <button id="findbar-next" title="Siguiente" data-i18n-title="findbar.next">▼</button>
+    <button id="findbar-close" title="Cerrar" data-i18n-title="findbar.close">✕</button>
   </div>
 
   <div id="url-suggestions" class="hidden"></div>
 
   <div id="empty-state" class="hidden">
     <div class="empty-card">
-      <div class="empty-title">Ninguna cuenta abierta</div>
-      <div class="empty-desc">Añade cuentas a este espacio. Cada cuenta es una sesión independiente — su propio inicio de sesión, cookies y caché.</div>
-      <button id="btn-empty-add">+ Añadir primera cuenta</button>
+      <div class="empty-title" data-i18n="empty.title">Ninguna cuenta abierta</div>
+      <div class="empty-desc" data-i18n="empty.desc">Añade cuentas a este espacio. Cada cuenta es una sesión independiente — su propio inicio de sesión, cookies y caché.</div>
+      <button id="btn-empty-add" data-i18n="empty.add">+ Añadir primera cuenta</button>
     </div>
   </div>
 
   <div id="statusbar">
     <div id="status-left">
       <span class="status-dot"></span>
-      <span>Conectado</span>
+      <span data-i18n="status.connected">Conectado</span>
       <span class="status-sep">·</span>
       <span id="status-space-info"></span>
       <span class="status-sep">·</span>
@@ -133,21 +136,21 @@
 
   <div id="rail">
     <div id="rail-spaces"></div>
-    <button id="btn-add-space" title="Nuevo espacio">+</button>
+    <button id="btn-add-space" title="Nuevo espacio" data-i18n-title="rail.newSpace">+</button>
   </div>
 
   <div id="sidebar">
     <div id="space-header">
       <span id="space-name"></span>
-      <button id="btn-edit-space" title="Editar espacio">✎</button>
-      <button id="btn-collapse-sidebar" title="Contraer barra lateral">
+      <button id="btn-edit-space" title="Editar espacio" data-i18n-title="sidebar.editSpace">✎</button>
+      <button id="btn-collapse-sidebar" title="Contraer barra lateral" data-i18n-title="sidebar.collapse">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="10" y1="4" x2="10" y2="20"/><polyline points="7,9 4.5,12 7,15"/></svg>
       </button>
     </div>
     <div id="account-list"></div>
     <div id="sidebar-bottom">
-      <button id="btn-new-tab">+ Nueva pestaña</button>
-      <button id="btn-toggle-all" title="Cerrar todas">
+      <button id="btn-new-tab" data-i18n="sidebar.newTab">+ Nueva pestaña</button>
+      <button id="btn-toggle-all" title="Cerrar todas" data-i18n-title="sidebar.closeAll">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg>
       </button>
     </div>
@@ -155,33 +158,33 @@
 
   <div id="space-modal" class="modal-overlay hidden">
     <div class="modal">
-      <div class="modal-title">Editar espacio</div>
-      <label>Nombre</label>
+      <div class="modal-title" data-i18n="spaceModal.title">Editar espacio</div>
+      <label data-i18n="field.name">Nombre</label>
       <input id="space-input-name" type="text" />
 
-      <label>Color</label>
+      <label data-i18n="field.color">Color</label>
       <div id="space-colors" class="swatch-row"></div>
 
-      <label>Ícono</label>
+      <label data-i18n="field.icon">Ícono</label>
       <div id="space-icons" class="swatch-row"></div>
 
-      <label>URL predeterminada</label>
+      <label data-i18n="field.defaultUrl">URL predeterminada</label>
       <input id="space-input-url" type="text" />
 
-      <label>Diseño predeterminado</label>
+      <label data-i18n="field.defaultLayout">Diseño predeterminado</label>
       <select id="space-input-layout">
-        <option value="single">Panel único</option>
-        <option value="grid">Cuadrícula automática</option>
-        <option value="columns">Columnas</option>
-        <option value="rows">Filas</option>
-        <option value="free">Libre</option>
+        <option value="single" data-i18n="layout.single">Panel único</option>
+        <option value="grid" data-i18n="layout.grid">Cuadrícula automática</option>
+        <option value="columns" data-i18n="layout.columns">Columnas</option>
+        <option value="rows" data-i18n="layout.rows">Filas</option>
+        <option value="free" data-i18n="layout.free">Libre</option>
       </select>
 
       <div class="modal-actions">
-        <button id="btn-delete-space" class="danger">Eliminar espacio</button>
+        <button id="btn-delete-space" class="danger" data-i18n="spaceModal.delete">Eliminar espacio</button>
         <div class="modal-actions-right">
-          <button id="btn-cancel-space">Cancelar</button>
-          <button id="btn-save-space" class="primary">Guardar</button>
+          <button id="btn-cancel-space" data-i18n="action.cancel">Cancelar</button>
+          <button id="btn-save-space" class="primary" data-i18n="action.save">Guardar</button>
         </div>
       </div>
     </div>
@@ -189,29 +192,29 @@
 
   <div id="account-modal" class="modal-overlay hidden">
     <div class="modal">
-      <div class="modal-title">Editar cuenta</div>
-      <label>Nombre</label>
+      <div class="modal-title" data-i18n="accountModal.title">Editar cuenta</div>
+      <label data-i18n="field.name">Nombre</label>
       <input id="account-input-name" type="text" />
 
-      <label>Color</label>
+      <label data-i18n="field.color">Color</label>
       <div id="account-colors" class="swatch-row"></div>
 
-      <label>URL</label>
+      <label data-i18n="field.url">URL</label>
       <input id="account-input-url" type="text" />
 
-      <label>Proxy (host:puerto) — opcional</label>
-      <input id="account-input-proxy" type="text" placeholder="ej. 123.45.67.89:8080" />
+      <label data-i18n="field.proxy">Proxy (host:puerto) — opcional</label>
+      <input id="account-input-proxy" type="text" placeholder="ej. 123.45.67.89:8080" data-i18n-placeholder="field.proxyPlaceholder" />
 
-      <label>Usuario / contraseña del proxy — opcional</label>
+      <label data-i18n="field.proxyAuth">Usuario / contraseña del proxy — opcional</label>
       <div class="swatch-row" style="gap:8px;">
-        <input id="account-input-proxy-user" type="text" placeholder="Usuario" style="flex:1;" />
-        <input id="account-input-proxy-pass" type="password" placeholder="Contraseña" style="flex:1;" />
+        <input id="account-input-proxy-user" type="text" placeholder="Usuario" data-i18n-placeholder="field.username" style="flex:1;" />
+        <input id="account-input-proxy-pass" type="password" placeholder="Contraseña" data-i18n-placeholder="field.password" style="flex:1;" />
       </div>
 
       <div class="settings-row" style="padding:0; margin-top:8px;">
         <div>
-          <div>Modo Eco</div>
-          <div class="settings-hint">Reduce la frecuencia de animación de esta cuenta para ahorrar CPU. No afecta el progreso en segundo plano.</div>
+          <div data-i18n="field.ecoMode">Modo Eco</div>
+          <div class="settings-hint" data-i18n="field.ecoModeHint">Reduce la frecuencia de animación de esta cuenta para ahorrar CPU. No afecta el progreso en segundo plano.</div>
         </div>
         <label class="switch"><input type="checkbox" id="account-input-eco" /><span class="slider"></span></label>
       </div>
@@ -219,8 +222,8 @@
       <div class="modal-actions">
         <div></div>
         <div class="modal-actions-right">
-          <button id="btn-cancel-account">Cancelar</button>
-          <button id="btn-save-account" class="primary">Guardar</button>
+          <button id="btn-cancel-account" data-i18n="action.cancel">Cancelar</button>
+          <button id="btn-save-account" class="primary" data-i18n="action.save">Guardar</button>
         </div>
       </div>
     </div>
@@ -229,7 +232,7 @@
   <div id="shortcuts-modal" class="modal-overlay hidden">
     <div class="modal shortcuts-modal">
       <div class="settings-header">
-        <div class="modal-title">Atajos de teclado</div>
+        <div class="modal-title" data-i18n="shortcutsModal.title">Atajos de teclado</div>
         <button id="btn-close-shortcuts" class="icon-close">✕</button>
       </div>
       <div id="shortcuts-list" class="shortcuts-list"></div>
@@ -238,13 +241,13 @@
 
   <div id="downloads-modal" class="modal-overlay hidden">
     <div class="modal bookmarks-modal">
-      <div class="modal-title">⬇ Descargas</div>
+      <div class="modal-title" data-i18n="downloadsModal.title">⬇ Descargas</div>
       <div id="downloads-list" class="ext-list bookmarks-list"></div>
       <div class="modal-actions">
-        <button id="dl-open-folder">📁 Abrir carpeta</button>
+        <button id="dl-open-folder" data-i18n="downloadsModal.openFolder">📁 Abrir carpeta</button>
         <div class="modal-actions-right">
-          <button id="dl-clear">🗑 Limpiar lista</button>
-          <button id="btn-close-downloads" class="primary">Cerrar</button>
+          <button id="dl-clear" data-i18n="downloadsModal.clear">🗑 Limpiar lista</button>
+          <button id="btn-close-downloads" class="primary" data-i18n="action.close">Cerrar</button>
         </div>
       </div>
     </div>
@@ -253,75 +256,77 @@
   <div id="settings-modal" class="modal-overlay hidden">
     <div class="modal settings-modal">
       <div class="settings-header">
-        <div class="modal-title">Configuración</div>
+        <div class="modal-title" data-i18n="settings.title">Configuración</div>
         <button id="btn-close-settings" class="icon-close">✕</button>
       </div>
       <div class="settings-body">
         <div class="settings-nav">
-          <div class="settings-nav-item active" data-tab="general">General</div>
-          <div class="settings-nav-item" data-tab="navegacion">Navegación</div>
-          <div class="settings-nav-item" data-tab="descargas">Descargas</div>
-          <div class="settings-nav-item" data-tab="extensiones">Extensiones</div>
-          <div class="settings-nav-item" data-tab="contrasenas">Contraseñas</div>
-          <div class="settings-nav-item" data-tab="red">Red</div>
-          <div class="settings-nav-item" data-tab="actualizaciones">Actualizaciones</div>
-          <div class="settings-nav-item" data-tab="acerca">Acerca de</div>
+          <div class="settings-nav-item active" data-tab="general" data-i18n="settings.tab.general">General</div>
+          <div class="settings-nav-item" data-tab="navegacion" data-i18n="settings.tab.navegacion">Navegación</div>
+          <div class="settings-nav-item" data-tab="descargas" data-i18n="settings.tab.descargas">Descargas</div>
+          <div class="settings-nav-item" data-tab="extensiones" data-i18n="settings.tab.extensiones">Extensiones</div>
+          <div class="settings-nav-item" data-tab="contrasenas" data-i18n="settings.tab.contrasenas">Contraseñas</div>
+          <div class="settings-nav-item" data-tab="red" data-i18n="settings.tab.red">Red</div>
+          <div class="settings-nav-item" data-tab="actualizaciones" data-i18n="settings.tab.actualizaciones">Actualizaciones</div>
+          <div class="settings-nav-item" data-tab="acerca" data-i18n="settings.tab.acerca">Acerca de</div>
         </div>
         <div class="settings-content">
 
           <div class="settings-pane active" data-pane="general">
             <div class="settings-row">
-              <span>Idioma</span>
+              <span data-i18n="settings.language">Idioma</span>
               <select id="set-language">
                 <option value="es">Español</option>
+                <option value="pt-BR">Português (Brasil)</option>
+                <option value="en-US">English (US)</option>
               </select>
             </div>
             <div class="settings-row">
-              <span>Tema</span>
+              <span data-i18n="settings.theme">Tema</span>
               <select id="set-theme">
-                <option value="system">Sistema</option>
-                <option value="dark">Oscuro</option>
-                <option value="light">Claro</option>
+                <option value="system" data-i18n="settings.themeSystem">Sistema</option>
+                <option value="dark" data-i18n="settings.themeDark">Oscuro</option>
+                <option value="light" data-i18n="settings.themeLight">Claro</option>
               </select>
             </div>
             <div class="settings-row">
-              <span>Iniciar con Windows</span>
+              <span data-i18n="settings.startWithWindows">Iniciar con Windows</span>
               <label class="switch"><input type="checkbox" id="set-start-windows" /><span class="slider"></span></label>
             </div>
             <div class="settings-row">
-              <span>Reabrir el último espacio al iniciar</span>
+              <span data-i18n="settings.reopenLastSpace">Reabrir el último espacio al iniciar</span>
               <label class="switch"><input type="checkbox" id="set-reopen-space" /><span class="slider"></span></label>
             </div>
             <div class="settings-row">
               <div>
-                <div>Bloqueador de anuncios y rastreadores</div>
-                <div class="settings-hint">Bloquea publicidad, analíticas y rastreadores conocidos en todas las cuentas — activado por defecto.</div>
+                <div data-i18n="settings.adblockTitle">Bloqueador de anuncios y rastreadores</div>
+                <div class="settings-hint" data-i18n="settings.adblockHint">Bloquea publicidad, analíticas y rastreadores conocidos en todas las cuentas — activado por defecto.</div>
               </div>
               <label class="switch"><input type="checkbox" id="set-adblock" /><span class="slider"></span></label>
             </div>
             <div class="settings-row">
               <div>
-                <div>Aceleración por hardware</div>
-                <div class="settings-hint">Desactívala si notas parpadeos o inestabilidad. El cambio requiere reiniciar la app.</div>
+                <div data-i18n="settings.hwAccelTitle">Aceleración por hardware</div>
+                <div class="settings-hint" data-i18n="settings.hwAccelHint">Desactívala si notas parpadeos o inestabilidad. El cambio requiere reiniciar la app.</div>
               </div>
               <label class="switch"><input type="checkbox" id="set-hw-accel" /><span class="slider"></span></label>
             </div>
             <div class="settings-row-buttons">
-              <button id="set-export-spaces">⬆ Exportar espacios</button>
-              <button id="set-import-spaces">⬇ Importar espacios</button>
+              <button id="set-export-spaces" data-i18n="settings.exportSpaces">⬆ Exportar espacios</button>
+              <button id="set-import-spaces" data-i18n="settings.importSpaces">⬇ Importar espacios</button>
             </div>
             <div class="settings-row-buttons">
-              <button id="set-show-shortcuts">⌨ Ver atajos de teclado</button>
+              <button id="set-show-shortcuts" data-i18n="settings.showShortcuts">⌨ Ver atajos de teclado</button>
             </div>
           </div>
 
           <div class="settings-pane" data-pane="navegacion">
             <div class="settings-row">
-              <span>URL de inicio predeterminada</span>
+              <span data-i18n="settings.defaultUrl">URL de inicio predeterminada</span>
               <input id="set-default-url" type="text" />
             </div>
             <div class="settings-row">
-              <span>Zoom predeterminado</span>
+              <span data-i18n="settings.defaultZoom">Zoom predeterminado</span>
               <select id="set-default-zoom">
                 <option value="0.5">50%</option>
                 <option value="0.75">75%</option>
@@ -331,13 +336,13 @@
               </select>
             </div>
             <div class="settings-row">
-              <span>Diseño predeterminado</span>
+              <span data-i18n="settings.defaultLayout">Diseño predeterminado</span>
               <select id="set-default-layout">
-                <option value="single">Panel único</option>
-                <option value="grid">Cuadrícula automática</option>
-                <option value="columns">Columnas</option>
-                <option value="rows">Filas</option>
-                <option value="free">Libre</option>
+                <option value="single" data-i18n="layout.single">Panel único</option>
+                <option value="grid" data-i18n="layout.grid">Cuadrícula automática</option>
+                <option value="columns" data-i18n="layout.columns">Columnas</option>
+                <option value="rows" data-i18n="layout.rows">Filas</option>
+                <option value="free" data-i18n="layout.free">Libre</option>
               </select>
             </div>
           </div>
@@ -345,57 +350,57 @@
           <div class="settings-pane" data-pane="descargas">
             <div class="settings-row">
               <div>
-                <div>Carpeta de descargas</div>
-                <div class="settings-hint" id="set-downloads-folder-label">Carpeta predeterminada del sistema</div>
+                <div data-i18n="settings.downloadsFolder">Carpeta de descargas</div>
+                <div class="settings-hint" id="set-downloads-folder-label" data-i18n="settings.downloadsFolderDefault">Carpeta predeterminada del sistema</div>
               </div>
-              <button id="set-choose-folder">📁 Elegir carpeta...</button>
+              <button id="set-choose-folder" data-i18n="settings.chooseFolder">📁 Elegir carpeta...</button>
             </div>
             <div class="settings-row">
-              <span>Preguntar dónde guardar cada descarga</span>
+              <span data-i18n="settings.askDownloadLocation">Preguntar dónde guardar cada descarga</span>
               <label class="switch"><input type="checkbox" id="set-ask-download" /><span class="slider"></span></label>
             </div>
           </div>
 
           <div class="settings-pane" data-pane="extensiones">
             <div class="settings-row">
-              <input id="ext-input" type="text" placeholder="Pega el enlace o ID de la Chrome Web Store" style="flex:1; min-width:0;" />
-              <button id="ext-install">Instalar</button>
+              <input id="ext-input" type="text" placeholder="Pega el enlace o ID de la Chrome Web Store" data-i18n-placeholder="settings.extPlaceholder" style="flex:1; min-width:0;" />
+              <button id="ext-install" data-i18n="settings.extInstall">Instalar</button>
             </div>
             <div id="ext-error" class="ext-error hidden"></div>
             <div class="settings-row-buttons">
-              <button id="ext-load-unpacked">📁 Cargar extensión descomprimida...</button>
-              <button id="ext-open-store">🛒 Abrir Chrome Web Store</button>
+              <button id="ext-load-unpacked" data-i18n="settings.extLoadUnpacked">📁 Cargar extensión descomprimida...</button>
+              <button id="ext-open-store" data-i18n="settings.extOpenStore">🛒 Abrir Chrome Web Store</button>
             </div>
             <div id="ext-list" class="ext-list"></div>
 
-            <div class="settings-subheading">Plugins</div>
+            <div class="settings-subheading" data-i18n="settings.pluginsHeading">Plugins</div>
             <div id="plugin-list" class="ext-list"></div>
           </div>
 
           <div class="settings-pane" data-pane="contrasenas">
-            <p class="settings-hint">
+            <p class="settings-hint" data-i18n="settings.passwordsHint">
               Nexa Browser no incluye un gestor de contraseñas con autocompletado en las páginas (Electron no trae
               ese componente de Chrome). Puedes importar el CSV que Chrome, Firefox, Brave o Edge generan con su
               propia opción "Exportar contraseñas" para guardarlas aquí como respaldo consultable.
             </p>
             <div class="settings-row-buttons">
-              <button id="pw-import">📁 Importar contraseñas (CSV)...</button>
+              <button id="pw-import" data-i18n="settings.pwImport">📁 Importar contraseñas (CSV)...</button>
             </div>
             <div class="settings-row">
-              <input id="pw-add-name" type="text" placeholder="Nombre (ej. Google)" style="flex:1; min-width:0;" />
-              <input id="pw-add-url" type="text" placeholder="URL" style="flex:1; min-width:0;" />
+              <input id="pw-add-name" type="text" placeholder="Nombre (ej. Google)" data-i18n-placeholder="settings.pwNamePlaceholder" style="flex:1; min-width:0;" />
+              <input id="pw-add-url" type="text" placeholder="URL" data-i18n-placeholder="settings.pwUrlPlaceholder" style="flex:1; min-width:0;" />
             </div>
             <div class="settings-row">
-              <input id="pw-add-user" type="text" placeholder="Usuario o correo" style="flex:1; min-width:0;" />
-              <input id="pw-add-pass" type="password" placeholder="Contraseña" style="flex:1; min-width:0;" />
-              <button id="pw-add-save">+ Guardar</button>
+              <input id="pw-add-user" type="text" placeholder="Usuario o correo" data-i18n-placeholder="settings.pwUserPlaceholder" style="flex:1; min-width:0;" />
+              <input id="pw-add-pass" type="password" placeholder="Contraseña" data-i18n-placeholder="settings.pwPassPlaceholder" style="flex:1; min-width:0;" />
+              <button id="pw-add-save" data-i18n="settings.pwAddSave">+ Guardar</button>
             </div>
             <div id="pw-error" class="ext-error hidden"></div>
             <div id="pw-list" class="ext-list"></div>
           </div>
 
           <div class="settings-pane" data-pane="red">
-            <p class="settings-hint">
+            <p class="settings-hint" data-i18n="settings.networkHint">
               Proxy configurado por cuenta — para cambiarlo, abrí "Editar cuenta" desde el menú de cada una.
             </p>
             <div id="network-list" class="ext-list"></div>
@@ -403,23 +408,23 @@
 
           <div class="settings-pane" data-pane="actualizaciones">
             <div class="settings-row">
-              <span>Buscar actualizaciones automáticamente</span>
+              <span data-i18n="settings.autoCheckUpdates">Buscar actualizaciones automáticamente</span>
               <label class="switch"><input type="checkbox" id="set-auto-update" /><span class="slider"></span></label>
             </div>
             <div class="settings-update-box">
               <div id="set-update-status"></div>
-              <button id="set-check-updates">🔄 Comprobar ahora</button>
+              <button id="set-check-updates" data-i18n="settings.checkNow">🔄 Comprobar ahora</button>
             </div>
           </div>
 
 
           <div class="settings-pane" data-pane="acerca">
-            <div class="settings-about-title">Nexa <span class="accent-text">Browser</span></div>
-            <p class="settings-hint">Navegador multisesión gratuito: organiza cuentas ilimitadas en espacios, cada una con una sesión aislada.</p>
+            <div class="settings-about-title"><span data-i18n="settings.aboutTitlePrefix">Nexa</span> <span class="accent-text" data-i18n="settings.aboutTitleAccent">Browser</span></div>
+            <p class="settings-hint" data-i18n="settings.aboutDesc">Navegador multisesión gratuito: organiza cuentas ilimitadas en espacios, cada una con una sesión aislada.</p>
             <div class="settings-version-box">
-              <div class="settings-row"><span>Versión</span><span id="ver-app"></span></div>
-              <div class="settings-row"><span>Electron</span><span id="ver-electron"></span></div>
-              <div class="settings-row"><span>Chromium</span><span id="ver-chrome"></span></div>
+              <div class="settings-row"><span data-i18n="settings.version">Versión</span><span id="ver-app"></span></div>
+              <div class="settings-row"><span data-i18n="settings.electron">Electron</span><span id="ver-electron"></span></div>
+              <div class="settings-row"><span data-i18n="settings.chromium">Chromium</span><span id="ver-chrome"></span></div>
             </div>
           </div>
 
@@ -430,16 +435,16 @@
 
   <div id="bookmarks-modal" class="modal-overlay hidden">
     <div class="modal bookmarks-modal">
-      <div class="modal-title">⭐ Favoritos</div>
+      <div class="modal-title" data-i18n="bookmarks.title">⭐ Favoritos</div>
       <div class="settings-row-buttons">
-        <button id="bm-add-current">+ Guardar página actual</button>
+        <button id="bm-add-current" data-i18n="bookmarks.addCurrent">+ Guardar página actual</button>
       </div>
       <div id="bookmarks-list" class="ext-list bookmarks-list"></div>
       <div class="modal-actions">
-        <button id="bm-import">⬇ Importar</button>
+        <button id="bm-import" data-i18n="bookmarks.import">⬇ Importar</button>
         <div class="modal-actions-right">
-          <button id="bm-export">⬆ Exportar</button>
-          <button id="btn-close-bookmarks" class="primary">Cerrar</button>
+          <button id="bm-export" data-i18n="bookmarks.export">⬆ Exportar</button>
+          <button id="btn-close-bookmarks" class="primary" data-i18n="action.close">Cerrar</button>
         </div>
       </div>
     </div>
@@ -448,32 +453,35 @@
   <div id="poke-idle-modal" class="modal-overlay hidden">
     <div class="modal settings-modal poke-idle-modal">
       <div class="settings-header">
-        <div class="modal-title">🎮 Poke Idle World</div>
+        <div class="modal-title" data-i18n="pokeIdle.title">🎮 Poke Idle World</div>
         <button id="btn-close-poke-idle" class="icon-close">✕</button>
       </div>
       <div class="settings-body">
         <div class="settings-nav">
-          <div class="poke-nav-item active" data-poke-tab="resumen">Resumen</div>
-          <div class="poke-nav-item" data-poke-tab="equipo">Mi Equipo</div>
-          <div class="poke-nav-item" data-poke-tab="calculadora">Calculadora IV</div>
-          <div class="poke-nav-item" data-poke-tab="caza">Caza &amp; XP</div>
-          <div class="poke-nav-item" data-poke-tab="capturas">Capturas destacadas</div>
-          <div class="poke-nav-item" data-poke-tab="alertas">Alertas</div>
+          <div class="poke-nav-item active" data-poke-tab="resumen" data-i18n="pokeIdle.tab.resumen">Resumen</div>
+          <div class="poke-nav-item" data-poke-tab="equipo" data-i18n="pokeIdle.tab.equipo">Mi Equipo</div>
+          <div class="poke-nav-item" data-poke-tab="calculadora" data-i18n="pokeIdle.tab.calculadora">Calculadora IV</div>
+          <div class="poke-nav-item" data-poke-tab="caza" data-i18n="pokeIdle.tab.caza">Caza &amp; XP</div>
+          <div class="poke-nav-item" data-poke-tab="tierlist" data-i18n="pokeIdle.tab.tierlist">Tier List</div>
+          <div class="poke-nav-item" data-poke-tab="drops" data-i18n="pokeIdle.tab.drops">Drops en vivo</div>
+          <div class="poke-nav-item" data-poke-tab="capturas" data-i18n="pokeIdle.tab.capturas">Capturas destacadas</div>
+          <div class="poke-nav-item" data-poke-tab="alertas" data-i18n="pokeIdle.tab.alertas">Alertas</div>
         </div>
         <div class="settings-content">
 
           <div class="poke-pane active" data-poke-pane="resumen">
-            <p class="settings-hint">
+            <p class="settings-hint" data-i18n="pokeIdle.resumenHint">
               Estadísticas en vivo de Poke Idle World, leídas de los datos que el propio juego transmite por
-              WebSocket — solo lectura: nunca automatiza capturas ni toca el captcha.
+              WebSocket — solo lectura: nunca automatiza capturas ni toca el captcha. El contador de cada cuenta se
+              reinicia solo (nunca al abrir/loguear) cuando cambiás de zona de caza.
             </p>
             <div id="poke-idle-summary" class="poke-summary-cards"></div>
-            <div class="settings-subheading">Por cuenta</div>
+            <div class="settings-subheading" data-i18n="pokeIdle.byAccount">Por cuenta</div>
             <div id="poke-idle-accounts" class="ext-list"></div>
           </div>
 
           <div class="poke-pane" data-poke-pane="equipo">
-            <p class="settings-hint">
+            <p class="settings-hint" data-i18n="pokeIdle.equipoHint">
               El equipo activo de cada cuenta, con nivel, quality/IV, stats y los movimientos que ya debería tener
               aprendidos según su nivel actual (calculado contra el catálogo del propio juego).
             </p>
@@ -481,25 +489,25 @@
           </div>
 
           <div class="poke-pane" data-poke-pane="calculadora">
-            <p class="settings-hint">
+            <p class="settings-hint" data-i18n="pokeIdle.calcHint">
               Fórmula real de Growth (IV) y Quality del juego, portada de tu propia calculadora. Elegí una captura o
               un pokémon del equipo para auto-completar, o cargá los datos a mano.
             </p>
             <div class="settings-row">
-              <span>Fuente</span>
+              <span data-i18n="pokeIdle.source">Fuente</span>
               <select id="calc-source"></select>
             </div>
             <div id="calc-manual-fields" class="poke-calc-manual">
               <div class="settings-row">
-                <span>Pokémon</span>
+                <span data-i18n="pokeIdle.pokemon">Pokémon</span>
                 <select id="calc-species"></select>
               </div>
               <div class="settings-row">
-                <span>Nivel</span>
+                <span data-i18n="pokeIdle.level">Nivel</span>
                 <input type="number" id="calc-level" min="1" max="200" />
               </div>
               <div class="settings-row">
-                <span>Quality</span>
+                <span data-i18n="pokeIdle.quality">Quality</span>
                 <input type="number" id="calc-quality" min="0" step="0.001" />
               </div>
               <div class="poke-calc-stat-grid">
@@ -512,63 +520,90 @@
               </div>
             </div>
             <div class="settings-row">
-              <span>Nivel de proyección</span>
+              <span data-i18n="pokeIdle.projLevel">Nivel de proyección</span>
               <input type="number" id="calc-proj-level" min="1" max="200" value="100" />
             </div>
             <div id="calc-result"></div>
           </div>
 
           <div class="poke-pane" data-poke-pane="caza">
-            <p class="settings-hint">
+            <p class="settings-hint" data-i18n="pokeIdle.cazaHint">
               XP/hora y oro/hora de cada especie cazable, con el multiplicador de daño real de tu atacante contra
               cada tipo — igual que la Ruta de Farmeo de tu página, pero con tu equipo real.
             </p>
             <div class="settings-row">
-              <span>Atacante</span>
+              <span data-i18n="pokeIdle.attacker">Atacante</span>
               <select id="hunt-attacker"></select>
             </div>
             <div class="settings-row">
-              <span>Abates por hora</span>
+              <span data-i18n="pokeIdle.killsPerHourField">Abates por hora</span>
               <input type="number" id="hunt-kph" min="1" value="650" />
             </div>
             <div class="settings-row">
-              <span>Ordenar por</span>
+              <span data-i18n="pokeIdle.sortBy">Ordenar por</span>
               <select id="hunt-sort">
                 <option value="xp">XP/h</option>
                 <option value="gold">Oro/h</option>
                 <option value="matchup">Matchup</option>
-                <option value="level">Nivel</option>
+                <option value="level" data-i18n="pokeIdle.level">Nivel</option>
               </select>
             </div>
             <div id="hunt-table-wrap" class="poke-hunt-table-wrap"></div>
           </div>
 
+          <div class="poke-pane" data-poke-pane="tierlist">
+            <p class="settings-hint" data-i18n="pokeIdle.tierHint">
+              Ranking del roster completo por percentil de stats base (ofensa/bulk/velocidad), igual que tu página —
+              no representa un tier oficial del juego. Elegí un Pokémon para ver sus evoluciones y sus matchups de
+              tipo más fuertes/débiles.
+            </p>
+            <div class="settings-row">
+              <span data-i18n="pokeIdle.clan">Clan (bono x1.30 a ofensa/bulk de sus tipos)</span>
+              <select id="tier-clan"><option value="" data-i18n="pokeIdle.clanNone">Ninguno</option></select>
+            </div>
+            <div class="settings-row">
+              <span data-i18n="pokeIdle.filterByType">Filtrar por tipo</span>
+              <select id="tier-type"><option value="" data-i18n="pokeIdle.typeAll">Todos</option></select>
+            </div>
+            <div id="tier-list-wrap" class="poke-tier-wrap"></div>
+            <div id="tier-detail" class="poke-tier-detail"></div>
+          </div>
+
+          <div class="poke-pane" data-poke-pane="drops">
+            <p class="settings-hint" data-i18n="pokeIdle.dropsHint">
+              Todo lo que sueltan tus kills en esta sesión, en tiempo real (mismo dato que alimenta el oro/hora) — a
+              precio NPC. El contador se reinicia solo cuando cambiás de zona de caza (mismo comportamiento que el
+              propio Hunt Analyzer del juego).
+            </p>
+            <div id="poke-drops-wrap"></div>
+          </div>
+
           <div class="poke-pane" data-poke-pane="capturas">
-            <p class="settings-hint">Todo lo capturado en esta sesión, en tiempo real (últimas 100).</p>
+            <p class="settings-hint" data-i18n="pokeIdle.capturasHint">Todo lo capturado en esta sesión, en tiempo real (últimas 100).</p>
             <div id="poke-idle-notable" class="poke-notable-list"></div>
           </div>
 
           <div class="poke-pane" data-poke-pane="alertas">
             <div class="settings-row">
-              <span>Activar notificaciones</span>
+              <span data-i18n="pokeIdle.alertsEnable">Activar notificaciones</span>
               <label class="switch"><input type="checkbox" id="poke-alert-enabled" /><span class="slider"></span></label>
             </div>
             <div class="settings-row">
-              <span>✨ Shiny (capturado o visto)</span>
+              <span data-i18n="pokeIdle.alertsShiny">✨ Shiny (capturado o visto)</span>
               <label class="switch"><input type="checkbox" id="poke-alert-shiny" /><span class="slider"></span></label>
             </div>
             <div class="settings-row">
-              <span>⭐ Capturas raras (Lendária o más)</span>
+              <span data-i18n="pokeIdle.alertsRare">⭐ Capturas raras (Lendária o más)</span>
               <label class="switch"><input type="checkbox" id="poke-alert-rare" /><span class="slider"></span></label>
             </div>
             <div class="settings-row">
-              <span>🔌 Desconexión / reconexión</span>
+              <span data-i18n="pokeIdle.alertsDisconnect">🔌 Desconexión / reconexión</span>
               <label class="switch"><input type="checkbox" id="poke-alert-disconnect" /><span class="slider"></span></label>
             </div>
             <div class="settings-row">
               <div>
-                <div>🎯 Pocas bolas</div>
-                <div class="settings-hint">Avisar cuando el total de bolas caiga por debajo de:</div>
+                <div data-i18n="pokeIdle.alertsFewBalls">🎯 Pocas bolas</div>
+                <div class="settings-hint" data-i18n="pokeIdle.alertsFewBallsHint">Avisar cuando el total de bolas caiga por debajo de:</div>
               </div>
               <div style="display:flex; align-items:center; gap:8px;">
                 <input type="number" id="poke-alert-balls-threshold" min="0" style="width:70px;" />
@@ -584,11 +619,12 @@
 
   <div id="cmdk-modal" class="modal-overlay hidden">
     <div class="modal cmdk-modal">
-      <input id="cmdk-input" type="text" placeholder="Buscar cuentas, espacios, acciones o ir a una URL..." autocomplete="off" spellcheck="false" />
+      <input id="cmdk-input" type="text" placeholder="Buscar cuentas, espacios, acciones o ir a una URL..." data-i18n-placeholder="cmdk.placeholder" autocomplete="off" spellcheck="false" />
       <div id="cmdk-list" class="cmdk-list"></div>
     </div>
   </div>
 
+  <script src="i18n-data.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

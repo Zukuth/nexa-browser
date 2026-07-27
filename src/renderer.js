@@ -36,7 +36,9 @@ const statusFps = document.getElementById('status-fps');
 const statusTime = document.getElementById('status-time');
 const statusVersion = document.getElementById('status-version');
 
-const LAYOUT_LABELS = { single: 'Panel único', grid: 'Cuadrícula automática', columns: 'Columnas', rows: 'Filas', free: 'Libre' };
+function layoutLabel(mode) {
+  return t('layout.' + mode);
+}
 let appMeta = { startTime: Date.now(), version: '0.1.0' };
 const bookmarksModal = document.getElementById('bookmarks-modal');
 const bookmarksListEl = document.getElementById('bookmarks-list');
@@ -75,6 +77,11 @@ const huntAttackerEl = document.getElementById('hunt-attacker');
 const huntKphEl = document.getElementById('hunt-kph');
 const huntSortEl = document.getElementById('hunt-sort');
 const huntTableWrapEl = document.getElementById('hunt-table-wrap');
+const tierClanEl = document.getElementById('tier-clan');
+const tierTypeEl = document.getElementById('tier-type');
+const tierListWrapEl = document.getElementById('tier-list-wrap');
+const tierDetailEl = document.getElementById('tier-detail');
+const pokeDropsWrapEl = document.getElementById('poke-drops-wrap');
 const calcStatInputs = {
   hp: document.getElementById('calc-stat-hp'),
   atk: document.getElementById('calc-stat-atk'),
@@ -345,6 +352,59 @@ function applyTheme(theme) {
   }
 }
 
+// window.NEXA_I18N viene de i18n-data.js, cargado como <script> clásico
+// ANTES que este archivo — no pasa por preload.js, así que no le afecta el
+// sandbox del renderer (a diferencia del intento fallido de requerir
+// poke-formulas.js desde preload.js).
+function t(key, vars) {
+  const dict = (window.NEXA_I18N && window.NEXA_I18N[state.settings.language]) || {};
+  let str = dict[key] ?? (window.NEXA_I18N && window.NEXA_I18N.es[key]) ?? key;
+  if (vars) {
+    for (const k of Object.keys(vars)) str = str.replace(`{${k}}`, vars[k]);
+  }
+  return str;
+}
+
+function translateStaticDom() {
+  document.querySelectorAll('[data-i18n]').forEach((el) => {
+    el.textContent = t(el.getAttribute('data-i18n'));
+  });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
+    el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
+  });
+  document.querySelectorAll('[data-i18n-title]').forEach((el) => {
+    el.title = t(el.getAttribute('data-i18n-title'));
+  });
+}
+
+// Re-renderiza todo el texto visible sin recargar la página — el mismo
+// mecanismo que ya usa el polling de 5s del modal de Poke Idle (las
+// funciones render* son idempotentes), solo que disparado a demanda.
+function applyLanguage(lang) {
+  document.documentElement.lang = lang;
+  translateStaticDom();
+  render();
+  renderRail();
+  if (!settingsModal.classList.contains('hidden')) {
+    renderExtensions();
+    renderPlugins();
+    renderPasswords();
+    renderNetworkTab();
+  }
+  if (!shortcutsModal.classList.contains('hidden')) renderShortcutsList();
+  if (!bookmarksModal.classList.contains('hidden')) renderBookmarksList();
+  if (!downloadsModal.classList.contains('hidden')) renderDownloadsList();
+  if (!pokeIdleModal.classList.contains('hidden')) {
+    renderPokeIdle();
+    renderPokeIdleNotable();
+    renderPokeIdleTeam();
+    renderPokeIdleDrops();
+    renderTierList();
+    if (huntTableCache) renderHuntTable();
+  }
+  if (!cmdkModal.classList.contains('hidden')) renderCmdkResults();
+}
+
 function formatDuration(ms) {
   const seconds = Math.max(Math.floor(ms / 1000), 0);
   const m = Math.floor(seconds / 60);
@@ -362,8 +422,8 @@ function render() {
   const contentLeft = RAIL_WIDTH + sidebarWidth + 'px';
   topbarEl.style.left = contentLeft;
   emptyStateEl.style.left = contentLeft;
-  btnNewTab.textContent = collapsed ? '+' : '+ Nueva pestaña';
-  btnCollapseSidebar.title = collapsed ? 'Expandir barra lateral' : 'Contraer barra lateral';
+  btnNewTab.textContent = collapsed ? '+' : t('sidebar.newTab');
+  btnCollapseSidebar.title = collapsed ? t('js.expandSidebar') : t('js.collapseSidebar');
 
   const space = currentSpace();
   spaceNameEl.textContent = space?.name || '';
@@ -434,7 +494,7 @@ function render() {
     const metaRow = document.createElement('div');
     metaRow.className = 'account-meta-row';
     const statusText = document.createElement('span');
-    statusText.textContent = account.closed ? 'Cerrada' : 'En línea';
+    statusText.textContent = account.closed ? t('js.accountClosed') : t('js.accountOnline');
     metaRow.append(statusText);
     if (!account.closed && account.openedAt) {
       const timeText = document.createElement('span');
@@ -445,7 +505,7 @@ function render() {
       const muteIcon = document.createElement('span');
       muteIcon.className = 'account-mute-indicator';
       muteIcon.textContent = '🔇';
-      muteIcon.title = 'Silenciada';
+      muteIcon.title = t('js.muted');
       metaRow.append(muteIcon);
     }
     item.append(metaRow);
@@ -465,13 +525,13 @@ function render() {
     if (!account.closed && gs) {
       const gameRow = document.createElement('div');
       gameRow.className = 'account-game-stats-row';
-      gameRow.title = gs.connected ? 'Conectado a Poke Idle World' : 'Sin señal reciente del juego';
+      gameRow.title = gs.connected ? t('js.gameConnected') : t('js.gameDisconnected');
       const dot = gs.connected ? '🟢' : '⚪';
       gameRow.innerHTML =
-        `<span>${dot} ${formatCompactNumber(gs.killsPerHour)} kills/h</span>` +
-        `<span>${formatCompactNumber(gs.xpPerHour)} XP/h</span>` +
+        `<span>${dot} ${formatCompactNumber(gs.killsPerHour)} ${t('pokeIdle.killsPerHour')}</span>` +
+        `<span>${formatCompactNumber(gs.xpPerHour)} ${t('pokeIdle.xpPerHour')}</span>` +
         `<span>${formatCompactNumber(gs.goldPerHour)} 🪙/h</span>` +
-        (gs.captures ? `<span>${gs.captures} capturas</span>` : '') +
+        (gs.captures ? `<span>${gs.captures} ${t('pokeIdle.captures')}</span>` : '') +
         (gs.shinyCaught ? `<span>✨ ${gs.shinyCaught}</span>` : '');
       item.append(gameRow);
     }
@@ -487,7 +547,7 @@ function render() {
 
   const allClosed = spaceAccounts.length > 0 && spaceAccounts.every((a) => a.closed);
   btnToggleAll.classList.toggle('all-closed', allClosed);
-  btnToggleAll.title = allClosed ? 'Abrir todas' : 'Cerrar todas';
+  btnToggleAll.title = allClosed ? t('sidebar.openAll') : t('sidebar.closeAll');
 
   const hasOpenAccount = spaceAccounts.some((a) => !a.closed);
   emptyStateEl.classList.toggle('hidden', hasOpenAccount);
@@ -510,12 +570,12 @@ function render() {
   tbMute.textContent = active?.muted ? '🔇' : '🔊';
   tbMute.classList.toggle('muted', !!active?.muted);
   tbMuteAll.textContent = state.settings.allMuted ? '🔇' : '🔊';
-  tbMuteAll.title = state.settings.allMuted ? 'Activar sonido de todo' : 'Silenciar todo';
+  tbMuteAll.title = state.settings.allMuted ? t('js.soundOnAll') : t('topbar.muteAll');
   tbMuteAll.classList.toggle('muted', !!state.settings.allMuted);
 
   const adBlockOn = state.settings.adBlockEnabled !== false;
   tbShield.classList.toggle('muted', adBlockOn);
-  tbShield.title = adBlockOn ? 'Bloqueador de anuncios activado (clic para desactivar)' : 'Bloqueador de anuncios desactivado (clic para activar)';
+  tbShield.title = adBlockOn ? t('js.adblockOn') : t('js.adblockOff');
   const activeBlocked = active ? metrics[active.id]?.blocked || 0 : 0;
   tbShieldCount.textContent = activeBlocked > 0 ? String(activeBlocked) : '';
 
@@ -527,10 +587,10 @@ function renderStatusBar() {
   const space = currentSpace();
   const spaceAccounts = currentSpaceAccounts();
   const mode = state.settings.layoutMode || 'single';
-  statusSpaceInfo.textContent = `${space?.name || ''} · ${LAYOUT_LABELS[mode] || mode} · ${spaceAccounts.length}`;
+  statusSpaceInfo.textContent = `${space?.name || ''} · ${layoutLabel(mode)} · ${spaceAccounts.length}`;
 
   const active = activeAccount();
-  statusActiveAccount.textContent = active ? `${displayName(active, spaceAccounts.indexOf(active))} activa` : 'Sin cuenta activa';
+  statusActiveAccount.textContent = active ? t('js.activeAccountSuffix', { name: displayName(active, spaceAccounts.indexOf(active)) }) : t('js.noActiveAccount');
 
   let totalCpu = 0;
   let totalRam = 0;
@@ -638,7 +698,7 @@ function renderPanelHeaders() {
       const dragHandle = document.createElement('button');
       dragHandle.textContent = '⠿';
       dragHandle.className = 'drag-handle';
-      dragHandle.title = 'Mover panel';
+      dragHandle.title = t('js.movePanel');
       dragHandle.onmousedown = (e) => startFreeDrag(e, panel.id, 'move');
       header.appendChild(dragHandle);
     }
@@ -654,7 +714,7 @@ function renderPanelHeaders() {
     const urlInput = document.createElement('input');
     urlInput.className = 'panel-url';
     urlInput.type = 'text';
-    urlInput.placeholder = 'Escribe una URL...';
+    urlInput.placeholder = t('js.newTabPlaceholder');
     urlInput.dataset.id = panel.id;
     urlInput.value =
       panel.id === focusedPanelId ? focusedValue : panel.url && panel.url !== 'about:blank' ? panel.url : '';
@@ -684,22 +744,22 @@ function renderPanelHeaders() {
     const muteBtn = document.createElement('button');
     muteBtn.textContent = panel.muted ? '🔇' : '🔊';
     muteBtn.className = panel.muted ? 'muted' : '';
-    muteBtn.title = 'Silenciar';
+    muteBtn.title = t('topbar.mute');
     muteBtn.onclick = () => window.api.muteAccount(panel.id, !panel.muted);
 
     const reloadBtn = document.createElement('button');
     reloadBtn.textContent = '⟳';
-    reloadBtn.title = 'Recargar';
+    reloadBtn.title = t('topbar.reload');
     reloadBtn.onclick = () => window.api.reloadAccount(panel.id);
 
     const fullscreenBtn = document.createElement('button');
     fullscreenBtn.textContent = panel.maximized ? '⤡' : '⛶';
-    fullscreenBtn.title = panel.maximized ? 'Restaurar' : 'Pantalla completa';
+    fullscreenBtn.title = panel.maximized ? t('js.restore') : t('topbar.fullscreen');
     fullscreenBtn.onclick = () => window.api.toggleMaximize(panel.id);
 
     const zoomBtn = document.createElement('button');
     zoomBtn.textContent = Math.round((panel.zoom || 1) * 100) + '%';
-    zoomBtn.title = 'Zoom de esta pestaña';
+    zoomBtn.title = t('js.zoomTab');
     zoomBtn.style.width = 'auto';
     zoomBtn.style.padding = '0 4px';
     zoomBtn.style.fontSize = '10px';
@@ -710,7 +770,7 @@ function renderPanelHeaders() {
 
     const closeBtn = document.createElement('button');
     closeBtn.textContent = '✕';
-    closeBtn.title = 'Cerrar pestaña';
+    closeBtn.title = t('js.closeTab');
     closeBtn.onclick = () => window.api.closeAccount(panel.id);
 
     header.append(dot, name, urlInput, muteBtn, reloadBtn, zoomBtn, fullscreenBtn, closeBtn);
@@ -984,7 +1044,7 @@ function startFreeDrag(e, id, mode) {
 
 function openSpaceModal(space) {
   editingSpaceId = space ? space.id : null;
-  spaceInputName.value = space ? space.name : 'Nuevo espacio';
+  spaceInputName.value = space ? space.name : t('js.newSpaceDefaultName');
   modalColor = space?.color || SPACE_COLORS[0];
   modalIcon = space?.icon || SPACE_ICONS[0];
   spaceInputUrl.value = space?.defaultUrl || 'https://www.google.com';
@@ -1049,7 +1109,7 @@ btnToggleAll.addEventListener('click', () => {
 
 btnSaveSpace.addEventListener('click', async () => {
   const payload = {
-    name: spaceInputName.value.trim() || 'Espacio',
+    name: spaceInputName.value.trim() || t('js.spaceDefaultName'),
     color: modalColor,
     icon: modalIcon,
     defaultUrl: spaceInputUrl.value.trim() || 'https://www.google.com',
@@ -1182,7 +1242,7 @@ function renderZoomMenu() {
 
   const applyAll = document.createElement('div');
   applyAll.className = 'zoom-apply-all';
-  applyAll.textContent = 'Aplicar a todo';
+  applyAll.textContent = t('js.applyToAll');
   applyAll.onclick = () => {
     window.api.setZoomAll(currentFactor);
     zoomMenu.classList.add('hidden');
@@ -1269,7 +1329,7 @@ function renderBookmarksList() {
   const list = state.bookmarks || [];
   bookmarksListEl.innerHTML = '';
   if (list.length === 0) {
-    bookmarksListEl.innerHTML = '<div class="settings-hint">Todavía no guardaste ningún favorito.</div>';
+    bookmarksListEl.innerHTML = `<div class="settings-hint">${t('bookmarks.empty')}</div>`;
     return;
   }
   list.forEach((b) => {
@@ -1287,7 +1347,7 @@ function renderBookmarksList() {
 
     const removeBtn = document.createElement('button');
     removeBtn.className = 'ext-remove';
-    removeBtn.textContent = 'Quitar';
+    removeBtn.textContent = t('settings.remove');
     removeBtn.onclick = (e) => {
       e.stopPropagation();
       window.api.removeBookmark(b.id);
@@ -1323,16 +1383,16 @@ bmImport.addEventListener('click', async () => {
   if (result.ok) {
     renderBookmarksList();
   } else if (result.error) {
-    alert('No se pudieron importar los favoritos: ' + result.error);
+    alert(t('bookmarks.importError', { message: result.error }));
   }
 });
 
 bmExport.addEventListener('click', async () => {
   try {
     const result = await window.api.exportBookmarks();
-    if (!result.ok && result.error) alert('No se pudieron exportar los favoritos: ' + result.error);
+    if (!result.ok && result.error) alert(t('bookmarks.exportError', { message: result.error }));
   } catch (err) {
-    alert('No se pudieron exportar los favoritos: ' + err.message);
+    alert(t('bookmarks.exportError', { message: err.message }));
   }
 });
 
@@ -1362,18 +1422,15 @@ function formatBytes(n) {
   return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
 }
 
-const DOWNLOAD_STATE_LABELS = {
-  progressing: 'Descargando…',
-  completed: 'Completada',
-  cancelled: 'Cancelada',
-  interrupted: 'Interrumpida'
-};
+function downloadStateLabel(downloadState) {
+  return t('downloads.state' + downloadState.charAt(0).toUpperCase() + downloadState.slice(1));
+}
 
 function renderDownloadsList() {
   const list = state.downloads || [];
   downloadsListEl.innerHTML = '';
   if (list.length === 0) {
-    downloadsListEl.innerHTML = '<div class="settings-hint">Todavía no descargaste nada.</div>';
+    downloadsListEl.innerHTML = `<div class="settings-hint">${t('downloads.empty')}</div>`;
     return;
   }
   list.forEach((d) => {
@@ -1386,7 +1443,7 @@ function renderDownloadsList() {
       d.state === 'progressing'
         ? `${formatBytes(d.receivedBytes)} / ${formatBytes(d.totalBytes) || '?'}`
         : formatBytes(d.totalBytes || d.receivedBytes);
-    const stateLabel = d.state === 'progressing' && d.paused ? 'Pausada' : (DOWNLOAD_STATE_LABELS[d.state] || d.state);
+    const stateLabel = d.state === 'progressing' && d.paused ? t('downloads.statePaused') : downloadStateLabel(d.state);
     info.innerHTML = `
       <div class="ext-name">${escapeHtmlClient(d.filename)}</div>
       <div class="ext-desc">${stateLabel} · ${sizeText}</div>
@@ -1399,12 +1456,12 @@ function renderDownloadsList() {
     if (d.state === 'completed') {
       const openBtn = document.createElement('button');
       openBtn.className = 'ext-remove';
-      openBtn.textContent = 'Abrir';
+      openBtn.textContent = t('downloads.open');
       openBtn.onclick = () => window.api.openFileDownload(d.id);
 
       const folderBtn = document.createElement('button');
       folderBtn.className = 'ext-remove';
-      folderBtn.textContent = 'Mostrar en carpeta';
+      folderBtn.textContent = t('downloads.showInFolder');
       folderBtn.onclick = () => window.api.showDownloadInFolder(d.id);
 
       actions.append(openBtn, folderBtn);
@@ -1413,12 +1470,12 @@ function renderDownloadsList() {
     if (d.state === 'progressing') {
       const toggleBtn = document.createElement('button');
       toggleBtn.className = 'ext-remove';
-      toggleBtn.textContent = d.paused ? 'Reanudar' : 'Pausar';
+      toggleBtn.textContent = d.paused ? t('downloads.resume') : t('downloads.pause');
       toggleBtn.onclick = () => (d.paused ? window.api.resumeDownload(d.id) : window.api.pauseDownload(d.id));
 
       const cancelBtn = document.createElement('button');
       cancelBtn.className = 'ext-remove';
-      cancelBtn.textContent = 'Cancelar';
+      cancelBtn.textContent = t('downloads.cancel');
       cancelBtn.onclick = () => window.api.cancelDownload(d.id);
 
       actions.append(toggleBtn, cancelBtn);
@@ -1426,7 +1483,7 @@ function renderDownloadsList() {
 
     const removeBtn = document.createElement('button');
     removeBtn.className = 'ext-remove';
-    removeBtn.textContent = 'Quitar';
+    removeBtn.textContent = t('downloads.remove');
     removeBtn.onclick = () => window.api.removeDownload(d.id);
     actions.append(removeBtn);
 
@@ -1458,7 +1515,7 @@ function getCommandActions() {
     actions.push({
       icon: account.closed ? '⚪' : '🟢',
       label: displayName(account, i),
-      hint: 'Cambiar de cuenta',
+      hint: t('cmdk.changeAccount'),
       keywords: `cuenta ${displayName(account, i)}`,
       run: () => window.api.activateAccount(account.id)
     });
@@ -1468,21 +1525,17 @@ function getCommandActions() {
     actions.push({
       icon: '🗂️',
       label: space.name,
-      hint: 'Cambiar de espacio',
+      hint: t('cmdk.changeSpace'),
       keywords: `espacio ${space.name}`,
       run: () => window.api.activateSpace(space.id)
     });
   });
 
-  [
-    ['general', 'General'], ['navegacion', 'Navegación'], ['descargas', 'Descargas'],
-    ['extensiones', 'Extensiones'], ['contrasenas', 'Contraseñas'], ['red', 'Red'],
-    ['actualizaciones', 'Actualizaciones'], ['acerca', 'Acerca de']
-  ].forEach(([tab, label]) => {
+  ['general', 'navegacion', 'descargas', 'extensiones', 'contrasenas', 'red', 'actualizaciones', 'acerca'].forEach((tab) => {
     actions.push({
       icon: '⚙️',
-      label: `Configuración: ${label}`,
-      keywords: `configuracion settings ${label}`,
+      label: `${t('settings.title')}: ${t('settings.tab.' + tab)}`,
+      keywords: `configuracion settings ${t('settings.tab.' + tab)}`,
       run: () => { openSettingsModal(); activateSettingsTab(tab); }
     });
   });
@@ -1490,25 +1543,25 @@ function getCommandActions() {
   const adBlockOn = state.settings.adBlockEnabled !== false;
   actions.push(
     {
-      icon: '➕', label: 'Nueva cuenta', keywords: 'nueva cuenta agregar add account',
+      icon: '➕', label: t('cmdk.newAccount'), keywords: 'nueva cuenta agregar add account',
       run: () => window.api.quickAddAccount()
     },
     {
       icon: adBlockOn ? '🛡️' : '🚫',
-      label: adBlockOn ? 'Desactivar bloqueador de anuncios' : 'Activar bloqueador de anuncios',
+      label: adBlockOn ? t('cmdk.disableAdblock') : t('cmdk.enableAdblock'),
       keywords: 'adblock bloqueador anuncios rastreadores',
       run: () => window.api.updateSettings({ adBlockEnabled: !adBlockOn })
     },
     {
-      icon: '⬇️', label: 'Abrir Descargas', keywords: 'descargas downloads',
+      icon: '⬇️', label: t('cmdk.openDownloads'), keywords: 'descargas downloads',
       run: () => openDownloadsModal()
     },
     {
-      icon: '⭐', label: 'Abrir Favoritos', keywords: 'favoritos bookmarks marcadores',
+      icon: '⭐', label: t('cmdk.openBookmarks'), keywords: 'favoritos bookmarks marcadores',
       run: () => openBookmarksModal()
     },
     {
-      icon: '🎮', label: 'Abrir Poke Idle World', keywords: 'poke idle pokemon equipo capturas alertas',
+      icon: '🎮', label: t('cmdk.openPokeIdle'), keywords: 'poke idle pokemon equipo capturas alertas',
       run: () => openPokeIdleModal()
     }
   );
@@ -1525,8 +1578,8 @@ function filterCommandActions(query) {
   if (q) {
     filtered.push({
       icon: '🔗',
-      label: `Ir a: ${query.trim()}`,
-      hint: 'Navegar en la cuenta activa',
+      label: t('cmdk.goTo', { query: query.trim() }),
+      hint: t('js.navigateActiveAccount'),
       run: () => {
         const active = activeAccount();
         if (active) window.api.navigateAccount(active.id, query.trim());
@@ -1539,7 +1592,7 @@ function filterCommandActions(query) {
 function renderCmdkResults() {
   cmdkListEl.innerHTML = '';
   if (cmdkResults.length === 0) {
-    cmdkListEl.innerHTML = '<div class="cmdk-empty">Sin resultados</div>';
+    cmdkListEl.innerHTML = `<div class="cmdk-empty">${t('cmdk.noResults')}</div>`;
     return;
   }
   cmdkResults.forEach((action, i) => {
@@ -1612,7 +1665,7 @@ cmdkModal.addEventListener('mousedown', (e) => {
 
 // ---- Shortcuts modal ----
 
-async function openShortcutsModal() {
+async function renderShortcutsList() {
   const shortcuts = await window.api.getShortcuts();
   shortcutsListEl.innerHTML = '';
   shortcuts.forEach((s) => {
@@ -1638,6 +1691,10 @@ async function openShortcutsModal() {
     row.append(label, keys);
     shortcutsListEl.appendChild(row);
   });
+}
+
+async function openShortcutsModal() {
+  await renderShortcutsList();
   shortcutsModal.classList.remove('hidden');
   pushModal();
 }
@@ -1667,7 +1724,7 @@ async function renderPasswords() {
   const list = await window.api.getPasswords();
   pwListEl.innerHTML = '';
   if (list.length === 0) {
-    pwListEl.innerHTML = '<div class="settings-hint">No has importado contraseñas todavía.</div>';
+    pwListEl.innerHTML = `<div class="settings-hint">${t('settings.pwEmpty')}</div>`;
     return;
   }
   list.forEach((p) => {
@@ -1687,12 +1744,12 @@ async function renderPasswords() {
 
     const copyBtn = document.createElement('button');
     copyBtn.className = 'ext-remove';
-    copyBtn.textContent = 'Copiar';
+    copyBtn.textContent = t('settings.copy');
     copyBtn.onclick = () => navigator.clipboard.writeText(p.password || '');
 
     const removeBtn = document.createElement('button');
     removeBtn.className = 'ext-remove';
-    removeBtn.textContent = 'Quitar';
+    removeBtn.textContent = t('settings.remove');
     removeBtn.onclick = () => window.api.removePassword(p.id);
 
     actions.append(copyBtn, removeBtn);
@@ -1717,7 +1774,7 @@ pwAddSave.addEventListener('click', async () => {
   const url = pwAddUrl.value.trim();
   const password = pwAddPass.value;
   if (!url || !password) {
-    pwError.textContent = 'La URL y la contraseña son obligatorias.';
+    pwError.textContent = t('settings.pwUrlPassRequired');
     pwError.classList.remove('hidden');
     return;
   }
@@ -1763,6 +1820,7 @@ function openSettingsModal() {
   // or the counter drifts and views never come back.
   const wasHidden = settingsModal.classList.contains('hidden');
   const s = state.settings;
+  setLanguage.value = s.language || 'es';
   setTheme.value = s.theme || 'system';
   setStartWindows.checked = !!s.startWithWindows;
   setReopenSpace.checked = s.reopenLastSpace !== false;
@@ -1771,7 +1829,7 @@ function openSettingsModal() {
   setDefaultUrl.value = s.defaultStartUrl || 'https://www.google.com';
   setDefaultZoom.value = String(s.defaultZoom || 1);
   setDefaultLayout.value = s.newSpaceDefaultLayout || 'single';
-  setDownloadsFolderLabel.textContent = s.downloadsFolder || 'Carpeta predeterminada del sistema';
+  setDownloadsFolderLabel.textContent = s.downloadsFolder || t('settings.downloadsFolderDefault');
   setAskDownload.checked = !!s.askDownloadLocation;
   setAutoUpdate.checked = s.autoCheckUpdates !== false;
   setUpdateStatus.textContent = '';
@@ -1801,7 +1859,7 @@ function renderExtensions() {
   const list = state.settings.extensions || [];
   extListEl.innerHTML = '';
   if (list.length === 0) {
-    extListEl.innerHTML = '<div class="settings-hint">Todavía no instalaste ninguna extensión.</div>';
+    extListEl.innerHTML = `<div class="settings-hint">${t('settings.extEmpty')}</div>`;
     return;
   }
   list.forEach((ext) => {
@@ -1846,7 +1904,7 @@ function renderExtensions() {
 
     const removeBtn = document.createElement('button');
     removeBtn.className = 'ext-remove';
-    removeBtn.textContent = 'Quitar';
+    removeBtn.textContent = t('settings.remove');
     removeBtn.onclick = () => window.api.removeExtension(ext.id);
 
     actions.append(toggleLabel, removeBtn);
@@ -1872,7 +1930,7 @@ async function renderPlugins() {
     info.innerHTML = `
       <div class="ext-name">${escapeHtmlClient(plugin.name)} ${plugin.version ? `<span class="ext-version">${escapeHtmlClient(plugin.version)}</span>` : ''}</div>
       <div class="ext-desc">${escapeHtmlClient(plugin.description)}</div>
-      ${!plugin.enabled ? '<div class="ext-id">No disponible en este equipo</div>' : ''}
+      ${!plugin.enabled ? `<div class="ext-id">${t('settings.pluginNotAvailable')}</div>` : ''}
     `;
 
     item.append(icon, info);
@@ -1884,15 +1942,15 @@ function renderNetworkTab() {
   if (!networkListEl) return;
   networkListEl.innerHTML = '';
   if (state.accounts.length === 0) {
-    networkListEl.innerHTML = '<div class="settings-hint">Todavía no creaste ninguna cuenta.</div>';
+    networkListEl.innerHTML = `<div class="settings-hint">${t('settings.networkEmpty')}</div>`;
     return;
   }
   state.accounts.forEach((account, i) => {
     const item = document.createElement('div');
     item.className = 'ext-item';
     const proxyText = account.proxy?.server
-      ? `${account.proxy.server}${account.proxy.username ? ` (usuario: ${account.proxy.username})` : ''}`
-      : 'Sin proxy — usa la conexión directa';
+      ? `${account.proxy.server}${account.proxy.username ? t('settings.networkProxyUser', { user: account.proxy.username }) : ''}`
+      : t('settings.networkNoProxy');
     item.innerHTML = `
       <div class="ext-info">
         <div class="ext-name">${escapeHtmlClient(displayName(account, i))}</div>
@@ -1990,6 +2048,32 @@ function pokeSpriteUrl(pokeId, name) {
   return dexId ? `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${dexId}.png` : '';
 }
 
+// Animated sprite (gen-5 style), primary source — falls back to the static
+// PNG (via applySpriteWithFallback / window.pokeSpriteFallback below) since
+// not every dex id has an animated frame in PokeAPI's sprite repo.
+function pokeSpriteGifUrl(pokeId, name) {
+  const dexId = resolveSpriteDexId(pokeId, name);
+  return dexId ? `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/${dexId}.gif` : '';
+}
+
+function applySpriteWithFallback(img, pokeId, name) {
+  const png = pokeSpriteUrl(pokeId, name);
+  const gif = pokeSpriteGifUrl(pokeId, name);
+  img.src = gif || png;
+  img.onerror = () => {
+    if (png && img.src !== png) { img.src = png; }
+    else { img.style.visibility = 'hidden'; }
+  };
+}
+
+// Used from inline onerror= in template-string-built rows (hunt table),
+// where a closure isn't available — mirrors applySpriteWithFallback's logic.
+window.pokeSpriteFallback = function pokeSpriteFallback(img, pngSrc) {
+  if (img.dataset.fallbackTried) { img.style.visibility = 'hidden'; return; }
+  img.dataset.fallbackTried = '1';
+  if (pngSrc) { img.src = pngSrc; } else { img.style.visibility = 'hidden'; }
+};
+
 function formatRelativeTime(ts) {
   const diff = Math.max(Date.now() - ts, 0);
   const s = Math.floor(diff / 1000);
@@ -1999,6 +2083,35 @@ function formatRelativeTime(ts) {
   const h = Math.floor(m / 60);
   if (h < 24) return `hace ${h}h`;
   return `hace ${Math.floor(h / 24)}d`;
+}
+
+function dropsTableHtml(lootBreakdown) {
+  if (!lootBreakdown || !lootBreakdown.length) {
+    return `<div class="settings-hint">${t('pokeIdle.dropsEmpty')}</div>`;
+  }
+  const rows = lootBreakdown.map((d) => {
+    const icon = d.icon
+      ? `<img class="poke-drop-icon" loading="lazy" src="${d.icon}" onerror="this.style.visibility='hidden'" alt="" />`
+      : '<span class="poke-drop-icon poke-drop-icon-empty"></span>';
+    return `<tr><td><div class="poke-hunt-row-name">${icon}${escapeHtmlClient(d.name)}</div></td><td>×${formatCompactNumber(d.qty)}</td><td>$${formatCompactNumber(d.value)}</td></tr>`;
+  }).join('');
+  return `<table class="poke-calc-table"><thead><tr><th>${t('pokeIdle.col.item')}</th><th>${t('pokeIdle.col.qty')}</th><th>${t('pokeIdle.col.npcValue')}</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderPokeIdleDrops() {
+  if (!pokeDropsWrapEl) return;
+  const tracked = state.accounts.filter((a) => !a.closed && gameStats[a.id]);
+  if (tracked.length === 0) {
+    pokeDropsWrapEl.innerHTML = `<div class="settings-hint">${t('pokeIdle.noAccounts')}</div>`;
+    return;
+  }
+  if (tracked.length === 1) {
+    pokeDropsWrapEl.innerHTML = dropsTableHtml(gameStats[tracked[0].id].lootBreakdown);
+    return;
+  }
+  pokeDropsWrapEl.innerHTML = tracked.map((a, ai) =>
+    `<div class="settings-subheading">${escapeHtmlClient(displayName(a, ai))}</div>${dropsTableHtml(gameStats[a.id].lootBreakdown)}`
+  ).join('');
 }
 
 function renderPokeIdleNotable() {
@@ -2014,7 +2127,7 @@ function renderPokeIdleNotable() {
   const top = all.slice(0, 20);
 
   if (top.length === 0) {
-    el.innerHTML = '<div class="settings-hint">Todavía no hay capturas en esta sesión.</div>';
+    el.innerHTML = `<div class="settings-hint">${t('pokeIdle.capturasEmpty')}</div>`;
     return;
   }
 
@@ -2029,9 +2142,8 @@ function renderPokeIdleNotable() {
     const img = document.createElement('img');
     img.className = 'poke-notable-sprite';
     img.loading = 'lazy';
-    img.src = pokeSpriteUrl(c.speciesId, c.name);
     img.alt = c.name || '';
-    img.onerror = () => { img.style.visibility = 'hidden'; };
+    applySpriteWithFallback(img, c.speciesId, c.name);
 
     const info = document.createElement('div');
     info.className = 'poke-notable-info';
@@ -2043,7 +2155,7 @@ function renderPokeIdleNotable() {
 
     const rarity = document.createElement('div');
     rarity.className = 'poke-notable-rarity';
-    rarity.textContent = c.rarity || (c.shiny ? 'Shiny' : '');
+    rarity.textContent = c.rarity || (c.shiny ? t('pokeIdle.shiny') : '');
 
     const time = document.createElement('div');
     time.className = 'poke-notable-time';
@@ -2060,7 +2172,7 @@ function renderPokeIdle() {
 
   if (tracked.length === 0) {
     pokeIdleSummaryEl.innerHTML = '';
-    pokeIdleAccountsEl.innerHTML = '<div class="settings-hint">Ninguna cuenta abierta apunta a Poke Idle World todavía.</div>';
+    pokeIdleAccountsEl.innerHTML = `<div class="settings-hint">${t('pokeIdle.noAccounts')}</div>`;
     return;
   }
 
@@ -2070,16 +2182,16 @@ function renderPokeIdle() {
     totalKills += gs.killsPerHour || 0;
     totalXp += gs.xpPerHour || 0;
     totalGold += gs.goldPerHour || 0;
-    totalCaptures += gs.captures || 0;
+    totalCaptures += gs.capturesPerHour || 0;
     totalShiny += gs.shinyCaught || 0;
   });
 
   pokeIdleSummaryEl.innerHTML = `
-    <div class="poke-summary-card"><div class="poke-summary-value">${formatCompactNumber(totalKills)}</div><div class="poke-summary-label">Kills/h</div></div>
-    <div class="poke-summary-card"><div class="poke-summary-value">${formatCompactNumber(totalXp)}</div><div class="poke-summary-label">XP/h</div></div>
-    <div class="poke-summary-card"><div class="poke-summary-value">${formatCompactNumber(totalGold)}</div><div class="poke-summary-label">Oro/h</div></div>
-    <div class="poke-summary-card"><div class="poke-summary-value">${totalCaptures}</div><div class="poke-summary-label">Capturas</div></div>
-    <div class="poke-summary-card"><div class="poke-summary-value">✨ ${totalShiny}</div><div class="poke-summary-label">Shiny</div></div>
+    <div class="poke-summary-card"><div class="poke-summary-value">${formatCompactNumber(totalKills)}</div><div class="poke-summary-label">${t('pokeIdle.killsPerHour')}</div></div>
+    <div class="poke-summary-card"><div class="poke-summary-value">${formatCompactNumber(totalXp)}</div><div class="poke-summary-label">${t('pokeIdle.xpPerHour')}</div></div>
+    <div class="poke-summary-card"><div class="poke-summary-value">${formatCompactNumber(totalGold)}</div><div class="poke-summary-label">${t('pokeIdle.goldPerHour')}</div></div>
+    <div class="poke-summary-card"><div class="poke-summary-value">${formatCompactNumber(totalCaptures)}</div><div class="poke-summary-label">${t('pokeIdle.capturesPerHour')}</div></div>
+    <div class="poke-summary-card"><div class="poke-summary-value">✨ ${totalShiny}</div><div class="poke-summary-label">${t('pokeIdle.shiny')}</div></div>
   `;
 
   pokeIdleAccountsEl.innerHTML = '';
@@ -2089,12 +2201,12 @@ function renderPokeIdle() {
     item.className = 'poke-account-item';
     const dot = gs.connected ? '🟢' : '⚪';
     item.innerHTML = `
-      <span class="poke-account-name">${dot} ${escapeHtmlClient(a.name || 'Cuenta')}</span>
+      <span class="poke-account-name">${dot} ${escapeHtmlClient(a.name || t('field.name'))}</span>
       <span class="poke-account-stats">
-        <span>${formatCompactNumber(gs.killsPerHour)} kills/h</span>
-        <span>${formatCompactNumber(gs.xpPerHour)} XP/h</span>
-        <span>${formatCompactNumber(gs.goldPerHour)} oro/h</span>
-        <span>${gs.captures} capturas</span>
+        <span>${formatCompactNumber(gs.killsPerHour)} ${t('pokeIdle.killsPerHour')}</span>
+        <span>${formatCompactNumber(gs.xpPerHour)} ${t('pokeIdle.xpPerHour')}</span>
+        <span>${formatCompactNumber(gs.goldPerHour)} ${t('pokeIdle.goldPerHour')}</span>
+        <span>${formatCompactNumber(gs.capturesPerHour)} ${t('pokeIdle.capturesPerHour')}</span>
         ${gs.shinyCaught ? `<span>✨ ${gs.shinyCaught}</span>` : ''}
       </span>
     `;
@@ -2110,6 +2222,52 @@ const POKE_TYPE_COLORS = {
   STEEL: '#b8b8d0', FAIRY: '#ee99ac'
 };
 
+// Mismo type chart que electron/poke-formulas.js (attack multipliers), pero
+// duplicado acá porque poke-formulas.js corre en main.js (sin sandbox) y no
+// se puede exponer al renderer sandboxeado — ver nota en pokeSpriteUrl y en
+// el módulo original. Solo se usa acá para el recuadro "daño x2 a".
+const POKE_TYPE_CHART = {
+  NORMAL:   { ROCK: 0.5, GHOST: 0, STEEL: 0.5 },
+  FIRE:     { FIRE: 0.5, WATER: 0.5, GRASS: 2, ICE: 2, BUG: 2, ROCK: 0.5, DRAGON: 0.5, STEEL: 2 },
+  WATER:    { FIRE: 2, WATER: 0.5, GRASS: 0.5, GROUND: 2, ROCK: 2, DRAGON: 0.5 },
+  ELECTRIC: { WATER: 2, ELECTRIC: 0.5, GRASS: 0.5, GROUND: 0, FLYING: 2, DRAGON: 0.5 },
+  GRASS:    { FIRE: 0.5, WATER: 2, GRASS: 0.5, POISON: 0.5, GROUND: 2, FLYING: 0.5, BUG: 0.5, ROCK: 2, DRAGON: 0.5, STEEL: 0.5 },
+  ICE:      { FIRE: 0.5, WATER: 0.5, GRASS: 2, ICE: 0.5, GROUND: 2, FLYING: 2, DRAGON: 2, STEEL: 0.5 },
+  FIGHTING: { NORMAL: 2, ICE: 2, POISON: 0.5, FLYING: 0.5, PSYCHIC: 0.5, BUG: 0.5, ROCK: 2, GHOST: 0, DARK: 2, STEEL: 2, FAIRY: 0.5 },
+  POISON:   { GRASS: 2, POISON: 0.5, GROUND: 0.5, ROCK: 0.5, GHOST: 0.5, STEEL: 0, FAIRY: 2 },
+  GROUND:   { FIRE: 2, ELECTRIC: 2, GRASS: 0.5, POISON: 2, FLYING: 0, BUG: 0.5, ROCK: 2, STEEL: 2 },
+  FLYING:   { ELECTRIC: 0.5, GRASS: 2, FIGHTING: 2, BUG: 2, ROCK: 0.5, STEEL: 0.5 },
+  PSYCHIC:  { FIGHTING: 2, POISON: 2, PSYCHIC: 0.5, DARK: 0, STEEL: 0.5 },
+  BUG:      { FIRE: 0.5, GRASS: 2, FIGHTING: 0.5, POISON: 0.5, FLYING: 0.5, PSYCHIC: 2, GHOST: 0.5, DARK: 2, STEEL: 0.5, FAIRY: 0.5 },
+  ROCK:     { FIRE: 2, ICE: 2, FIGHTING: 0.5, GROUND: 0.5, FLYING: 2, BUG: 2, STEEL: 0.5 },
+  GHOST:    { NORMAL: 0, PSYCHIC: 2, GHOST: 2, DARK: 0.5 },
+  DRAGON:   { DRAGON: 2, STEEL: 0.5, FAIRY: 0 },
+  DARK:     { FIGHTING: 0.5, PSYCHIC: 2, GHOST: 2, DARK: 0.5, FAIRY: 0.5 },
+  STEEL:    { FIRE: 0.5, WATER: 0.5, ELECTRIC: 0.5, ICE: 2, ROCK: 2, STEEL: 0.5, FAIRY: 2 },
+  FAIRY:    { FIRE: 0.5, FIGHTING: 2, POISON: 0.5, DRAGON: 2, DARK: 2, STEEL: 0.5 }
+};
+
+function typeBadgeHtml(t) {
+  return `<span class="poke-type-badge" style="background:${POKE_TYPE_COLORS[t] || '#4f8cff'}">${escapeHtmlClient(t)}</span>`;
+}
+
+// Recuadro "a qué tipos les hace x2 de daño" según los tipos propios del
+// Pokémon (STAB) — lo que el usuario pidió mostrar como en la imagen de
+// referencia ("Rock le hace daño extra a Fire, Ice...").
+function effectivenessBoxHtml(type1, type2) {
+  const types = [type1, type2].filter(Boolean);
+  if (!types.length) return '';
+  const targets = new Set();
+  types.forEach((t) => {
+    const row = POKE_TYPE_CHART[t];
+    if (!row) return;
+    Object.entries(row).forEach(([defType, mult]) => { if (mult > 1) targets.add(defType); });
+  });
+  if (!targets.size) return '';
+  const chips = Array.from(targets).map(typeBadgeHtml).join('');
+  return `<div class="poke-eff-box"><span class="poke-eff-title">${t('pokeIdle.damageBoxTitle')}</span><div class="poke-eff-chips">${chips}</div></div>`;
+}
+
 function activatePokeTab(tab) {
   pokeNavItems.forEach((n) => n.classList.toggle('active', n.dataset.pokeTab === tab));
   pokePanes.forEach((p) => p.classList.toggle('active', p.dataset.pokePane === tab));
@@ -2119,6 +2277,8 @@ pokeNavItems.forEach((navItem) => {
   navItem.addEventListener('click', () => {
     activatePokeTab(navItem.dataset.pokeTab);
     if (navItem.dataset.pokeTab === 'caza') runHuntTable();
+    if (navItem.dataset.pokeTab === 'tierlist') { populateTierFilters().then(renderTierList); }
+    if (navItem.dataset.pokeTab === 'drops') renderPokeIdleDrops();
   });
 });
 
@@ -2128,9 +2288,11 @@ function openPokeIdleModal() {
   renderPokeIdle();
   renderPokeIdleNotable();
   renderPokeIdleTeam();
+  renderPokeIdleDrops();
   loadPokeIdleAlertFields();
   populateCalcSourceDropdown();
   populateHuntAttackerDropdown();
+  populateTierFilters().then(renderTierList);
 }
 
 function closePokeIdleModal() {
@@ -2149,7 +2311,7 @@ function renderPokeIdleTeam() {
   const tracked = state.accounts.filter((a) => !a.closed && gameStats[a.id] && (gameStats[a.id].team || []).length);
 
   if (tracked.length === 0) {
-    pokeIdleTeamEl.innerHTML = '<div class="settings-hint">Ninguna cuenta abierta tiene un equipo activo detectado todavía.</div>';
+    pokeIdleTeamEl.innerHTML = `<div class="settings-hint">${t('pokeIdle.equipoEmpty')}</div>`;
     return;
   }
 
@@ -2164,17 +2326,13 @@ function renderPokeIdleTeam() {
       const img = document.createElement('img');
       img.className = 'poke-team-sprite';
       img.loading = 'lazy';
-      img.src = pokeSpriteUrl(p.speciesId, p.name);
       img.alt = p.name || '';
-      img.onerror = () => { img.style.visibility = 'hidden'; };
+      applySpriteWithFallback(img, p.speciesId, p.name);
 
       const main = document.createElement('div');
       main.className = 'poke-team-main';
 
-      const typeBadges = [p.type1, p.type2]
-        .filter(Boolean)
-        .map((t) => `<span class="poke-type-badge" style="background:${POKE_TYPE_COLORS[t] || '#4f8cff'}">${escapeHtmlClient(t)}</span>`)
-        .join(' ');
+      const typeBadges = [p.type1, p.type2].filter(Boolean).map(typeBadgeHtml).join(' ');
 
       const header = document.createElement('div');
       header.className = 'poke-team-header';
@@ -2208,10 +2366,13 @@ function renderPokeIdleTeam() {
       moves.className = 'poke-moves';
       const moveList = p.moves || [];
       moves.innerHTML = moveList.length
-        ? moveList.slice(0, 8).map((m) => `<span class="poke-move-chip">${escapeHtmlClient(m.name)} · ${m.power ?? '?'}</span>`).join('')
-        : '<span class="poke-move-chip">Sin movimientos detectados</span>';
+        ? moveList.slice(0, 8).map((m) => `<span class="poke-move-chip">${typeBadgeHtml(m.type)}${escapeHtmlClient(m.name)} · ${m.power ?? '?'} <span class="poke-move-lvl">Lv.${m.learnLevel ?? 1}</span></span>`).join('')
+        : `<span class="poke-move-chip">${t('pokeIdle.noMoves')}</span>`;
 
-      main.append(header, quality, hpRow, statGrid, moves);
+      const effBox = document.createElement('div');
+      effBox.innerHTML = effectivenessBoxHtml(p.type1, p.type2);
+
+      main.append(header, quality, hpRow, statGrid, moves, ...effBox.children);
       card.append(img, main);
       pokeIdleTeamEl.appendChild(card);
     });
@@ -2236,7 +2397,7 @@ function ensureCreatureCatalogRenderer() {
 async function populateCalcSpeciesDropdown() {
   const catalog = await ensureCreatureCatalogRenderer();
   const sorted = catalog.slice().sort((a, b) => a.name.localeCompare(b.name));
-  calcSpeciesEl.innerHTML = '<option value="">Elegí un Pokémon…</option>' +
+  calcSpeciesEl.innerHTML = `<option value="">${t('pokeIdle.pokemonPlaceholder')}</option>` +
     sorted.map((c) => `<option value="${c.pokeId}">${escapeHtmlClient(c.name)}</option>`).join('');
 }
 
@@ -2249,7 +2410,8 @@ function collectLiveCalcSources() {
     const gs = gameStats[account.id];
     (gs.team || []).forEach((p) => {
       sources.push({
-        label: `🟢 ${displayName(account, ai)} · ${p.name} Lv.${p.level} (equipo)`,
+        label: `🟢 ${displayName(account, ai)} · ${p.name} Lv.${p.level} (${t('pokeIdle.teamSuffix')})`,
+        isTeam: true,
         speciesId: p.speciesId, level: p.level, quality: p.quality, stats: p.stats,
         killsPerHour: gs.killsPerHour
       });
@@ -2258,6 +2420,7 @@ function collectLiveCalcSources() {
       if (!c.stats) return;
       sources.push({
         label: `📋 ${displayName(account, ai)} · ${c.name} Lv.${c.level} (${formatRelativeTime(c.at)})`,
+        isTeam: false,
         speciesId: c.speciesId, level: c.level, quality: c.quality, stats: c.stats
       });
     });
@@ -2268,7 +2431,7 @@ function collectLiveCalcSources() {
 function populateCalcSourceDropdown() {
   calcSources = collectLiveCalcSources();
   const current = calcSourceEl.value;
-  calcSourceEl.innerHTML = '<option value="manual">Manual</option>' +
+  calcSourceEl.innerHTML = `<option value="manual">${t('pokeIdle.sourceManual')}</option>` +
     calcSources.map((s, i) => `<option value="${i}">${escapeHtmlClient(s.label)}</option>`).join('');
   if (current && [...calcSourceEl.options].some((o) => o.value === current)) calcSourceEl.value = current;
 }
@@ -2298,22 +2461,25 @@ calcSourceEl.addEventListener('change', () => {
 
 const CALC_STAT_LABELS = { hp: 'HP', atk: 'ATK', def: 'DEF', spatk: 'SpA', spdef: 'SpD', speed: 'Vel' };
 
-const QUALITY_BAND_ES = {
-  Weak: 'Malo', Common: 'Normal', Uncommon: 'Normal', Rare: 'Bueno', Epic: 'Bueno', Legendary: 'Excelente'
+const QUALITY_BAND_KEYS = {
+  Weak: 'pokeIdle.qualityBand.bad', Common: 'pokeIdle.qualityBand.normal', Uncommon: 'pokeIdle.qualityBand.normal',
+  Rare: 'pokeIdle.qualityBand.good', Epic: 'pokeIdle.qualityBand.good', Legendary: 'pokeIdle.qualityBand.excellent'
 };
-const QUALITY_TIER_INDEX = { Weak: 0, Common: 1, Uncommon: 2, Rare: 3, Epic: 4, Legendary: 5 };
-
-// Combines both axes the user asked for — Quality (game's own rarity roll)
-// and IV total (0-192, the "genetics" roll) — into one plain-language
-// verdict, instead of making them read two separate numbers and guess.
-function pokeVerdict(ivMin, ivMax, bandLabel) {
-  const ivPct = ((ivMin + ivMax) / 2) / 192;
-  const qTier = (QUALITY_TIER_INDEX[bandLabel] ?? 0) / 5;
-  const combined = (ivPct + qTier) / 2;
-  if (combined < 0.35) return { text: 'Malo', color: '#ff6b6b' };
-  if (combined < 0.6) return { text: 'Normal', color: '#8890a0' };
-  if (combined < 0.85) return { text: 'Bueno', color: '#51cf66' };
-  return { text: 'Excelente', color: '#ffb020' };
+function qualityBandLabel(bandLabel) {
+  const key = QUALITY_BAND_KEYS[bandLabel];
+  return key ? t(key) : bandLabel;
+}
+// Tabla de evaluación por potencial de IV (%) tal como la pasó el usuario —
+// mismos 6 tramos y umbrales, sin combinar con Quality (esa se sigue
+// mostrando aparte).
+function pokeVerdict(ivMin, ivMax) {
+  const ivPct = ((ivMin + ivMax) / 2) / 192 * 100;
+  if (ivPct >= 95) return { text: t('pokeIdle.verdict.exceptional'), color: '#34d3c4' };
+  if (ivPct >= 85) return { text: t('pokeIdle.verdict.excellent'), color: '#4f8cff' };
+  if (ivPct >= 72) return { text: t('pokeIdle.verdict.veryGood'), color: '#51cf66' };
+  if (ivPct >= 58) return { text: t('pokeIdle.verdict.good'), color: '#a3e635' };
+  if (ivPct >= 42) return { text: t('pokeIdle.verdict.medium'), color: '#ffb020' };
+  return { text: t('pokeIdle.verdict.low'), color: '#ff6b6b' };
 }
 
 async function runCalculator() {
@@ -2325,14 +2491,14 @@ async function runCalculator() {
     spatk: Number(calcStatInputs.spatk.value), spdef: Number(calcStatInputs.spdef.value), speed: Number(calcStatInputs.speed.value)
   };
   if (!speciesId || !level || !quality || Object.values(observed).some((v) => !v)) {
-    calcResultEl.innerHTML = '<div class="settings-hint">Elegí una fuente en vivo arriba, o completá especie/nivel/quality/stats a mano.</div>';
+    calcResultEl.innerHTML = `<div class="settings-hint">${t('pokeIdle.calcNeedsFields')}</div>`;
     return;
   }
 
   const projLevel = Number(calcProjLevelEl.value) || level;
   const result = await window.api.computeGrowthCalc({ speciesId, level, quality, observed, projLevel });
   if (!result || result.error) {
-    calcResultEl.innerHTML = '<div class="settings-hint">No encontré esa especie en el catálogo.</div>';
+    calcResultEl.innerHTML = `<div class="settings-hint">${t('pokeIdle.calcNotFound')}</div>`;
     return;
   }
 
@@ -2343,19 +2509,19 @@ async function runCalculator() {
 
   const clampedQ = Math.max(0.8, Math.min(2.6, quality));
   const markerPct = ((clampedQ - 0.8) / 1.8) * 100;
-  const verdict = pokeVerdict(result.ivMin, result.ivMax, result.band.label);
+  const verdict = pokeVerdict(result.ivMin, result.ivMax);
 
   calcResultEl.innerHTML = `
     <div class="poke-calc-summary">
-      <div><b>${escapeHtmlClient(result.creatureName)}</b>Especie</div>
-      <div><b style="color:${verdict.color}">${verdict.text}</b>Veredicto (Quality + IV)</div>
-      <div><b>${quality.toFixed(3)}</b>Quality (${QUALITY_BAND_ES[result.band.label] || result.band.label})</div>
-      <div><b>${Math.round(result.ivMin)}–${Math.round(result.ivMax)}</b>IV total (6–192)</div>
-      <div><b>${result.projectedPower}</b>Power proyectado Lv.${projLevel}</div>
+      <div><b>${escapeHtmlClient(result.creatureName)}</b>${t('pokeIdle.species')}</div>
+      <div><b style="color:${verdict.color}">${verdict.text}</b>${t('pokeIdle.verdict')}</div>
+      <div><b>${quality.toFixed(3)}</b>Quality (${qualityBandLabel(result.band.label)})</div>
+      <div><b>${Math.round(result.ivMin)}–${Math.round(result.ivMax)}</b>${t('pokeIdle.ivTotal')}</div>
+      <div><b>${result.projectedPower}</b>${t('pokeIdle.projectedPower', { level: projLevel })}</div>
     </div>
     <div class="poke-calc-quality-gauge"><div class="poke-calc-quality-marker" style="left:${markerPct}%"></div></div>
     <table class="poke-calc-table">
-      <thead><tr><th>Stat</th><th>Growth (IV)</th><th>Actual Lv.${level}</th><th>Proyectado Lv.${projLevel}</th></tr></thead>
+      <thead><tr><th>${t('pokeIdle.col.stat')}</th><th>${t('pokeIdle.col.growth')}</th><th>${t('pokeIdle.col.actualLv', { level })}</th><th>${t('pokeIdle.col.projectedLv', { level: projLevel })}</th></tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>
   `;
@@ -2368,10 +2534,10 @@ populateCalcSpeciesDropdown();
 let huntAttackers = [];
 
 function populateHuntAttackerDropdown() {
-  const sources = collectLiveCalcSources().filter((s) => s.label.includes('(equipo)'));
+  const sources = collectLiveCalcSources().filter((s) => s.isTeam);
   huntAttackers = sources;
   const current = huntAttackerEl.value;
-  huntAttackerEl.innerHTML = '<option value="">Ninguno (solo XP/oro)</option>' +
+  huntAttackerEl.innerHTML = `<option value="">${t('pokeIdle.attackerNone')}</option>` +
     sources.map((s, i) => `<option value="${i}">${escapeHtmlClient(s.label)}</option>`).join('');
   if (current && [...huntAttackerEl.options].some((o) => o.value === current)) huntAttackerEl.value = current;
 }
@@ -2402,7 +2568,7 @@ async function runHuntTable() {
   const creature = attacker ? (await ensureCreatureCatalogRenderer()).find((c) => c.pokeId === attacker.speciesId) : null;
   const kph = Number(huntKphEl.value) || 650;
 
-  huntTableWrapEl.innerHTML = '<div class="settings-hint">Calculando…</div>';
+  huntTableWrapEl.innerHTML = `<div class="settings-hint">${t('pokeIdle.calculating')}</div>`;
   const rows = await window.api.getHuntTable({
     attackerType1: creature ? creature.type1 : null,
     attackerType2: creature ? creature.type2 : null,
@@ -2430,7 +2596,7 @@ function renderHuntTable() {
       ? `<span class="poke-matchup-chip ${matchupChipClass(r.matchup)}">×${r.matchup}</span>`
       : '—';
     return `<tr>
-      <td><div class="poke-hunt-row-name"><img class="poke-hunt-sprite" loading="lazy" src="${pokeSpriteUrl(r.pokeId, r.name)}" onerror="this.style.visibility='hidden'" alt="" />${escapeHtmlClient(r.name)}</div></td>
+      <td><div class="poke-hunt-row-name"><img class="poke-hunt-sprite" loading="lazy" src="${pokeSpriteGifUrl(r.pokeId, r.name) || pokeSpriteUrl(r.pokeId, r.name)}" onerror="pokeSpriteFallback(this,'${pokeSpriteUrl(r.pokeId, r.name)}')" alt="" />${escapeHtmlClient(r.name)}</div></td>
       <td>${typeBadges}</td>
       <td class="poke-hunt-num">${r.huntLevel ?? '?'}</td>
       <td>${matchupHtml}</td>
@@ -2441,9 +2607,218 @@ function renderHuntTable() {
 
   huntTableWrapEl.innerHTML = `
     <table class="poke-hunt-table">
-      <thead><tr><th>Pokémon</th><th>Tipo</th><th>Nivel</th><th>Matchup</th><th>XP/h</th><th>Oro/h</th></tr></thead>
+      <thead><tr><th>${t('pokeIdle.col.pokemon')}</th><th>${t('pokeIdle.col.type')}</th><th>${t('pokeIdle.col.level')}</th><th>${t('pokeIdle.col.matchup')}</th><th>${t('pokeIdle.col.xpPerHour')}</th><th>${t('pokeIdle.col.goldPerHour')}</th></tr></thead>
       <tbody>${body}</tbody>
     </table>
+  `;
+}
+
+// ---- Tier List (fórmula real portada de pokemon-360.web.app) ----
+
+function bestMatchupClient(atkTypes, defType1, defType2) {
+  let best = 0;
+  atkTypes.filter(Boolean).forEach((atkType) => {
+    const row = POKE_TYPE_CHART[atkType];
+    const m1 = row && defType1 in row ? row[defType1] : 1;
+    const m2 = defType2 ? (row && defType2 in row ? row[defType2] : 1) : 1;
+    const m = m1 * m2;
+    if (m > best) best = m;
+  });
+  return best;
+}
+
+const TIER_CLAN_BONUS = 1.30;
+const TIER_CLANS = [
+  { id: 'fire', key: 'clan.fire', elements: ['FIRE'] },
+  { id: 'electric', key: 'clan.electric', elements: ['ELECTRIC'] },
+  { id: 'ground_rock', key: 'clan.groundRock', elements: ['GROUND', 'ROCK'] },
+  { id: 'grass_bug', key: 'clan.grassBug', elements: ['GRASS', 'BUG'] },
+  { id: 'fighting_normal', key: 'clan.fightingNormal', elements: ['FIGHTING', 'NORMAL'] },
+  { id: 'steel', key: 'clan.steel', elements: ['STEEL'] },
+  { id: 'flying_dragon', key: 'clan.flyingDragon', elements: ['FLYING', 'DRAGON'] },
+  { id: 'psychic_fairy', key: 'clan.psychicFairy', elements: ['PSYCHIC', 'FAIRY'] },
+  { id: 'water_ice', key: 'clan.waterIce', elements: ['WATER', 'ICE'] },
+  { id: 'ghost_poison_dark', key: 'clan.ghostPoisonDark', elements: ['GHOST', 'POISON', 'DARK'] }
+];
+
+// Ranking por percentil de stats base (ofensa/bulk/velocidad) — no es un tier
+// oficial del juego, es el mismo criterio que usa pokemon-360.web.app.
+function tierScoreClient(stats, inClan) {
+  const bonus = inClan ? TIER_CLAN_BONUS : 1;
+  const offense = Math.max(stats.atk * bonus, stats.spatk * bonus);
+  const bulk = (stats.hp + stats.def * bonus + stats.spdef * bonus) / 3;
+  return Math.round(offense * 0.40 + bulk * 0.35 + stats.speed * 0.25);
+}
+
+function tierCutsClient(count) {
+  return {
+    S: Math.round(count * 0.10),
+    A: Math.round(count * 0.25),
+    B: Math.round(count * 0.45),
+    C: Math.round(count * 0.65),
+    D: Math.round(count * 0.85)
+  };
+}
+
+function tierLabelForIndexClient(index, cuts) {
+  if (index < cuts.S) return 'S';
+  if (index < cuts.A) return 'A';
+  if (index < cuts.B) return 'B';
+  if (index < cuts.C) return 'C';
+  if (index < cuts.D) return 'D';
+  return 'E';
+}
+
+const TIER_COLORS = { S: '#ffb020', A: '#ff6b6b', B: '#a3e635', C: '#51cf66', D: '#4f8cff', E: '#8890a0' };
+
+async function populateTierFilters() {
+  const catalog = await ensureCreatureCatalogRenderer();
+  const currentClan = tierClanEl.value;
+  tierClanEl.innerHTML = `<option value="">${t('pokeIdle.clanNone')}</option>` +
+    TIER_CLANS.map((c) => `<option value="${c.id}">${escapeHtmlClient(t(c.key))}</option>`).join('');
+  tierClanEl.value = currentClan;
+  const currentType = tierTypeEl.value;
+  const types = Array.from(new Set(catalog.flatMap((c) => [c.type1, c.type2]).filter(Boolean))).sort();
+  tierTypeEl.innerHTML = `<option value="">${t('pokeIdle.typeAll')}</option>` +
+    types.map((tp) => `<option value="${tp}">${tp}</option>`).join('');
+  tierTypeEl.value = currentType;
+}
+
+function computeTierList(clanId) {
+  const catalog = creatureCatalogCache || [];
+  const clan = TIER_CLANS.find((c) => c.id === clanId);
+  const withScore = catalog.map((c) => {
+    const inClan = clan ? clan.elements.includes(c.type1) || clan.elements.includes(c.type2) : false;
+    const stats = { hp: c.baseHp, atk: c.baseAtk, def: c.baseDef, spatk: c.baseSpAtk, spdef: c.baseSpDef, speed: c.baseSpeed };
+    return { creature: c, score: tierScoreClient(stats, inClan) };
+  });
+  withScore.sort((a, b) => b.score - a.score);
+  const cuts = tierCutsClient(withScore.length);
+  withScore.forEach((row, i) => { row.tier = tierLabelForIndexClient(i, cuts); });
+  return withScore;
+}
+
+function renderTierList() {
+  if (!tierListWrapEl || !creatureCatalogCache) return;
+  const clanId = tierClanEl.value;
+  const typeFilter = tierTypeEl.value;
+  const fullList = computeTierList(clanId);
+  const filtered = typeFilter
+    ? fullList.filter((r) => r.creature.type1 === typeFilter || r.creature.type2 === typeFilter)
+    : fullList;
+
+  const rows = filtered.map((r) => {
+    const c = r.creature;
+    const typeBadges = [c.type1, c.type2].filter(Boolean).map(typeBadgeHtml).join(' ');
+    return `<tr data-poke-id="${c.pokeId}" class="poke-tier-row">
+      <td><span class="poke-tier-chip" style="background:${TIER_COLORS[r.tier]}">${r.tier}</span></td>
+      <td><img class="poke-tier-sprite" loading="lazy" src="${pokeSpriteGifUrl(c.pokeId, c.name) || pokeSpriteUrl(c.pokeId, c.name)}" onerror="pokeSpriteFallback(this,'${pokeSpriteUrl(c.pokeId, c.name)}')" alt="" /></td>
+      <td>${escapeHtmlClient(c.name)}</td>
+      <td>${typeBadges}</td>
+      <td class="poke-hunt-num">${r.score}</td>
+    </tr>`;
+  }).join('');
+
+  tierListWrapEl.innerHTML = `<table class="poke-hunt-table poke-tier-table">
+    <thead><tr><th>${t('pokeIdle.col.tier')}</th><th></th><th>${t('pokeIdle.col.name')}</th><th>${t('pokeIdle.col.type')}</th><th>${t('pokeIdle.col.score')}</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+
+  tierListWrapEl.querySelectorAll('.poke-tier-row').forEach((row) => {
+    row.addEventListener('click', () => renderTierDetail(Number(row.dataset.pokeId)));
+  });
+}
+
+tierClanEl.addEventListener('change', renderTierList);
+tierTypeEl.addEventListener('change', renderTierList);
+
+// Camina la línea evolutiva hacia atrás (buscando quién evoluciona EN este
+// pokeId) o hacia adelante (siguiendo su propio evolvesToId), hasta 3 saltos.
+function findEvoChain(pokeId, direction) {
+  const catalog = creatureCatalogCache || [];
+  const chain = [];
+  let current = catalog.find((c) => c.pokeId === pokeId);
+  for (let i = 0; i < 3 && current; i++) {
+    if (direction === 'next') {
+      if (current.evolvesToId == null) break;
+      const nextC = catalog.find((c) => c.pokeId === current.evolvesToId);
+      if (!nextC) break;
+      chain.push(nextC);
+      current = nextC;
+    } else {
+      const prevC = catalog.find((c) => c.evolvesToId === current.pokeId);
+      if (!prevC) break;
+      chain.unshift(prevC);
+      current = prevC;
+    }
+  }
+  return chain;
+}
+
+function evoChipHtml(c, current) {
+  return `<div class="poke-evo-chip${current ? ' poke-evo-current' : ''}">
+    <img class="poke-evo-sprite" loading="lazy" src="${pokeSpriteGifUrl(c.pokeId, c.name) || pokeSpriteUrl(c.pokeId, c.name)}" onerror="pokeSpriteFallback(this,'${pokeSpriteUrl(c.pokeId, c.name)}')" alt="" />
+    <span>${escapeHtmlClient(c.name)}</span>
+  </div>`;
+}
+
+function damageRefsHtml(title, list) {
+  if (!list.length) {
+    return `<div class="poke-tier-refbox"><span class="poke-eff-title">${title}</span><div class="settings-hint" style="margin:0;">${t('pokeIdle.noClearRefs')}</div></div>`;
+  }
+  const chips = list.map((r) => `<div class="poke-evo-chip">
+    <img class="poke-evo-sprite" loading="lazy" src="${pokeSpriteGifUrl(r.creature.pokeId, r.creature.name) || pokeSpriteUrl(r.creature.pokeId, r.creature.name)}" onerror="pokeSpriteFallback(this,'${pokeSpriteUrl(r.creature.pokeId, r.creature.name)}')" alt="" />
+    <span>${escapeHtmlClient(r.creature.name)} <b>×${r.mult}</b></span>
+  </div>`).join('');
+  return `<div class="poke-tier-refbox"><span class="poke-eff-title">${title}</span><div class="poke-evo-row">${chips}</div></div>`;
+}
+
+function renderTierDetail(pokeId) {
+  const catalog = creatureCatalogCache || [];
+  const c = catalog.find((x) => x.pokeId === pokeId);
+  if (!c || !tierDetailEl) return;
+
+  const prevChain = findEvoChain(pokeId, 'prev');
+  const nextChain = findEvoChain(pokeId, 'next');
+
+  // A qué especies les pega más fuerte (usando sus propios tipos como
+  // atacante) — 2-3 referencias, solo si el multiplicador es >1.
+  const dealt = catalog
+    .filter((x) => x.pokeId !== pokeId)
+    .map((x) => ({ creature: x, mult: bestMatchupClient([c.type1, c.type2], x.type1, x.type2) }))
+    .filter((r) => r.mult > 1)
+    .sort((a, b) => b.mult - a.mult)
+    .slice(0, 3);
+
+  // Qué especies le pegan más fuerte a él (usando el tipo de cada candidato
+  // como atacante contra la defensa de éste).
+  const taken = catalog
+    .filter((x) => x.pokeId !== pokeId)
+    .map((x) => ({ creature: x, mult: bestMatchupClient([x.type1, x.type2], c.type1, c.type2) }))
+    .filter((r) => r.mult > 1)
+    .sort((a, b) => b.mult - a.mult)
+    .slice(0, 3);
+
+  const typeBadges = [c.type1, c.type2].filter(Boolean).map(typeBadgeHtml).join(' ');
+  const chainParts = [...prevChain.map((x) => evoChipHtml(x, false)), evoChipHtml(c, true), ...nextChain.map((x) => evoChipHtml(x, false))];
+
+  tierDetailEl.innerHTML = `
+    <div class="poke-tier-detail-header">
+      <img class="poke-tier-detail-sprite" loading="lazy" src="${pokeSpriteGifUrl(c.pokeId, c.name) || pokeSpriteUrl(c.pokeId, c.name)}" onerror="pokeSpriteFallback(this,'${pokeSpriteUrl(c.pokeId, c.name)}')" alt="" />
+      <div>
+        <div class="poke-team-name">${escapeHtmlClient(c.name)}</div>
+        ${typeBadges}
+      </div>
+    </div>
+    <div class="poke-stat-grid">
+      ${[['HP', c.baseHp], ['ATK', c.baseAtk], ['DEF', c.baseDef], ['SpA', c.baseSpAtk], ['SpD', c.baseSpDef], ['Vel', c.baseSpeed]]
+        .map(([l, v]) => `<div class="poke-stat-cell"><span>${l}</span><span>${v}</span></div>`).join('')}
+    </div>
+    ${(prevChain.length || nextChain.length) ? `
+    <div class="poke-eff-title">${t('pokeIdle.evoLine')}</div>
+    <div class="poke-evo-row">${chainParts.join('<span class="poke-evo-arrow">→</span>')}</div>` : ''}
+    ${damageRefsHtml(t('pokeIdle.dealsMoreDamageTo', { name: escapeHtmlClient(c.name) }), dealt)}
+    ${damageRefsHtml(t('pokeIdle.takesMoreDamageFrom', { name: escapeHtmlClient(c.name) }), taken)}
   `;
 }
 
@@ -2452,15 +2827,15 @@ extInstallBtn.addEventListener('click', async () => {
   if (!value) return;
   extError.classList.add('hidden');
   extInstallBtn.disabled = true;
-  extInstallBtn.textContent = 'Instalando...';
+  extInstallBtn.textContent = t('settings.extInstalling');
   const result = await window.api.installExtensionFromStore(value);
   extInstallBtn.disabled = false;
-  extInstallBtn.textContent = 'Instalar';
+  extInstallBtn.textContent = t('settings.extInstall');
   if (result.ok) {
     extInput.value = '';
     renderExtensions();
   } else {
-    extError.textContent = result.error || 'No se pudo instalar la extensión.';
+    extError.textContent = result.error || t('js.extInstallFailed');
     extError.classList.remove('hidden');
   }
 });
@@ -2496,6 +2871,12 @@ settingsNavItems.forEach((navItem) => {
   navItem.addEventListener('click', () => activateSettingsTab(navItem.dataset.tab));
 });
 
+setLanguage.addEventListener('change', () => {
+  state.settings.language = setLanguage.value;
+  applyLanguage(setLanguage.value);
+  window.api.updateSettings({ language: setLanguage.value });
+});
+
 setTheme.addEventListener('change', () => {
   applyTheme(setTheme.value);
   window.api.updateSettings({ theme: setTheme.value });
@@ -2511,7 +2892,7 @@ setReopenSpace.addEventListener('change', () => {
 
 setHwAccel.addEventListener('change', async () => {
   await window.api.updateSettings({ hardwareAcceleration: setHwAccel.checked });
-  if (confirm('Este cambio requiere reiniciar la app. ¿Reiniciar ahora?')) {
+  if (confirm(t('settings.restartConfirm'))) {
     window.api.relaunchApp();
   }
 });
@@ -2546,56 +2927,62 @@ setAutoUpdate.addEventListener('change', () => {
 
 setChooseFolder.addEventListener('click', async () => {
   const data = await window.api.chooseDownloadsFolder();
-  setDownloadsFolderLabel.textContent = data.settings.downloadsFolder || 'Carpeta predeterminada del sistema';
+  setDownloadsFolderLabel.textContent = data.settings.downloadsFolder || t('settings.downloadsFolderDefault');
 });
 
 setCheckUpdates.addEventListener('click', async () => {
-  setUpdateStatus.textContent = 'Buscando actualizaciones...';
+  setUpdateStatus.textContent = t('update.checking');
   const result = await window.api.checkUpdates();
-  setUpdateStatus.textContent = result.message;
+  if (result.devMode) setUpdateStatus.textContent = t('update.devMode');
 });
 
-const UPDATE_STATUS_LABELS = {
-  checking: 'Buscando actualizaciones...',
-  'not-available': 'Estás en la última versión.',
-  available: (d) => `Actualización disponible: v${d.version} — descargando...`,
-  downloading: (d) => `Descargando actualización... ${d.percent}%`,
-  error: (d) => `Error al buscar actualizaciones: ${d.message}`
-};
+// electron-updater's raw error message is a low-level network/HTTP string —
+// not fit to show as-is. Bucket it into "no connection" vs "nothing
+// published yet" (e.g. a 404 on latest.yml, which happens if a release was
+// created without running electron-builder's --publish) vs a generic
+// fallback that still surfaces the raw message for debugging.
+function classifyUpdateError(message) {
+  const msg = (message || '').toLowerCase();
+  if (/(enotfound|econnrefused|etimedout|network|dns)/.test(msg)) return t('update.errorNoConnection');
+  if (/(404|cannot find latest|no published)/.test(msg)) return t('update.errorNoRelease');
+  return t('update.error', { message });
+}
 
 window.api.onUpdateStatus((d) => {
   if (d.status === 'downloaded') {
     setUpdateStatus.innerHTML = '';
     const label = document.createElement('span');
-    label.textContent = `Versión ${d.version} lista — `;
+    label.textContent = t('update.versionReady', { version: d.version });
     const restartBtn = document.createElement('button');
-    restartBtn.textContent = 'Reiniciar para actualizar';
+    restartBtn.textContent = t('update.restartToUpdate');
     restartBtn.onclick = () => window.api.installUpdate();
     setUpdateStatus.append(label, restartBtn);
     return;
   }
-  const label = UPDATE_STATUS_LABELS[d.status];
-  if (!label) return;
-  setUpdateStatus.textContent = typeof label === 'function' ? label(d) : label;
+  if (d.status === 'checking') { setUpdateStatus.textContent = t('update.checking'); return; }
+  if (d.status === 'not-available') { setUpdateStatus.textContent = t('update.notAvailable'); return; }
+  if (d.status === 'available') { setUpdateStatus.textContent = t('update.available', { version: d.version }); return; }
+  if (d.status === 'downloading') { setUpdateStatus.textContent = t('update.downloading', { percent: d.percent }); return; }
+  if (d.status === 'error') { setUpdateStatus.textContent = classifyUpdateError(d.message); return; }
 });
 
 setExportSpaces.addEventListener('click', async () => {
   try {
     const result = await window.api.exportSpaces();
-    if (result.ok) alert('Espacios exportados correctamente.');
-    else if (result.error) alert('No se pudieron exportar los espacios: ' + result.error);
+    if (result.ok) alert(t('spaces.exportOk'));
+    else if (result.error) alert(t('spaces.exportError', { message: result.error }));
   } catch (err) {
-    alert('No se pudieron exportar los espacios: ' + err.message);
+    alert(t('spaces.exportError', { message: err.message }));
   }
 });
 
 setImportSpaces.addEventListener('click', async () => {
   try {
     const result = await window.api.importSpaces();
-    if (result.ok) alert('Espacios importados correctamente.');
-    else if (result.error) alert('No se pudieron importar los espacios: ' + result.error);
+    if (result.ok) alert(t('spaces.importOk'));
+    else if (result.error) alert(t('spaces.importError', { message: result.error }));
   } catch (err) {
-    alert('No se pudieron importar los espacios: ' + err.message);
+    alert(t('spaces.importError', { message: err.message }));
   }
 });
 
@@ -2604,6 +2991,7 @@ setImportSpaces.addEventListener('click', async () => {
 window.api.onStateUpdate((data) => {
   state = data;
   applyTheme(state.settings.theme);
+  document.documentElement.lang = state.settings.language || 'es';
   render();
 });
 
@@ -2819,6 +3207,8 @@ async function init() {
   appMeta = await window.api.getMeta();
   state = await window.api.getState();
   applyTheme(state.settings.theme);
+  document.documentElement.lang = state.settings.language || 'es';
+  translateStaticDom();
   render();
   requestAnimationFrame(fpsLoop);
   if (currentSpaceAccounts().length === 0) {
@@ -2836,6 +3226,7 @@ setInterval(async () => {
     renderPokeIdle();
     renderPokeIdleNotable();
     renderPokeIdleTeam();
+    renderPokeIdleDrops();
   }
 }, 5000);
 
