@@ -222,8 +222,17 @@ function applyProxy(ses, account) {
 
 // A standard desktop Chrome UA — without this, Electron's default UA includes
 // "Electron/x.x.x", which some sites detect and block or serve a broken page for.
+// The Chrome version MUST come from process.versions.chrome (the actual
+// Chromium build this Electron ships), never a hardcoded number: a stale
+// literal here (this one said "131" while Electron 43 actually ships
+// Chromium 150) makes the legacy UA string disagree with
+// navigator.userAgentData/Client Hints, which Chromium always derives from
+// the real version — Cloudflare Turnstile cross-checks exactly that pair and
+// treats a mismatch as a strong bot signal. Confirmed live: this UA/Client-Hints
+// mismatch, not the fingerprint-noise code, was the actual cause of Turnstile
+// error 600010 blocking login on fresh installs.
 const CHROME_UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+  `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36`;
 
 const RAIL_WIDTH = 56;
 const SIDEBAR_WIDTH_EXPANDED = 260;

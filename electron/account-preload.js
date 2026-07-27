@@ -1,9 +1,4 @@
-const { ipcRenderer, contextBridge } = require('electron');
-
-const ACCOUNT_ID = (() => {
-  const arg = process.argv.find((a) => a.startsWith('--account-id='));
-  return arg ? arg.slice('--account-id='.length) : 'default';
-})();
+const { ipcRenderer } = require('electron');
 
 // Injected into every account WebContentsView (and its popups, e.g. Google OAuth
 // windows) to offer autofill suggestions from passwords imported in Configuración →
@@ -143,115 +138,16 @@ document.addEventListener(
 window.addEventListener('scroll', hideDropdown, true);
 window.addEventListener('beforeunload', removeDropdown);
 
-// Per-account fingerprint noise — each account gets a small, deterministic
-// (same every time for that account, different between accounts) amount of
-// canvas/WebGL variance, so sites can't tell "these 5 accounts" apart just by
-// reading back an identical canvas/GPU fingerprint. Two things keep this safe:
-// what's drawn on screen is never touched (canvas noise is applied to a
-// throwaway copy, only the *returned data* differs), and any failure falls
-// back to the untouched original rather than breaking the page.
-//
-// This MUST run via contextBridge.executeInMainWorld, not as a plain preload
-// IIFE: with contextIsolation on, a preload script executes in Chromium's
-// isolated world, a separate JS realm from the page's main world where the
-// page's own scripts (and any real fingerprinting library) actually run.
-// HTMLCanvasElement.prototype etc. are not shared objects between the two
-// worlds, so patching them here alone never touched what the page calls —
-// verified empirically (two accounts produced byte-identical toDataURL()
-// output when called from the page's own context before this fix).
-// executeInMainWorld's function cannot close over outer variables, so
-// everything it needs is self-contained inside it and accountId is passed
-// as an explicit arg.
-function installFingerprintNoise(accountId) {
-  function hashSeed(str) {
-    let h = 2166136261;
-    for (let i = 0; i < str.length; i++) {
-      h ^= str.charCodeAt(i);
-      h = Math.imul(h, 16777619);
-    }
-    return h >>> 0;
-  }
-
-  function mulberry32(seed) {
-    return function () {
-      seed |= 0;
-      seed = (seed + 0x6d2b79f5) | 0;
-      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-  }
-
-  const canvasRand = mulberry32(hashSeed(accountId + ':canvas'));
-  const NOISE_POINTS = 24;
-  const offsets = [];
-  for (let i = 0; i < NOISE_POINTS; i++) {
-    const delta = Math.floor(canvasRand() * 3) - 1;
-    offsets.push({ dx: Math.floor(canvasRand() * 4999), dy: Math.floor(canvasRand() * 4999), delta: delta || 1 });
-  }
-
-  function applyNoise(buf, width, height) {
-    offsets.forEach(({ dx, dy, delta }) => {
-      const x = dx % width;
-      const y = dy % height;
-      const idx = (y * width + x) * 4;
-      if (idx < buf.length) buf[idx] = Math.max(0, Math.min(255, buf[idx] + delta));
-    });
-  }
-
-  function noisyClone(canvas) {
-    if (canvas.width < 16 || canvas.height < 16) return canvas; // skip tiny canvases (icons) — no point risking visible distortion
-    try {
-      const clone = document.createElement('canvas');
-      clone.width = canvas.width;
-      clone.height = canvas.height;
-      const cctx = clone.getContext('2d');
-      cctx.drawImage(canvas, 0, 0);
-      const imgData = cctx.getImageData(0, 0, clone.width, clone.height);
-      applyNoise(imgData.data, clone.width, clone.height);
-      cctx.putImageData(imgData, 0, 0);
-      return clone;
-    } catch {
-      return canvas; // e.g. a cross-origin-tainted canvas — leave it exactly as-is
-    }
-  }
-
-  try {
-    const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
-    HTMLCanvasElement.prototype.toDataURL = function (...args) {
-      return origToDataURL.apply(noisyClone(this), args);
-    };
-
-    const origToBlob = HTMLCanvasElement.prototype.toBlob;
-    HTMLCanvasElement.prototype.toBlob = function (callback, ...args) {
-      return origToBlob.apply(noisyClone(this), [callback, ...args]);
-    };
-
-    const origGetImageData = CanvasRenderingContext2D.prototype.getImageData;
-    CanvasRenderingContext2D.prototype.getImageData = function (...args) {
-      const imgData = origGetImageData.apply(this, args);
-      if (this.canvas.width >= 16 && this.canvas.height >= 16) applyNoise(imgData.data, imgData.width, imgData.height);
-      return imgData;
-    };
-  } catch {
-    // if the page already froze/replaced these prototypes, just skip noise rather than throw
-  }
-
-  // GPU vendor/renderer spoofing via WebGL getParameter() was removed here —
-  // it claimed a fake GPU (e.g. "AMD Radeon RX 580") while every OTHER WebGL
-  // capability (extensions, getInternalformatParameter, etc.) still reported
-  // the real underlying GPU, an internally-inconsistent fingerprint that is
-  // itself a strong bot signal. Confirmed live: this was the direct cause of
-  // Cloudflare Turnstile failing with error 600010 (and a flood of "WebGL:
-  // INVALID_ENUM: getInternalformatParameter" console errors) on fresh
-  // installs trying to log into poke.idleworld.online — Turnstile's own
-  // challenge relies on WebGL behavior being self-consistent. The canvas
-  // pixel-noise above stays: it only perturbs readback data, never touches
-  // WebGL state, and never caused a Turnstile failure.
-}
-
-try {
-  contextBridge.executeInMainWorld({ func: installFingerprintNoise, args: [ACCOUNT_ID] });
-} catch (err) {
-  console.error('[fingerprint-noise] failed to install in main world:', err);
-}
+// Per-account canvas/WebGL fingerprint noise was removed entirely from here.
+// It monkey-patched HTMLCanvasElement.prototype.toDataURL/toBlob and
+// CanvasRenderingContext2D.prototype.getImageData (plus, in an earlier
+// version, WebGLRenderingContext.prototype.getParameter) in the page's own
+// main world. Turnstile failed with error 600010 on fresh installs even
+// after the WebGL half was removed — patched native functions no longer
+// return "[native code]" from .toString(), a classic, deliberately-checked
+// bot signal, so the remaining canvas patching was still enough to trip it
+// on its own. Removed rather than partially reworked: this app's job is
+// keeping accounts logged in reliably, not defeating a game's own anti-bot
+// system — see the CHROME_UA fix in main.js for the actual root cause of
+// the reported failure (a stale hardcoded Chrome version in the UA string,
+// out of sync with navigator.userAgentData).
