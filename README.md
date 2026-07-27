@@ -4,6 +4,10 @@
 
 Nexa Browser te deja abrir varias sesiones completamente aisladas del mismo sitio —distintas cuentas de Gmail, redes sociales, plataformas de trabajo, juegos online— todas al mismo tiempo, en una sola ventana, sin perfiles de Chrome separados ni ventanas de incógnito por todos lados.
 
+[![VirusTotal](https://img.shields.io/badge/VirusTotal-0%2F66%20detections-brightgreen?logo=virustotal&logoColor=white)](https://www.virustotal.com/gui/file/529da74d5400672edb009ce3ca8efff2a81dbab6c52e2b642e629056166f3bf6/detection)
+
+**Escaneado en VirusTotal: 0/66 motores antivirus lo marcaron como malicioso** ([ver análisis completo](https://www.virustotal.com/gui/file/529da74d5400672edb009ce3ca8efff2a81dbab6c52e2b642e629056166f3bf6/detection)) — análisis hecho sobre `Nexa Browser-Setup-0.2.1-x64.exe`, el instalador tal cual se publica en [Releases](https://github.com/Zukuth/nexa-browser/releases/latest).
+
 ## Por qué instalarlo
 
 Si alguna vez tuviste que:
