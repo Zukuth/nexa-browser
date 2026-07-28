@@ -100,6 +100,17 @@ contextBridge.exposeInMainWorld('api', {
   onStateUpdate: (cb) => ipcRenderer.on('state:update', (_e, data) => cb(data)),
   onNavUpdate: (cb) => ipcRenderer.on('nav:update', (_e, data) => cb(data)),
   onPanelsGeometry: (cb) => ipcRenderer.on('panels:geometry', (_e, data) => cb(data)),
+  // Fired once per account after main has finished wiring its <webview>'s
+  // webContents (session, telemetry, listeners — see wireAccountWebContents
+  // in main.js) — the renderer only sets the real `src` on that account's
+  // <webview> element after this, so CDP/telemetry attach always wins the
+  // race against the real navigation.
+  onWebviewReady: (cb) => ipcRenderer.on('webview:ready', (_e, accountId) => cb(accountId)),
+  // Live-follows a divider drag: main reflects the dragged panel's content
+  // rect straight back so the renderer can resize that one <webview>
+  // element immediately, without waiting for a full panels:geometry
+  // broadcast (see account:setLiveRect / 'account:liveRect' in main.js).
+  onAccountLiveRect: (cb) => ipcRenderer.on('account:liveRect', (_e, data) => cb(data)),
   onOpenSpaceEditor: (cb) => ipcRenderer.on('ui:open-space-editor', (_e, data) => cb(data)),
   onOpenAccountEditor: (cb) => ipcRenderer.on('ui:open-account-editor', (_e, data) => cb(data))
 });

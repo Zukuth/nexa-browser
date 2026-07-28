@@ -1,9 +1,10 @@
 // Fase A del motor de telemetría en tiempo real para cuentas de
 // poke.idleworld.online. Lee los frames WebSocket que el propio juego ya
 // transmite (protocolo JSON documentado, no DOM) vía el debugger CDP de
-// Chromium — igual que hace https://github.com/AntonioFleck/poke-idle-launcher,
-// adaptado a WebContentsView (no <webview>). Nunca inyecta comandos, nunca
-// automatiza clicks/capturas: es observación de red de solo lectura.
+// Chromium — igual que hace https://github.com/AntonioFleck/poke-idle-launcher.
+// Cada cuenta es un <webview> real (ver wireAccountWebContents en main.js);
+// attachCapture() recibe su webContents directo. Nunca inyecta comandos,
+// nunca automatiza clicks/capturas: es observación de red de solo lectura.
 //
 // Por qué CDP y no un parche de window.WebSocket (como hace PokeGrid): CDP se
 // adjunta ANTES de loadURL() y Network.enable ve toda la actividad de red a
@@ -453,12 +454,13 @@ function computeRates(state) {
   };
 }
 
-// Attaches once per WebContentsView's lifetime — idempotent, safe to call
+// Attaches once per account webContents' lifetime — idempotent, safe to call
 // again on every navigation (mirrors how injectGameOverlayButtons is already
 // called repeatedly and no-ops harmlessly). Only ever attaches for accounts
-// actually on the game's domain, per the port plan's scoping rule.
-function attachCapture(view, accountId) {
-  const wc = view.webContents;
+// actually on the game's domain, per the port plan's scoping rule. Takes the
+// webContents directly (not a WebContentsView wrapper — accounts are real
+// <webview> elements now, see wireAccountWebContents in main.js).
+function attachCapture(wc, accountId) {
   if (wc.debugger.isAttached()) return;
 
   try {

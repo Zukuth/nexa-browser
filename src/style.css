@@ -693,6 +693,31 @@ html, body {
   color: #fcc419;
 }
 
+/* Holds the real <webview> elements — each account's actual page content.
+   Sits below #panel-headers (which draws the per-account toolbar on top
+   of it) but is otherwise normal DOM, so any modal with a higher z-index
+   (see the ~40-70 range used elsewhere in this file) covers it for free —
+   no more main-process hide/show dance around native views. */
+#panel-webviews {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+}
+
+.panel-webview {
+  position: absolute;
+  display: flex;
+  border: none;
+  background: #000;
+}
+
+.panel-webview.hidden-panel {
+  display: none;
+}
+
 #panel-headers {
   position: fixed;
   top: 0;

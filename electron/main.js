@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, session, Menu, shell, dialog, clipboard, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, session, Menu, shell, dialog, clipboard, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
@@ -222,23 +222,26 @@ function applyProxy(ses, account) {
 
 // A standard desktop Chrome UA — without this, Electron's default UA includes
 // "Electron/x.x.x", which some sites detect and block or serve a broken page for.
-// Real Chrome's UA string has been "reduced" since Chrome ~100: the trailing
-// three version components are always frozen to ".0.0.0" (e.g.
-// "Chrome/150.0.0.0"), even though the actual build is far more granular
-// (e.g. 150.0.7871.129) — that full build only ever appears in
-// navigator.userAgentData's high-entropy values, never in the plain UA
-// string. The previous version of this fix used process.versions.chrome
-// verbatim (the full build number) in the UA string itself, which is
-// exactly backwards: it made Nexa's UA string MORE granular than any real
-// Chrome install ever sends, a mismatch Cloudflare Turnstile's server-side
-// UA parsing can check directly from the raw request header, no JS
-// fingerprinting required. Confirmed against github.com/soufoka/PokeGrid,
-// a different Electron app for this same game whose login isn't blocked —
-// its whole fix is exactly this: strip "Electron/..." and freeze the Chrome
-// version at ".0.0.0". Still derived from process.versions.chrome (so it
-// tracks Electron/Chromium upgrades automatically), just frozen the same
-// way real Chrome freezes it.
-const CHROME_UA = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome.split('.')[0]}.0.0.0 Safari/537.36`;
+// No custom UA override for account webviews — confirmed live, twice, that
+// this is what was still breaking Cloudflare Turnstile after the <webview>
+// migration. webContents.setUserAgent() only rewrites the UA header and
+// navigator.userAgent; it does NOT update navigator.userAgentData (Client
+// Hints), which Chromium keeps deriving from the real build regardless. Any
+// hand-built override — including a careful one that "freezes" the version
+// the same way real Chrome does — creates exactly the
+// userAgent/userAgentData mismatch Turnstile's server-side check is built
+// to catch. Electron's own honest, unmodified UA (which does say
+// "Electron/...") does not trip it at all: internal consistency matters
+// more than looking like Chrome. Left un-overridden on purpose; do not
+// reintroduce a UA spoof here without live-testing the actual login again.
+
+const ACCOUNT_PRELOAD_PATH = path.join(__dirname, 'account-preload.js');
+// <webview>'s `preload` attribute wants a URL, not a bare filesystem path —
+// this is what both the main renderer and popout.html actually set it to.
+const ACCOUNT_PRELOAD_URL = require('url').pathToFileURL(ACCOUNT_PRELOAD_PATH).href;
+function accountPartition(accountId) {
+  return `persist:account-${accountId}`;
+}
 
 const RAIL_WIDTH = 56;
 const SIDEBAR_WIDTH_EXPANDED = 260;
@@ -281,9 +284,11 @@ if (data.settings.hardwareAcceleration === false) {
 // for exactly that mismatch — it does not disable or weaken any actual
 // capability check, only stops the static list from vetoing hardware the
 // driver itself supports. NOTE: this is unrelated to the Turnstile 600010
-// login bug — that one turned out to be caused by WebContentsView itself
-// (see createViewForAccount below); WebGL/WebGPU console noise on this
-// specific dev machine was a red herring, unaffected by any GPU flag tried.
+// login bug — that one turned out to be caused by the WebContentsView API
+// itself (see wireAccountWebContents below, and the plan doc, for the full
+// diagnosis and the migration to <webview>); WebGL/WebGPU console noise on
+// this specific dev machine was a red herring, unaffected by any GPU flag
+// tried.
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 
 // Vanilla Electron doesn't ship Widevine (it's Google-licensed DRM, not something
@@ -381,7 +386,7 @@ data.accounts.forEach((a) => {
   if (!a.closed) a.openedAt = Date.now();
 });
 
-/** @type {Map<string, WebContentsView>} */
+/** @type {Map<string, Electron.WebContents>} accountId → the guest <webview>'s webContents */
 const views = new Map();
 const poppedOutIds = new Set();
 const poppedOutWindows = new Map();
@@ -629,7 +634,7 @@ async function loadExtensionOnAllSessions(dir) {
   let result = null;
   for (const view of views.values()) {
     try {
-      result = await view.webContents.session.extensions.loadExtension(dir, { allowFileAccess: true });
+      result = await view.session.extensions.loadExtension(dir, { allowFileAccess: true });
     } catch {
       // session may already have it loaded, or view may be closing — ignore
     }
@@ -708,7 +713,7 @@ function removeRetiredExtensions() {
 function unloadExtensionFromAllSessions(id) {
   for (const view of views.values()) {
     try {
-      view.webContents.session.extensions.removeExtension(id);
+      view.session.extensions.removeExtension(id);
     } catch {
       // not loaded on this session — ignore
     }
@@ -801,7 +806,7 @@ function adjustZoom(id, delta) {
   const next = Math.max(0.5, Math.min(2, Math.round((current + delta) * 100) / 100));
   account.zoom = next;
   const view = views.get(id);
-  if (view) view.webContents.setZoomFactor(next);
+  if (view) view.setZoomFactor(next);
   persist();
   broadcastGeometryOnly();
   broadcastState();
@@ -812,7 +817,7 @@ function setZoomDirect(id, factor) {
   if (!account) return;
   account.zoom = factor;
   const view = views.get(id);
-  if (view) view.webContents.setZoomFactor(factor);
+  if (view) view.setZoomFactor(factor);
   persist();
   broadcastGeometryOnly();
   broadcastState();
@@ -822,7 +827,7 @@ function toggleMuteAccount(id) {
   const account = getAccount(id);
   if (!account) return;
   account.muted = !account.muted;
-  views.get(id)?.webContents.setAudioMuted(account.muted);
+  views.get(id)?.setAudioMuted(account.muted);
   persist();
   broadcastGeometryOnly();
   broadcastState();
@@ -833,7 +838,7 @@ function toggleMuteAllAccounts() {
   data.accounts.forEach((a) => {
     a.muted = muted;
   });
-  for (const view of views.values()) view.webContents.setAudioMuted(muted);
+  for (const view of views.values()) view.setAudioMuted(muted);
   data.settings.allMuted = muted;
   persist();
   broadcastGeometryOnly();
@@ -856,7 +861,7 @@ function handleAccountShortcut(input, account) {
     return true;
   }
   if (key === 'escape') {
-    view?.webContents.stopFindInPage('clearSelection');
+    view?.stopFindInPage('clearSelection');
     if (mainWindowAlive()) mainWindow.webContents.send('findbar:close', { id: account.id });
     return false; // let Escape still propagate normally for anything else on the page
   }
@@ -877,15 +882,15 @@ function handleAccountShortcut(input, account) {
     return true;
   }
   if (ctrl && shift && !alt && key === 'r') {
-    view?.webContents.reloadIgnoringCache();
+    view?.reloadIgnoringCache();
     return true;
   }
   if (ctrl && !shift && alt && key === 'r') {
-    openAccountsInCurrentSpace().forEach((a) => views.get(a.id)?.webContents.reload());
+    openAccountsInCurrentSpace().forEach((a) => views.get(a.id)?.reload());
     return true;
   }
   if (ctrl && !shift && !alt && key === 'r') {
-    view?.webContents.reload();
+    view?.reload();
     return true;
   }
   if (ctrl && shift && !alt && key === 'm') {
@@ -952,75 +957,73 @@ function handleAccountShortcut(input, account) {
     return true;
   }
   if (ctrl && shift && !alt && key === 'delete') {
-    const ses = view ? view.webContents.session : session.fromPartition(`persist:account-${account.id}`);
+    const ses = view ? view.session : session.fromPartition(accountPartition(account.id));
     ses.clearStorageData()
       .then(() => ses.clearCache())
-      .then(() => view?.webContents.reload());
+      .then(() => view?.reload());
     return true;
   }
   return false;
 }
 
-function createViewForAccount(account) {
-  const view = new WebContentsView({
-    webPreferences: {
-      partition: `persist:account-${account.id}`,
-      contextIsolation: true,
-      sandbox: true,
-      spellcheck: true,
-      plugins: true,
-      additionalArguments: [`--account-id=${account.id}`],
-      preload: path.join(__dirname, 'account-preload.js')
-    }
-  });
-  view.webContents.setUserAgent(CHROME_UA);
-  view.webContents.session.setSpellCheckerLanguages(['es-419', 'en-US']);
-  view.webContents.setZoomFactor(account.zoom || data.settings.defaultZoom || 1);
+// Wires up a specific account's guest <webview> webContents — called from a
+// 'did-attach-webview' handler once the renderer has actually created the
+// DOM element, instead of main constructing a native WebContentsView itself
+// (that native-view architecture is what caused Cloudflare Turnstile's
+// 600010 false-positive on the game's login page — confirmed live against
+// a minimal <webview>-only reproduction; see the plan doc for the full
+// diagnosis). Everything below is otherwise the same logic that used to
+// live in createViewForAccount, just operating on `wc` (the guest
+// webContents) directly instead of a WebContentsView wrapper around it.
+function wireAccountWebContents(wc, account, hostWebContents) {
+  if (views.get(account.id) === wc) return; // already wired, no-op
+  views.set(account.id, wc);
+
+  wc.session.setSpellCheckerLanguages(['es-419', 'en-US']);
+  wc.setZoomFactor(account.zoom || data.settings.defaultZoom || 1);
   // Popups (e.g. a Google login window opened via window.open) get the same
   // isolated session and autofill preload as their opener.
-  view.webContents.setWindowOpenHandler(() => ({
+  wc.setWindowOpenHandler(() => ({
     action: 'allow',
     overrideBrowserWindowOptions: {
       webPreferences: {
-        partition: `persist:account-${account.id}`,
+        partition: accountPartition(account.id),
         contextIsolation: true,
         sandbox: true,
         spellcheck: true,
         plugins: true,
         additionalArguments: [`--account-id=${account.id}`],
-        preload: path.join(__dirname, 'account-preload.js')
+        preload: ACCOUNT_PRELOAD_PATH
       }
     }
   }));
-  view.webContents.on('did-create-window', (win) => {
-    win.webContents.setUserAgent(CHROME_UA);
-  });
-  handleDownloads(view.webContents.session);
-  applyAdBlock(view.webContents.session, account.id);
-  applyPermissionHandler(view.webContents.session);
-  applyProxy(view.webContents.session, account);
+  handleDownloads(wc.session);
+  applyAdBlock(wc.session, account.id);
+  applyPermissionHandler(wc.session);
+  applyProxy(wc.session, account);
   data.settings.extensions
     .filter((e) => e.enabled !== false)
     .forEach((e) => {
-      view.webContents.session.extensions
+      wc.session.extensions
         .loadExtension(e.path, { allowFileAccess: true })
         .then(() => console.log('[ext] loaded', e.name, 'into', account.id))
         .catch((err) => console.error('[ext] FAILED to load', e.name, 'into', account.id, err));
     });
-  // Must attach before the first loadURL — CDP's Network.enable needs to be
-  // on before the game's own page connects its WebSocket, or the connection
-  // (and the frames that arrive right after it) is missed entirely. Only
-  // ever attaches for accounts already pointed at the game, per the
-  // telemetry feature's scoping rule (main.js never runs this for a random
-  // account someone happens to point elsewhere).
+  // Must attach before the real navigation starts — CDP's Network.enable
+  // needs to be on before the game's own page connects its WebSocket, or the
+  // connection (and the frames right after it) is missed entirely. The
+  // renderer creates every <webview> pointed at about:blank first and only
+  // sets the real `src` after receiving 'webview:ready' below, specifically
+  // so this always runs before that real navigation, for every account (not
+  // just game ones — keeps a single, uniform creation path). Only ever
+  // attaches for accounts already pointed at the game, per the telemetry
+  // feature's scoping rule (main.js never runs this for a random account
+  // someone happens to point elsewhere).
   if (account.url && gameTelemetry.isGameUrl(account.url)) {
-    gameTelemetry.attachCapture(view, account.id);
+    gameTelemetry.attachCapture(wc, account.id);
   }
-  if (account.url && account.url !== 'about:blank') {
-    view.webContents.loadURL(account.url);
-  }
-  view.webContents.on('did-navigate', (_e, url) => notifyNav(account.id, url));
-  view.webContents.on('did-navigate-in-page', (_e, url) => {
+  wc.on('did-navigate', (_e, url) => notifyNav(account.id, url));
+  wc.on('did-navigate-in-page', (_e, url) => {
     notifyNav(account.id, url);
     // poke.idleworld.online routes from /login to /play client-side (History
     // API, no full reload) after a successful sign-in, so did-finish-load
@@ -1028,52 +1031,52 @@ function createViewForAccount(account) {
     // used to never appear until the next full reload. injectGameOverlayButtons
     // already no-ops off the URL check and off window.__cbOverlayWatchdog
     // already existing, so calling it here too is safe and idempotent.
-    injectGameOverlayButtons(view.webContents);
-    stopGameOverlayWatchdogIfLeft(view.webContents, url);
+    injectGameOverlayButtons(wc);
+    stopGameOverlayWatchdogIfLeft(wc, url);
     // Same /login → /play client-side transition: did-finish-load won't
     // fire again to trigger the telemetry attach below, so it has to be
     // done here too. isGameUrl() now excludes /login on purpose (see
     // game-telemetry.js) so this only actually attaches once the user is
     // past the Turnstile challenge.
     if (gameTelemetry.isGameUrl(url)) {
-      gameTelemetry.attachCapture(view, account.id);
+      gameTelemetry.attachCapture(wc, account.id);
     }
   });
   // Chromium resets zoom on full page loads/reloads — reassert the account's
   // chosen zoom (or the app default) so it survives reload/repartition and
   // only ever changes via the user picking a new one or closing the tab.
-  view.webContents.on('did-finish-load', () => {
-    view.webContents.setZoomFactor(account.zoom || data.settings.defaultZoom || 1);
-    if (account.ecoMode) enableEcoMode(view.webContents);
-    injectGameOverlayButtons(view.webContents);
+  wc.on('did-finish-load', () => {
+    wc.setZoomFactor(account.zoom || data.settings.defaultZoom || 1);
+    if (account.ecoMode) enableEcoMode(wc);
+    injectGameOverlayButtons(wc);
     // Covers an account that started elsewhere and only just navigated to
     // the game — attachCapture() is idempotent (checks debugger.isAttached())
     // so this is a no-op for accounts that already attached before loadURL.
-    if (gameTelemetry.isGameUrl(view.webContents.getURL())) {
-      gameTelemetry.attachCapture(view, account.id);
+    if (gameTelemetry.isGameUrl(wc.getURL())) {
+      gameTelemetry.attachCapture(wc, account.id);
     }
   });
-  view.webContents.on('page-title-updated', (_e, title) => updateHistoryTitle(view.webContents.getURL(), title));
-  view.webContents.on('render-process-gone', (_e, details) => {
+  wc.on('page-title-updated', (_e, title) => updateHistoryTitle(wc.getURL(), title));
+  wc.on('render-process-gone', (_e, details) => {
     console.error('[crash] renderer gone for', account.id, details.reason);
     const crashes = (crashCounts.get(account.id) || 0) + 1;
     crashCounts.set(account.id, crashes);
-    if (crashes <= 3 && !view.webContents.isDestroyed()) {
+    if (crashes <= 3 && !wc.isDestroyed()) {
       setTimeout(() => {
-        if (!view.webContents.isDestroyed()) view.webContents.reload();
+        if (!wc.isDestroyed()) wc.reload();
       }, 1000);
     } else {
       console.error('[crash]', account.id, 'crashed', crashes, 'times — giving up on auto-reload');
     }
   });
-  view.webContents.on('context-menu', (_e, params) => showPageContextMenu(view.webContents, params));
-  view.webContents.on('focus', () => {
+  wc.on('context-menu', (_e, params) => showPageContextMenu(wc, params));
+  wc.on('focus', () => {
     lastFocusedAccountId = account.id;
   });
-  view.webContents.on('before-input-event', (event, input) => {
+  wc.on('before-input-event', (event, input) => {
     if (handleAccountShortcut(input, account)) event.preventDefault();
   });
-  view.webContents.on('found-in-page', (_e, result) => {
+  wc.on('found-in-page', (_e, result) => {
     if (mainWindow) {
       mainWindow.webContents.send('findbar:result', {
         id: account.id,
@@ -1082,26 +1085,52 @@ function createViewForAccount(account) {
       });
     }
   });
-  view.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+  wc.on('console-message', (_e, level, message, line, sourceId) => {
     console.log(`[page:${account.id}] ${message} (${sourceId}:${line})`);
   });
   // A page can destroy its own webContents any time by calling window.close()
-  // on itself (normal web behavior, e.g. after a payment/OAuth flow) — without
-  // this, that happened outside the app's own close flow entirely: the account
-  // never got marked closed, and this view stayed in the `views` map pointing
-  // at a destroyed webContents, which crashed metrics:get on every poll after.
-  // finalizeAccountClose's guard makes this safe to also fire when the app
-  // itself initiated the close (closeAccountView already handles that path).
-  view.webContents.once('destroyed', () => {
+  // on itself (normal web behavior, e.g. after a payment/OAuth flow), and the
+  // renderer removing a <webview> element from the DOM (account closed,
+  // window closing) also destroys its webContents the same way — either
+  // path needs to land here. Without this, that happened outside the app's
+  // own close flow entirely: the account never got marked closed, and this
+  // entry stayed in the `views` map pointing at a destroyed webContents,
+  // which crashed metrics:get on every poll after. finalizeAccountClose's
+  // guard makes this safe to also fire when the app itself initiated the
+  // close (closeAccountView already handles that path).
+  wc.once('destroyed', () => {
+    // If `views.get(id)` no longer points at THIS wc, a newer one has
+    // already replaced it (e.g. openAccountInNewWindow closing this
+    // window's copy right before the popped-out window's replacement
+    // attaches) — that's an expected, intentional teardown, not a real
+    // account close, so finalizeAccountClose must not run for it.
+    if (views.get(account.id) !== wc) return;
     if (!account.closed) {
-      finalizeAccountClose(account, view);
+      finalizeAccountClose(account, wc);
       persist();
       renderLayout();
       broadcastState();
     }
   });
-  views.set(account.id, view);
-  return view;
+
+  if (!hostWebContents.isDestroyed()) hostWebContents.send('webview:ready', account.id);
+}
+
+// Shared by both the main window and any popped-out account window — finds
+// which account a just-attached <webview> guest belongs to by matching its
+// session against the deterministic per-account partition (persist:account-
+// ${id} always resolves to the same session object for the same id, so an
+// identity check here is reliable without inventing a separate correlation
+// mechanism).
+function wireDidAttachWebview(hostWebContents) {
+  hostWebContents.on('did-attach-webview', (_event, wc) => {
+    const account = data.accounts.find((a) => wc.session === session.fromPartition(accountPartition(a.id)));
+    if (!account) {
+      console.error('[webview] did-attach-webview fired for an unrecognized partition — ignoring');
+      return;
+    }
+    wireAccountWebContents(wc, account, hostWebContents);
+  });
 }
 
 // "Modo Eco" — opt-in per account (off by default, never forced), throttles
@@ -1350,8 +1379,13 @@ function notifyNav(id, url) {
   if (mainWindowAlive()) mainWindow.webContents.send('nav:update', { id, url });
 }
 
+// The renderer owns creation now (it reactively creates a <webview> for every
+// open account it sees in state, see renderPanelWebviews in renderer.js) —
+// this just looks up whatever main has already wired via did-attach-webview.
+// Can legitimately return undefined for a brand-new account whose <webview>
+// hasn't attached yet; call sites already guard with `?.`.
 function ensureView(account) {
-  return views.get(account.id) || createViewForAccount(account);
+  return views.get(account.id);
 }
 
 function sidebarWidth() {
@@ -1369,13 +1403,6 @@ function contentBounds() {
     width: Math.max(winWidth - left, 0),
     height: Math.max(winHeight - top - STATUSBAR_HEIGHT, 0)
   };
-}
-
-function clearAllViews() {
-  if (!mainWindowAlive()) return;
-  for (const view of views.values()) {
-    mainWindow.contentView.removeChildView(view);
-  }
 }
 
 // cellsForMode and freeCells now live in ./layout-utils (required above).
@@ -1424,36 +1451,38 @@ function buildGeometry(cells, maximized) {
     maximized: !!maximized && maximized.id === account.id,
     zoom: account.zoom || data.settings.defaultZoom || 1,
     rect: { x: rect.x, y: rect.y, width: rect.width, height: PANEL_HEADER_HEIGHT },
-    fullRect: rect
-  }));
-}
-
-function renderLayout() {
-  if (!mainWindowAlive()) return;
-  const bounds = contentBounds();
-  clearAllViews();
-  const { cells, maximized } = computeCells(bounds);
-
-  for (const { account, rect } of cells) {
-    const view = ensureView(account);
-    mainWindow.contentView.addChildView(view);
-    view.setBounds({
+    fullRect: rect,
+    // Same math renderLayout used to hand to view.setBounds() — the actual
+    // page-content area, i.e. the cell minus the header strip. The renderer
+    // positions each account's real <webview> element with this now that
+    // main no longer composites it natively.
+    contentRect: {
       x: rect.x,
       y: rect.y + PANEL_HEADER_HEIGHT,
       width: rect.width,
       height: Math.max(rect.height - PANEL_HEADER_HEIGHT, 0)
-    });
-  }
+    }
+  }));
+}
 
+// Used to be responsible for compositing every account's native
+// WebContentsView into place too (clearAllViews() + re-add + setBounds per
+// panel); now it's just geometry math + one IPC send, since <webview>
+// elements are real DOM the renderer positions itself off this same
+// payload (see renderPanelWebviews in renderer.js).
+function renderLayout() {
+  if (!mainWindowAlive()) return;
+  const bounds = contentBounds();
+  const { cells, maximized } = computeCells(bounds);
   mainWindow.webContents.send('panels:geometry', buildGeometry(cells, maximized));
 }
 
 // For changes that only affect a panel's displayed metadata (mute/name/color/
 // zoom) — not which accounts are open, the layout mode, or their sizes —
-// resending geometry doesn't need renderLayout's clearAllViews() + re-add +
-// setBounds cycle on every open WebContentsView. That cycle is real,
-// measurable native work (each call tears down and recomposites every panel),
-// and several handlers were paying for it just to flip one boolean.
+// this is identical to renderLayout() now that neither function touches any
+// native view. Kept as a separate name for the (many) call sites that were
+// written back when the two functions did meaningfully different amounts of
+// work, so this diff doesn't have to also chase down every one of them.
 function broadcastGeometryOnly() {
   if (!mainWindowAlive()) return;
   const { cells, maximized } = computeCells(contentBounds());
@@ -1469,11 +1498,16 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      sandbox: true
+      sandbox: true,
+      // <webview> is opt-in — without this every account panel's element
+      // silently does nothing (no error, just never attaches a guest).
+      webviewTag: true
     }
   });
 
   mainWindow.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
+
+  wireDidAttachWebview(mainWindow.webContents);
 
   mainWindow.webContents.on('console-message', (_e, level, message, line, sourceId) => {
     console.log(`[renderer] ${message} (${sourceId}:${line})`);
@@ -1545,8 +1579,7 @@ ipcMain.handle('account:navigate', (_e, { id, url }) => {
   const target = /^https?:\/\/|^about:/.test(url) ? url : `https://${url}`;
   account.url = target;
   persist();
-  const view = ensureView(account);
-  view.webContents.loadURL(target);
+  ensureView(account)?.loadURL(target);
   broadcastState();
 });
 
@@ -1561,11 +1594,17 @@ ipcMain.handle('account:navigate', (_e, { id, url }) => {
 // entire lifetime.
 function removeAccountCompletely(id) {
   data.accounts = data.accounts.filter((a) => a.id !== id);
-  const view = views.get(id);
-  const ses = view ? view.webContents.session : session.fromPartition(`persist:account-${id}`);
-  if (view) {
-    if (mainWindowAlive()) mainWindow.contentView.removeChildView(view);
-    view.webContents.close();
+  const wc = views.get(id);
+  const ses = wc ? wc.session : session.fromPartition(accountPartition(id));
+  if (wc) {
+    // Force-closes even if the page has an unsaved-form beforeunload prompt —
+    // "remove this account" always wins over that, unlike the regular
+    // "close tab" flow (closeAccountView) which respects it. The renderer
+    // will also see this account missing from the next state:update and
+    // remove its <webview> element from the DOM on its own, but closing the
+    // webContents directly here means the resources are freed immediately
+    // regardless of when that reconciliation runs.
+    wc.close();
     views.delete(id);
   }
   ses.clearStorageData().then(() => ses.clearCache()).catch((err) => console.error('[remove-account] failed to clear session for', id, err));
@@ -1609,11 +1648,11 @@ ipcMain.handle('accounts:duplicate', (_e, { id }) => {
 ipcMain.handle('account:clearSession', async (_e, { id }) => {
   const account = getAccount(id);
   if (!account) return;
-  const view = views.get(id);
-  const ses = view ? view.webContents.session : session.fromPartition(`persist:account-${id}`);
+  const wc = views.get(id);
+  const ses = wc ? wc.session : session.fromPartition(accountPartition(id));
   await ses.clearStorageData();
   await ses.clearCache();
-  if (view) view.webContents.reload();
+  if (wc) wc.reload();
 });
 
 ipcMain.on('accounts:contextmenu', (_e, payload) => {
@@ -1624,15 +1663,14 @@ ipcMain.on('accounts:contextmenu', (_e, payload) => {
   const space = getSpace(account.spaceId);
   const lang = data.settings.language || 'es';
   const menu = Menu.buildFromTemplate([
-    { label: mt(lang, 'ctx.reload'), click: () => views.get(id)?.webContents.reload() },
+    { label: mt(lang, 'ctx.reload'), click: () => views.get(id)?.reload() },
     {
       label: mt(lang, 'ctx.goToDefaultUrl'),
       click: () => {
         const target = space?.defaultUrl || 'https://www.google.com';
         account.url = target;
         persist();
-        const view = ensureView(account);
-        view.webContents.loadURL(target);
+        views.get(id)?.loadURL(target);
         broadcastState();
       }
     },
@@ -1640,7 +1678,7 @@ ipcMain.on('accounts:contextmenu', (_e, payload) => {
       label: account.muted ? mt(lang, 'ctx.unmutePanel') : mt(lang, 'topbar.mute'),
       click: () => {
         account.muted = !account.muted;
-        views.get(id)?.webContents.setAudioMuted(account.muted);
+        views.get(id)?.setAudioMuted(account.muted);
         persist();
         renderLayout();
         broadcastState();
@@ -1689,11 +1727,11 @@ ipcMain.on('accounts:contextmenu', (_e, payload) => {
     {
       label: mt(lang, 'ctx.clearSessionData'),
       click: async () => {
-        const view = views.get(id);
-        const ses = view ? view.webContents.session : session.fromPartition(`persist:account-${id}`);
+        const wc = views.get(id);
+        const ses = wc ? wc.session : session.fromPartition(accountPartition(id));
         await ses.clearStorageData();
         await ses.clearCache();
-        if (view) view.webContents.reload();
+        if (wc) wc.reload();
       }
     },
     {
@@ -1712,22 +1750,21 @@ ipcMain.handle('accounts:update', (_e, { id, name, color, url, proxy, ecoMode })
   if (url !== undefined && url.trim() && url !== account.url) {
     const target = /^https?:\/\/|^about:/.test(url) ? url : `https://${url}`;
     account.url = target;
-    const view = ensureView(account);
-    view.webContents.loadURL(target);
+    views.get(id)?.loadURL(target);
   }
   if (proxy !== undefined) {
     account.proxy = proxy && proxy.server ? proxy : null;
-    const view = views.get(id);
-    if (view) applyProxy(view.webContents.session, account);
+    const wc = views.get(id);
+    if (wc) applyProxy(wc.session, account);
   }
   if (ecoMode !== undefined && ecoMode !== account.ecoMode) {
     account.ecoMode = !!ecoMode;
-    const view = views.get(id);
+    const wc = views.get(id);
     // Only the live page needs the immediate toggle — did-finish-load already
     // re-applies enableEcoMode() on every future load from account.ecoMode.
-    if (view && !view.webContents.isDestroyed()) {
-      if (account.ecoMode) enableEcoMode(view.webContents);
-      else disableEcoMode(view.webContents);
+    if (wc && !wc.isDestroyed()) {
+      if (account.ecoMode) enableEcoMode(wc);
+      else disableEcoMode(wc);
     }
   }
   persist();
@@ -1826,9 +1863,9 @@ function duplicateSpace(id) {
   broadcastState();
 }
 
-function finalizeAccountClose(account, view) {
+function finalizeAccountClose(account, wc) {
   // Idempotent: this can now be reached twice for the same close — once from
-  // the webContents' own permanent 'destroyed' listener (createViewForAccount,
+  // the webContents' own permanent 'destroyed' listener (wireAccountWebContents,
   // which catches a page closing itself via window.close(), previously left
   // account.closed unset and a dead view in the `views` map forever) and once
   // from closeAccountView's flow when the app itself initiated the close.
@@ -1847,13 +1884,6 @@ function finalizeAccountClose(account, view) {
     poppedOutWindows.delete(account.id);
     if (!win.isDestroyed()) win.close();
   }
-  if (view) {
-    try {
-      mainWindow.contentView.removeChildView(view);
-    } catch {
-      // wasn't attached to the main window (e.g. it was popped out) — fine
-    }
-  }
   views.delete(account.id);
 }
 
@@ -1862,18 +1892,17 @@ function finalizeAccountClose(account, view) {
 // shows its native "Leave site?" dialog for this automatically).
 function closeAccountView(account) {
   return new Promise((resolve) => {
-    const view = views.get(account.id);
-    if (!view) {
+    const wc = views.get(account.id);
+    if (!wc) {
       finalizeAccountClose(account, null);
       resolve(true);
       return;
     }
-    const wc = view.webContents;
     let settled = false;
     const onDestroyed = () => {
       if (settled) return;
       settled = true;
-      finalizeAccountClose(account, view);
+      finalizeAccountClose(account, wc);
       resolve(true);
     };
     const onPrevent = () => {
@@ -1918,27 +1947,49 @@ ipcMain.handle('accounts:toggleMaximize', (_e, { id }) => {
   return data;
 });
 
+// A <webview> can't be reparented across BrowserWindows the way a
+// WebContentsView instance used to be (it's a DOM element scoped to one
+// renderer document) — so "pop out" no longer moves the same guest, it
+// closes the account's <webview> in the main window and opens a second,
+// minimal BrowserWindow (src/popout.html + electron/popout-preload.js)
+// that creates its own <webview> on the exact same partition. Same
+// partition means the same session/cookies/login — a fresh webContents
+// instance, but indistinguishable to the user from the original panel.
 function openAccountInNewWindow(id) {
   const account = getAccount(id);
   if (!account || account.closed || poppedOutIds.has(id)) return;
   if (data.settings.maximizedAccountId === id) data.settings.maximizedAccountId = null;
 
-  const view = ensureView(account);
-  try {
-    mainWindow.contentView.removeChildView(view);
-  } catch {
-    // wasn't attached yet — fine
+  const existingWc = views.get(id);
+  if (existingWc) {
+    views.delete(id);
+    existingWc.close();
   }
   poppedOutIds.add(id);
 
-  const win = new BrowserWindow({ width: 1100, height: 750, title: displayName(account), backgroundColor: '#111318', icon: APP_ICON_PATH });
-  win.contentView.addChildView(view);
-  const resize = () => {
-    const b = win.getContentBounds();
-    view.setBounds({ x: 0, y: 0, width: b.width, height: b.height });
-  };
-  resize();
-  win.on('resize', resize);
+  const win = new BrowserWindow({
+    width: 1100,
+    height: 750,
+    title: displayName(account),
+    backgroundColor: '#111318',
+    icon: APP_ICON_PATH,
+    webPreferences: {
+      preload: path.join(__dirname, 'popout-preload.js'),
+      contextIsolation: true,
+      sandbox: true,
+      webviewTag: true
+    }
+  });
+  wireDidAttachWebview(win.webContents);
+  win.loadFile(path.join(__dirname, '..', 'src', 'popout.html'));
+  win.webContents.once('did-finish-load', () => {
+    win.webContents.send('popout:init', {
+      accountId: id,
+      partition: accountPartition(id),
+      preload: ACCOUNT_PRELOAD_URL,
+      url: account.url
+    });
+  });
   // The OS close button (X) fires 'close' before the window is actually gone,
   // so it's the only place this can go through the same beforeunload-respecting
   // flow every other close path uses (closeAccountView) instead of just
@@ -2057,12 +2108,12 @@ ipcMain.handle('layout:set', (_e, { mode }) => {
 
 ipcMain.handle('account:reload', (_e, { id }) => {
   const view = views.get(id);
-  if (view) view.webContents.reload();
+  if (view) view.reload();
 });
 
 ipcMain.handle('account:reloadHard', (_e, { id }) => {
   const view = views.get(id);
-  if (view) view.webContents.reloadIgnoringCache();
+  if (view) view.reloadIgnoringCache();
 });
 
 ipcMain.handle('accounts:reopenLastClosed', () => {
@@ -2075,25 +2126,25 @@ ipcMain.on('account:findInPage', (_e, payload) => {
   const { id, text, forward, findNext } = payload;
   const view = views.get(id);
   if (!view || !text) return;
-  view.webContents.findInPage(text, { forward: forward !== false, findNext: !!findNext });
+  view.findInPage(text, { forward: forward !== false, findNext: !!findNext });
 });
 
 ipcMain.on('account:stopFindInPage', (_e, payload) => {
   const view = payload && views.get(payload.id);
-  if (view) view.webContents.stopFindInPage('clearSelection');
+  if (view) view.stopFindInPage('clearSelection');
 });
 
 ipcMain.on('account:goBack', (_e, payload) => {
   const view = payload && views.get(payload.id);
-  if (view?.webContents.navigationHistory.canGoBack()) view.webContents.navigationHistory.goBack();
+  if (view?.navigationHistory.canGoBack()) view.navigationHistory.goBack();
 });
 
 ipcMain.on('account:goForward', (_e, payload) => {
   const view = payload && views.get(payload.id);
-  if (view?.webContents.navigationHistory.canGoForward()) view.webContents.navigationHistory.goForward();
+  if (view?.navigationHistory.canGoForward()) view.navigationHistory.goForward();
 });
 
-ipcMain.handle('app:getMeta', () => ({ startTime: appStartTime, version: APP_VERSION }));
+ipcMain.handle('app:getMeta', () => ({ startTime: appStartTime, version: APP_VERSION, accountPreloadUrl: ACCOUNT_PRELOAD_URL }));
 // Settings → Acerca de reads this synchronously (window.api.getVersions() is
 // called as a plain sync function, not awaited) — sendSync/returnValue is the
 // only way to answer that without changing the call site to async.
@@ -2107,7 +2158,7 @@ ipcMain.handle('shortcuts:list', () => {
 ipcMain.handle('account:mute', (_e, { id, muted }) => {
   const account = getAccount(id);
   const view = views.get(id);
-  if (view) view.webContents.setAudioMuted(muted);
+  if (view) view.setAudioMuted(muted);
   if (account) account.muted = muted;
   persist();
   broadcastGeometryOnly();
@@ -2197,24 +2248,34 @@ ipcMain.handle('sidebar:toggle', () => {
   return data;
 });
 
-ipcMain.on('ui:hide-views', () => clearAllViews());
-ipcMain.on('ui:show-views', () => renderLayout());
+// No-ops now — these used to strip every native WebContentsView out from
+// under a modal dialog and re-add them after, because a native view always
+// painted above the renderer's own DOM no matter its z-index. <webview>
+// elements are real DOM, so a modal with a higher z-index (see style.css)
+// already covers them for free; every call site (there are many, across
+// modals/dropdowns/drag operations in renderer.js) is left as-is since
+// calling a no-op is harmless and touching every one of them isn't worth it.
+ipcMain.on('ui:hide-views', () => {});
+ipcMain.on('ui:show-views', () => {});
 
-// Live-follows a divider drag: repositions just the one view's bounds immediately,
-// without touching account data or triggering a full renderLayout/persist — those
-// only happen once on mouseup (see layout:setSplit) so dragging stays cheap and the
-// real page content visibly resizes instead of a placeholder while the user drags.
+// Live-follows a divider drag: reflects just the one panel's rect straight
+// back to the renderer immediately, without touching account data or
+// triggering a full renderLayout/persist — those only happen once on
+// mouseup (see layout:setSplit) so dragging stays cheap and the real page
+// content visibly resizes instead of a placeholder while the user drags.
 ipcMain.on('account:setLiveRect', (_e, payload) => {
   if (!payload) return;
   const { id, rect } = payload;
   if (!rect || [rect.x, rect.y, rect.width, rect.height].some((n) => typeof n !== 'number' || !Number.isFinite(n))) return;
-  const view = views.get(id);
-  if (!view) return;
-  view.setBounds({
-    x: rect.x,
-    y: rect.y + PANEL_HEADER_HEIGHT,
-    width: rect.width,
-    height: Math.max(rect.height - PANEL_HEADER_HEIGHT, 0)
+  if (!mainWindowAlive()) return;
+  mainWindow.webContents.send('account:liveRect', {
+    id,
+    contentRect: {
+      x: rect.x,
+      y: rect.y + PANEL_HEADER_HEIGHT,
+      width: rect.width,
+      height: Math.max(rect.height - PANEL_HEADER_HEIGHT, 0)
+    }
   });
 });
 
@@ -2249,7 +2310,7 @@ ipcMain.handle('extensions:toggle', (_e, { id, enabled }) => {
   ext.enabled = enabled;
   if (enabled) {
     for (const view of views.values()) {
-      view.webContents.session.extensions
+      view.session.extensions
         .loadExtension(ext.path, { allowFileAccess: true })
         .catch((err) => console.error('[ext] FAILED to re-enable', ext.name, err));
     }
@@ -2281,7 +2342,7 @@ ipcMain.handle('account:setZoom', (_e, { id, factor }) => {
   if (!account) return data;
   account.zoom = factor;
   const view = views.get(id);
-  if (view) view.webContents.setZoomFactor(factor);
+  if (view) view.setZoomFactor(factor);
   persist();
   broadcastGeometryOnly();
   broadcastState();
@@ -2292,7 +2353,7 @@ ipcMain.handle('accounts:setZoomAll', (_e, { factor }) => {
   data.accounts.forEach((a) => {
     a.zoom = factor;
   });
-  for (const view of views.values()) view.webContents.setZoomFactor(factor);
+  for (const view of views.values()) view.setZoomFactor(factor);
   persist();
   broadcastGeometryOnly();
   broadcastState();
@@ -2355,7 +2416,7 @@ ipcMain.handle('accounts:muteAll', (_e, { muted }) => {
   data.accounts.forEach((a) => {
     a.muted = muted;
   });
-  for (const view of views.values()) view.webContents.setAudioMuted(muted);
+  for (const view of views.values()) view.setAudioMuted(muted);
   data.settings.allMuted = muted;
   persist();
   broadcastGeometryOnly();
@@ -2829,8 +2890,8 @@ ipcMain.handle('metrics:get', () => {
   const byPid = new Map(metrics.map((m) => [m.pid, m]));
   const result = {};
   for (const [id, view] of views.entries()) {
-    if (view.webContents.isDestroyed()) continue; // stale entry mid-cleanup — skip rather than throw
-    const pid = view.webContents.getOSProcessId();
+    if (view.isDestroyed()) continue; // stale entry mid-cleanup — skip rather than throw
+    const pid = view.getOSProcessId();
     const m = byPid.get(pid);
     result[id] = {
       cpu: m ? m.cpu.percentCPUUsage : 0,

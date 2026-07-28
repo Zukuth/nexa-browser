@@ -3,6 +3,7 @@ const btnNewTab = document.getElementById('btn-new-tab');
 const btnToggleAll = document.getElementById('btn-toggle-all');
 const addressInput = document.getElementById('input-address');
 const panelHeadersEl = document.getElementById('panel-headers');
+const panelWebviewsEl = document.getElementById('panel-webviews');
 const railSpacesEl = document.getElementById('rail-spaces');
 const btnAddSpace = document.getElementById('btn-add-space');
 const spaceNameEl = document.getElementById('space-name');
@@ -413,6 +414,14 @@ function formatDuration(ms) {
 }
 
 function render() {
+  reconcileWebviews();
+  // Positions any <webview> just created above. Needed here too (not just
+  // in onPanelsGeometry) because panels:geometry can arrive before the
+  // account list does at startup — if it does, positionWebviews() runs
+  // against an empty #panel-webviews and nothing re-triggers it later,
+  // leaving every panel stuck hidden until the next unrelated geometry
+  // change (a resize, a layout switch, ...).
+  positionWebviews();
   if (!listDragInProgress) renderRail();
 
   const collapsed = !!state.settings.sidebarCollapsed;
@@ -789,6 +798,66 @@ function renderPanelHeaders() {
   renderSplitDividers();
 }
 
+// ---- Account <webview> elements ----
+// Each open account gets a real <webview> in the DOM now (see the plan doc
+// for why: WebContentsView, the native-view API this used to composite
+// account pages with, is what caused Cloudflare Turnstile to flag the
+// game's login page as a bot — <webview> doesn't trip that check). Existence
+// tracks state.accounts (an account keeps its <webview> alive in the
+// background even while hidden by the current layout — same lifetime a
+// WebContentsView used to have); visibility/position tracks panelsGeometry
+// (only the panels the current layout mode actually shows).
+
+function applyContentRect(el, rect) {
+  el.style.left = rect.x + 'px';
+  el.style.top = rect.y + 'px';
+  el.style.width = rect.width + 'px';
+  el.style.height = rect.height + 'px';
+}
+
+// Creates a <webview> for every open account that doesn't have one yet, and
+// removes elements for accounts that are closed or gone. Cheap to call
+// often — the per-account check is just a DOM lookup.
+function reconcileWebviews() {
+  const openIds = new Set(state.accounts.filter((a) => !a.closed).map((a) => a.id));
+  Array.from(panelWebviewsEl.children).forEach((el) => {
+    if (!openIds.has(el.dataset.id)) el.remove();
+  });
+  state.accounts.forEach((account) => {
+    if (account.closed || document.getElementById('wv-' + account.id)) return;
+    const wv = document.createElement('webview');
+    wv.id = 'wv-' + account.id;
+    wv.className = 'panel-webview hidden-panel';
+    wv.dataset.id = account.id;
+    wv.setAttribute('partition', 'persist:account-' + account.id);
+    wv.setAttribute('preload', appMeta.accountPreloadUrl);
+    wv.setAttribute('webpreferences', 'contextIsolation=yes,sandbox=yes');
+    // Starts on about:blank on purpose — main's did-attach-webview handler
+    // (wireAccountWebContents) needs to finish wiring this webContents
+    // (session, CDP telemetry, listeners) before the real navigation
+    // starts, or the game's own WebSocket connection can be missed
+    // entirely. window.api.onWebviewReady below sets the real `src` once
+    // main confirms that's done.
+    wv.src = 'about:blank';
+    panelWebviewsEl.appendChild(wv);
+  });
+}
+
+// Shows/positions every <webview> the current layout has a cell for, and
+// hides (without removing) every other open account's <webview>.
+function positionWebviews() {
+  const visibleIds = new Set(panelsGeometry.map((p) => p.id));
+  Array.from(panelWebviewsEl.children).forEach((el) => {
+    if (!visibleIds.has(el.dataset.id)) el.classList.add('hidden-panel');
+  });
+  panelsGeometry.forEach((panel) => {
+    const el = document.getElementById('wv-' + panel.id);
+    if (!el) return;
+    el.classList.remove('hidden-panel');
+    applyContentRect(el, panel.contentRect);
+  });
+}
+
 // ---- Resizable dividers (columns/rows/grid) ----
 // Lets the user drag the gap between panels to make one bigger at another's expense,
 // instead of only the equal split. Sizes are stored per-account as widthFrac/heightFrac
@@ -900,6 +969,7 @@ function startSplitDrag(e, group, field, pairIndex) {
     document.removeEventListener('mouseup', onUp);
     dragInProgress = false;
     renderPanelHeaders(); // catch up on any geometry that arrived mid-drag and was held back
+    positionWebviews();
     commitSplit(group, field, currentSizes);
   }
 
@@ -1022,6 +1092,7 @@ function startFreeDrag(e, id, mode) {
     document.removeEventListener('mouseup', onUp);
     dragInProgress = false;
     renderPanelHeaders(); // catch up on any geometry that arrived mid-drag and was held back
+    positionWebviews();
     const finalX = parseFloat(activeGhost.style.left);
     const finalY = parseFloat(activeGhost.style.top);
     const finalW = parseFloat(activeGhost.style.width);
@@ -3191,6 +3262,21 @@ window.api.onPanelsGeometry((geometry) => {
   panelsGeometry = geometry;
   if (dragInProgress) return;
   renderPanelHeaders();
+  positionWebviews();
+});
+
+window.api.onWebviewReady((accountId) => {
+  const el = document.getElementById('wv-' + accountId);
+  if (!el) return;
+  const account = state.accounts.find((a) => a.id === accountId);
+  if (account && account.url && account.url !== 'about:blank') {
+    el.src = account.url;
+  }
+});
+
+window.api.onAccountLiveRect(({ id, contentRect }) => {
+  const el = document.getElementById('wv-' + id);
+  if (el) applyContentRect(el, contentRect);
 });
 
 window.api.onOpenSpaceEditor(({ id }) => {

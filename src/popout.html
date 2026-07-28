@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Nexa Browser</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #111318; }
+  webview { width: 100%; height: 100%; border: none; display: block; }
+</style>
+</head>
+<body>
+<script>
+  // Popped-out account window: main sends the account's partition/preload/
+  // url once (popout:init), this creates a <webview> pointed at about:blank
+  // first so main's did-attach-webview handler can finish wiring the
+  // webContents (session config, telemetry, listeners) before the real
+  // navigation starts — same ordering guarantee the main window's panels
+  // use, see wireAccountWebContents in electron/main.js.
+  window.popoutAPI.onInit((info) => {
+    const wv = document.createElement('webview');
+    wv.setAttribute('partition', info.partition);
+    wv.setAttribute('preload', info.preload);
+    wv.setAttribute('webpreferences', 'contextIsolation=yes,sandbox=yes');
+    wv.src = 'about:blank';
+    document.body.appendChild(wv);
+
+    window.popoutAPI.onReady((accountId) => {
+      if (accountId === info.accountId && info.url && info.url !== 'about:blank') {
+        wv.src = info.url;
+      }
+    });
+  });
+</script>
+</body>
+</html>
