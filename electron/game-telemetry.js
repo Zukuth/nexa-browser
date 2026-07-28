@@ -51,7 +51,15 @@ function rarityFromQuality(q) {
 
 function isGameUrl(url) {
   try {
-    return new URL(url).hostname === GAME_HOSTNAME;
+    const u = new URL(url);
+    // Excludes /login on purpose: attaching the CDP debugger there is what
+    // was causing Cloudflare Turnstile's error 600010 on every fresh
+    // install. Turnstile's own anti-debugging check treats a debugger
+    // session (CDP or DevTools, same underlying mechanism) as a bot signal
+    // and hard-fails the challenge — documented behavior, not specific to
+    // this app. The game's WebSocket only exists after login anyway, so
+    // there's nothing to capture on /login and no reason to attach there.
+    return u.hostname === GAME_HOSTNAME && !u.pathname.startsWith('/login');
   } catch {
     return false;
   }

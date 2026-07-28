@@ -1025,6 +1025,14 @@ function createViewForAccount(account) {
     // already existing, so calling it here too is safe and idempotent.
     injectGameOverlayButtons(view.webContents);
     stopGameOverlayWatchdogIfLeft(view.webContents, url);
+    // Same /login → /play client-side transition: did-finish-load won't
+    // fire again to trigger the telemetry attach below, so it has to be
+    // done here too. isGameUrl() now excludes /login on purpose (see
+    // game-telemetry.js) so this only actually attaches once the user is
+    // past the Turnstile challenge.
+    if (gameTelemetry.isGameUrl(url)) {
+      gameTelemetry.attachCapture(view, account.id);
+    }
   });
   // Chromium resets zoom on full page loads/reloads — reassert the account's
   // chosen zoom (or the app default) so it survives reload/repartition and
