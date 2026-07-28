@@ -273,18 +273,17 @@ if (data.settings.hardwareAcceleration === false) {
 
 // Electron ships its own, fixed copy of Chromium's GPU allow/block-list —
 // unlike a real installed Chrome, which auto-updates that list independently
-// of the browser version. Confirmed live: a machine where the game's login
-// page (Cloudflare Turnstile) worked fine in real Chrome still failed with
-// Turnstile error 600010 in Nexa Browser, with WebGL throwing
-// "INVALID_ENUM: getInternalformatParameter" and WebGPU reporting "No
-// available adapters" — with hardwareAcceleration correctly enabled in
-// settings. That combination (GPU acceleration nominally on, but WebGL/WebGPU
-// unavailable to a specific page) matches this Electron version's bundled
-// GPU block-list rejecting a driver/GPU combination that Chrome's own,
-// separately-updated list already allows. --ignore-gpu-blocklist is
-// Chromium's own standard flag for exactly this mismatch — it does not
-// disable or weaken any actual capability check, it only stops Chromium's
-// static list from vetoing hardware the driver itself supports.
+// of the browser version. Some machines show WebGL "INVALID_ENUM:
+// getInternalformatParameter" spam with hardwareAcceleration correctly
+// enabled, matching this Electron version's bundled GPU block-list
+// rejecting a driver/GPU combination Chrome's own, separately-updated list
+// already allows. --ignore-gpu-blocklist is Chromium's own standard flag
+// for exactly that mismatch — it does not disable or weaken any actual
+// capability check, only stops the static list from vetoing hardware the
+// driver itself supports. NOTE: this is unrelated to the Turnstile 600010
+// login bug — that one turned out to be caused by WebContentsView itself
+// (see createViewForAccount below); WebGL/WebGPU console noise on this
+// specific dev machine was a red herring, unaffected by any GPU flag tried.
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 
 // Vanilla Electron doesn't ship Widevine (it's Google-licensed DRM, not something
