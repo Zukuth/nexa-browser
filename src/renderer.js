@@ -921,6 +921,13 @@ function startSplitDrag(e, group, field, pairIndex) {
   e.preventDefault();
   e.stopPropagation();
   dragInProgress = true;
+  // A <webview> is real, hit-testable content — without this, a mousemove
+  // that crosses over one mid-drag gets captured by the guest instead of
+  // reaching this function's own document-level mousemove listener,
+  // silently truncating the drag distance the moment the cursor enters a
+  // panel. WebContentsView never needed this here (see hideViews()/
+  // showViews() in preload.js for the actual pointer-events toggle).
+  window.api.hideViews();
   const isWidth = field === 'widthFrac';
   const dividerEl = e.currentTarget;
 
@@ -975,6 +982,7 @@ function startSplitDrag(e, group, field, pairIndex) {
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
     dragInProgress = false;
+    window.api.showViews();
     renderPanelHeaders(); // catch up on any geometry that arrived mid-drag and was held back
     positionWebviews();
     commitSplit(group, field, currentSizes);

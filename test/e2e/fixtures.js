@@ -60,13 +60,22 @@ async function closeAccountAt(page, index) {
 // broadcast, plus once a second regardless (setInterval(render, 1000) in
 // renderer.js) — a boundingBox() call can land in the single frame where the
 // old node was just torn down and the new one isn't painted yet, returning
-// null. Poll until a real box comes back instead of trusting a single read.
+// null. Also, right after a divider drag's mouseup, onUp() synchronously
+// re-renders headers from the still-stale pre-drag panelsGeometry before the
+// async commitSplit()→setSplit IPC round-trip pushes the real, post-drag
+// geometry a few ms later — a single read can land in that transient
+// snap-back frame. Poll until the box comes back non-null AND stops
+// changing across consecutive reads, not just until it's non-null once.
 async function stableBoundingBox(locator) {
   let box = null;
+  let stableCount = 0;
   await expect.poll(async () => {
-    box = await locator.boundingBox();
-    return box;
-  }, { message: 'waiting for a non-null boundingBox' }).not.toBeNull();
+    const next = await locator.boundingBox();
+    const same = next && box && next.x === box.x && next.y === box.y && next.width === box.width && next.height === box.height;
+    stableCount = same ? stableCount + 1 : 0;
+    box = next;
+    return box && stableCount >= 2;
+  }, { message: 'waiting for boundingBox to stop changing' }).toBe(true);
   return box;
 }
 

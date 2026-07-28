@@ -57,8 +57,25 @@ contextBridge.exposeInMainWorld('api', {
   setSplit: (ids, fracs, field) => ipcRenderer.invoke('layout:setSplit', { ids, fracs, field }),
   setLiveRect: (id, rect) => ipcRenderer.send('account:setLiveRect', { id, rect }),
   toggleSidebar: () => ipcRenderer.invoke('sidebar:toggle'),
-  hideViews: () => ipcRenderer.send('ui:hide-views'),
-  showViews: () => ipcRenderer.send('ui:show-views'),
+  // The main-process side of these (ui:hide-views/ui:show-views) is now a
+  // no-op — <webview> is real DOM so a modal's own z-index already covers
+  // it, no more compositing hack needed for that. But <webview> guests are
+  // still a genuinely separate, hit-testable surface: a mousemove that
+  // crosses over one mid-drag (dragging a split divider, a free-mode panel,
+  // a URL-suggestion dropdown open over a panel) gets captured by the guest
+  // instead of continuing to reach the host document's own mousemove
+  // listener, silently truncating the drag. Toggling pointer-events here —
+  // entirely renderer-local, no round-trip needed — is what actually fixes
+  // that now; the IPC send is kept only so nothing breaks if main ever
+  // needs this signal again.
+  hideViews: () => {
+    document.getElementById('panel-webviews')?.classList.add('drag-inert');
+    ipcRenderer.send('ui:hide-views');
+  },
+  showViews: () => {
+    document.getElementById('panel-webviews')?.classList.remove('drag-inert');
+    ipcRenderer.send('ui:show-views');
+  },
   setZoom: (id, factor) => ipcRenderer.invoke('account:setZoom', { id, factor }),
   setZoomAll: (factor) => ipcRenderer.invoke('accounts:setZoomAll', { factor }),
   toggleFullscreen: () => ipcRenderer.send('app:toggleFullscreen'),

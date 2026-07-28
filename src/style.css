@@ -718,6 +718,16 @@ html, body {
   display: none;
 }
 
+/* Set via window.api.hideViews()/showViews() (see preload.js) for the
+   duration of a drag (split divider, free-mode panel, URL-suggestion
+   dropdown). A <webview> is real hit-testable content — without this, a
+   mousemove that crosses over one mid-drag gets captured by the guest
+   instead of continuing to reach the drag's own mousemove listener on the
+   host document, truncating the drag distance. */
+#panel-webviews.drag-inert .panel-webview {
+  pointer-events: none;
+}
+
 #panel-headers {
   position: fixed;
   top: 0;
