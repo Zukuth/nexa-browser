@@ -451,170 +451,181 @@
     </div>
   </div>
 
-  <div id="poke-idle-modal" class="modal-overlay hidden">
-    <div class="modal settings-modal poke-idle-modal">
-      <div class="settings-header">
-        <div class="modal-title" data-i18n="pokeIdle.title">🎮 Poke Idle World</div>
-        <button id="btn-close-poke-idle" class="icon-close">✕</button>
+  <div id="poke-idle-panel" class="poke-drawer">
+    <div class="poke-drawer-header">
+      <div class="modal-title" data-i18n="pokeIdle.title">🎮 Poke Idle World</div>
+      <button id="btn-close-poke-idle" class="icon-close">✕</button>
+    </div>
+    <div class="poke-drawer-body">
+      <div class="poke-drawer-nav">
+        <div class="poke-nav-item" data-poke-scroll="resumen" data-i18n="pokeIdle.tab.resumen">Resumen</div>
+        <div class="poke-nav-item" data-poke-scroll="equipo" data-i18n="pokeIdle.tab.equipo">Mi Equipo</div>
+        <div class="poke-nav-item" data-poke-scroll="calculadora" data-i18n="pokeIdle.tab.calculadora">Calculadora IV</div>
+        <div class="poke-nav-item" data-poke-scroll="caza" data-i18n="pokeIdle.tab.caza">Caza &amp; XP</div>
+        <div class="poke-nav-item" data-poke-scroll="tierlist" data-i18n="pokeIdle.tab.tierlist">Tier List</div>
+        <div class="poke-nav-item" data-poke-scroll="drops" data-i18n="pokeIdle.tab.drops">Drops en vivo</div>
+        <div class="poke-nav-item" data-poke-scroll="capturas" data-i18n="pokeIdle.tab.capturas">Capturas destacadas</div>
+        <div class="poke-nav-item" data-poke-scroll="alertas" data-i18n="pokeIdle.tab.alertas">Alertas</div>
       </div>
-      <div class="settings-body">
-        <div class="settings-nav">
-          <div class="poke-nav-item active" data-poke-tab="resumen" data-i18n="pokeIdle.tab.resumen">Resumen</div>
-          <div class="poke-nav-item" data-poke-tab="equipo" data-i18n="pokeIdle.tab.equipo">Mi Equipo</div>
-          <div class="poke-nav-item" data-poke-tab="calculadora" data-i18n="pokeIdle.tab.calculadora">Calculadora IV</div>
-          <div class="poke-nav-item" data-poke-tab="caza" data-i18n="pokeIdle.tab.caza">Caza &amp; XP</div>
-          <div class="poke-nav-item" data-poke-tab="tierlist" data-i18n="pokeIdle.tab.tierlist">Tier List</div>
-          <div class="poke-nav-item" data-poke-tab="drops" data-i18n="pokeIdle.tab.drops">Drops en vivo</div>
-          <div class="poke-nav-item" data-poke-tab="capturas" data-i18n="pokeIdle.tab.capturas">Capturas destacadas</div>
-          <div class="poke-nav-item" data-poke-tab="alertas" data-i18n="pokeIdle.tab.alertas">Alertas</div>
+
+      <section id="poke-section-resumen" class="poke-section">
+        <h3 data-i18n="pokeIdle.tab.resumen">Resumen</h3>
+        <p class="settings-hint" data-i18n="pokeIdle.resumenHint">
+          Estadísticas en vivo de Poke Idle World, leídas de los datos que el propio juego transmite por
+          WebSocket — solo lectura: nunca automatiza capturas ni toca el captcha. El contador de cada cuenta se
+          reinicia solo (nunca al abrir/loguear) cuando cambiás de zona de caza.
+        </p>
+        <div id="poke-idle-summary" class="poke-summary-cards"></div>
+        <div class="poke-chart-wrap">
+          <div class="poke-chart-header">
+            <span data-i18n="pokeIdle.killsTrend">Tendencia de muertes/hora</span>
+            <span id="poke-chart-current"></span>
+          </div>
+          <canvas id="poke-summary-chart" height="120"></canvas>
         </div>
-        <div class="settings-content">
+        <div class="settings-subheading" data-i18n="pokeIdle.byAccount">Por cuenta</div>
+        <div id="poke-idle-accounts" class="ext-list"></div>
+      </section>
 
-          <div class="poke-pane active" data-poke-pane="resumen">
-            <p class="settings-hint" data-i18n="pokeIdle.resumenHint">
-              Estadísticas en vivo de Poke Idle World, leídas de los datos que el propio juego transmite por
-              WebSocket — solo lectura: nunca automatiza capturas ni toca el captcha. El contador de cada cuenta se
-              reinicia solo (nunca al abrir/loguear) cuando cambiás de zona de caza.
-            </p>
-            <div id="poke-idle-summary" class="poke-summary-cards"></div>
-            <div class="settings-subheading" data-i18n="pokeIdle.byAccount">Por cuenta</div>
-            <div id="poke-idle-accounts" class="ext-list"></div>
-          </div>
+      <section id="poke-section-equipo" class="poke-section">
+        <h3 data-i18n="pokeIdle.tab.equipo">Mi Equipo</h3>
+        <p class="settings-hint" data-i18n="pokeIdle.equipoHint">
+          El equipo activo de cada cuenta, con nivel, quality/IV, stats y los movimientos que ya debería tener
+          aprendidos según su nivel actual (calculado contra el catálogo del propio juego).
+        </p>
+        <div id="poke-idle-team" class="poke-team-list"></div>
+      </section>
 
-          <div class="poke-pane" data-poke-pane="equipo">
-            <p class="settings-hint" data-i18n="pokeIdle.equipoHint">
-              El equipo activo de cada cuenta, con nivel, quality/IV, stats y los movimientos que ya debería tener
-              aprendidos según su nivel actual (calculado contra el catálogo del propio juego).
-            </p>
-            <div id="poke-idle-team" class="poke-team-list"></div>
-          </div>
-
-          <div class="poke-pane" data-poke-pane="calculadora">
-            <p class="settings-hint" data-i18n="pokeIdle.calcHint">
-              Fórmula real de Growth (IV) y Quality del juego, portada de tu propia calculadora. Elegí una captura o
-              un pokémon del equipo para auto-completar, o cargá los datos a mano.
-            </p>
-            <div class="settings-row">
-              <span data-i18n="pokeIdle.source">Fuente</span>
-              <select id="calc-source"></select>
-            </div>
-            <div id="calc-manual-fields" class="poke-calc-manual">
-              <div class="settings-row">
-                <span data-i18n="pokeIdle.pokemon">Pokémon</span>
-                <select id="calc-species"></select>
-              </div>
-              <div class="settings-row">
-                <span data-i18n="pokeIdle.level">Nivel</span>
-                <input type="number" id="calc-level" min="1" max="200" />
-              </div>
-              <div class="settings-row">
-                <span data-i18n="pokeIdle.quality">Quality</span>
-                <input type="number" id="calc-quality" min="0" step="0.001" />
-              </div>
-              <div class="poke-calc-stat-grid">
-                <div><label>HP</label><input type="number" id="calc-stat-hp" /></div>
-                <div><label>ATK</label><input type="number" id="calc-stat-atk" /></div>
-                <div><label>DEF</label><input type="number" id="calc-stat-def" /></div>
-                <div><label>SpA</label><input type="number" id="calc-stat-spatk" /></div>
-                <div><label>SpD</label><input type="number" id="calc-stat-spdef" /></div>
-                <div><label>Vel</label><input type="number" id="calc-stat-speed" /></div>
-              </div>
-            </div>
-            <div class="settings-row">
-              <span data-i18n="pokeIdle.projLevel">Nivel de proyección</span>
-              <input type="number" id="calc-proj-level" min="1" max="200" value="100" />
-            </div>
-            <div id="calc-result"></div>
-          </div>
-
-          <div class="poke-pane" data-poke-pane="caza">
-            <p class="settings-hint" data-i18n="pokeIdle.cazaHint">
-              XP/hora y oro/hora de cada especie cazable, con el multiplicador de daño real de tu atacante contra
-              cada tipo — igual que la Ruta de Farmeo de tu página, pero con tu equipo real.
-            </p>
-            <div class="settings-row">
-              <span data-i18n="pokeIdle.attacker">Atacante</span>
-              <select id="hunt-attacker"></select>
-            </div>
-            <div class="settings-row">
-              <span data-i18n="pokeIdle.killsPerHourField">Abates por hora</span>
-              <input type="number" id="hunt-kph" min="1" value="650" />
-            </div>
-            <div class="settings-row">
-              <span data-i18n="pokeIdle.sortBy">Ordenar por</span>
-              <select id="hunt-sort">
-                <option value="xp">XP/h</option>
-                <option value="gold">Oro/h</option>
-                <option value="matchup">Matchup</option>
-                <option value="level" data-i18n="pokeIdle.level">Nivel</option>
-              </select>
-            </div>
-            <div id="hunt-table-wrap" class="poke-hunt-table-wrap"></div>
-          </div>
-
-          <div class="poke-pane" data-poke-pane="tierlist">
-            <p class="settings-hint" data-i18n="pokeIdle.tierHint">
-              Ranking del roster completo por percentil de stats base (ofensa/bulk/velocidad), igual que tu página —
-              no representa un tier oficial del juego. Elegí un Pokémon para ver sus evoluciones y sus matchups de
-              tipo más fuertes/débiles.
-            </p>
-            <div class="settings-row">
-              <span data-i18n="pokeIdle.clan">Clan (bono x1.30 a ofensa/bulk de sus tipos)</span>
-              <select id="tier-clan"><option value="" data-i18n="pokeIdle.clanNone">Ninguno</option></select>
-            </div>
-            <div class="settings-row">
-              <span data-i18n="pokeIdle.filterByType">Filtrar por tipo</span>
-              <select id="tier-type"><option value="" data-i18n="pokeIdle.typeAll">Todos</option></select>
-            </div>
-            <div id="tier-list-wrap" class="poke-tier-wrap"></div>
-            <div id="tier-detail" class="poke-tier-detail"></div>
-          </div>
-
-          <div class="poke-pane" data-poke-pane="drops">
-            <p class="settings-hint" data-i18n="pokeIdle.dropsHint">
-              Todo lo que sueltan tus kills en esta sesión, en tiempo real (mismo dato que alimenta el oro/hora) — a
-              precio NPC. El contador se reinicia solo cuando cambiás de zona de caza (mismo comportamiento que el
-              propio Hunt Analyzer del juego).
-            </p>
-            <div id="poke-drops-wrap"></div>
-          </div>
-
-          <div class="poke-pane" data-poke-pane="capturas">
-            <p class="settings-hint" data-i18n="pokeIdle.capturasHint">Todo lo capturado en esta sesión, en tiempo real (últimas 100).</p>
-            <div id="poke-idle-notable" class="poke-notable-list"></div>
-          </div>
-
-          <div class="poke-pane" data-poke-pane="alertas">
-            <div class="settings-row">
-              <span data-i18n="pokeIdle.alertsEnable">Activar notificaciones</span>
-              <label class="switch"><input type="checkbox" id="poke-alert-enabled" /><span class="slider"></span></label>
-            </div>
-            <div class="settings-row">
-              <span data-i18n="pokeIdle.alertsShiny">✨ Shiny (capturado o visto)</span>
-              <label class="switch"><input type="checkbox" id="poke-alert-shiny" /><span class="slider"></span></label>
-            </div>
-            <div class="settings-row">
-              <span data-i18n="pokeIdle.alertsRare">⭐ Capturas raras (Lendária o más)</span>
-              <label class="switch"><input type="checkbox" id="poke-alert-rare" /><span class="slider"></span></label>
-            </div>
-            <div class="settings-row">
-              <span data-i18n="pokeIdle.alertsDisconnect">🔌 Desconexión / reconexión</span>
-              <label class="switch"><input type="checkbox" id="poke-alert-disconnect" /><span class="slider"></span></label>
-            </div>
-            <div class="settings-row">
-              <div>
-                <div data-i18n="pokeIdle.alertsFewBalls">🎯 Pocas bolas</div>
-                <div class="settings-hint" data-i18n="pokeIdle.alertsFewBallsHint">Avisar cuando el total de bolas caiga por debajo de:</div>
-              </div>
-              <div style="display:flex; align-items:center; gap:8px;">
-                <input type="number" id="poke-alert-balls-threshold" min="0" style="width:70px;" />
-                <label class="switch"><input type="checkbox" id="poke-alert-balls" /><span class="slider"></span></label>
-              </div>
-            </div>
-          </div>
-
+      <section id="poke-section-calculadora" class="poke-section">
+        <h3 data-i18n="pokeIdle.tab.calculadora">Calculadora IV</h3>
+        <p class="settings-hint" data-i18n="pokeIdle.calcHint">
+          Fórmula real de Growth (IV) y Quality del juego, portada de tu propia calculadora. Elegí una captura o
+          un pokémon del equipo para auto-completar, o cargá los datos a mano.
+        </p>
+        <div class="settings-row">
+          <span data-i18n="pokeIdle.source">Fuente</span>
+          <select id="calc-source"></select>
         </div>
-      </div>
+        <div id="calc-manual-fields" class="poke-calc-manual">
+          <div class="settings-row">
+            <span data-i18n="pokeIdle.pokemon">Pokémon</span>
+            <select id="calc-species"></select>
+          </div>
+          <div class="settings-row">
+            <span data-i18n="pokeIdle.level">Nivel</span>
+            <input type="number" id="calc-level" min="1" max="200" />
+          </div>
+          <div class="settings-row">
+            <span data-i18n="pokeIdle.quality">Quality</span>
+            <input type="number" id="calc-quality" min="0" step="0.001" />
+          </div>
+          <div class="poke-calc-stat-grid">
+            <div><label>HP</label><input type="number" id="calc-stat-hp" /></div>
+            <div><label>ATK</label><input type="number" id="calc-stat-atk" /></div>
+            <div><label>DEF</label><input type="number" id="calc-stat-def" /></div>
+            <div><label>SpA</label><input type="number" id="calc-stat-spatk" /></div>
+            <div><label>SpD</label><input type="number" id="calc-stat-spdef" /></div>
+            <div><label>Vel</label><input type="number" id="calc-stat-speed" /></div>
+          </div>
+        </div>
+        <div class="settings-row">
+          <span data-i18n="pokeIdle.projLevel">Nivel de proyección</span>
+          <input type="number" id="calc-proj-level" min="1" max="200" value="100" />
+        </div>
+        <div id="calc-result"></div>
+      </section>
+
+      <section id="poke-section-caza" class="poke-section">
+        <h3 data-i18n="pokeIdle.tab.caza">Caza &amp; XP</h3>
+        <p class="settings-hint" data-i18n="pokeIdle.cazaHint">
+          XP/hora y oro/hora de cada especie cazable, con el multiplicador de daño real de tu atacante contra
+          cada tipo — igual que la Ruta de Farmeo de tu página, pero con tu equipo real.
+        </p>
+        <div class="settings-row">
+          <span data-i18n="pokeIdle.attacker">Atacante</span>
+          <select id="hunt-attacker"></select>
+        </div>
+        <div class="settings-row">
+          <span data-i18n="pokeIdle.killsPerHourField">Abates por hora</span>
+          <input type="number" id="hunt-kph" min="1" value="650" />
+        </div>
+        <div class="settings-row">
+          <span data-i18n="pokeIdle.sortBy">Ordenar por</span>
+          <select id="hunt-sort">
+            <option value="xp">XP/h</option>
+            <option value="gold">Oro/h</option>
+            <option value="matchup">Matchup</option>
+            <option value="level" data-i18n="pokeIdle.level">Nivel</option>
+          </select>
+        </div>
+        <div id="hunt-table-wrap" class="poke-hunt-table-wrap"></div>
+      </section>
+
+      <section id="poke-section-tierlist" class="poke-section">
+        <h3 data-i18n="pokeIdle.tab.tierlist">Tier List</h3>
+        <p class="settings-hint" data-i18n="pokeIdle.tierHint">
+          Ranking del roster completo por percentil de stats base (ofensa/bulk/velocidad), igual que tu página —
+          no representa un tier oficial del juego. Elegí un Pokémon para ver sus evoluciones y sus matchups de
+          tipo más fuertes/débiles.
+        </p>
+        <div class="settings-row">
+          <span data-i18n="pokeIdle.clan">Clan (bono x1.30 a ofensa/bulk de sus tipos)</span>
+          <select id="tier-clan"><option value="" data-i18n="pokeIdle.clanNone">Ninguno</option></select>
+        </div>
+        <div class="settings-row">
+          <span data-i18n="pokeIdle.filterByType">Filtrar por tipo</span>
+          <select id="tier-type"><option value="" data-i18n="pokeIdle.typeAll">Todos</option></select>
+        </div>
+        <div id="tier-list-wrap" class="poke-tier-wrap"></div>
+        <div id="tier-detail" class="poke-tier-detail"></div>
+      </section>
+
+      <section id="poke-section-drops" class="poke-section">
+        <h3 data-i18n="pokeIdle.tab.drops">Drops en vivo</h3>
+        <p class="settings-hint" data-i18n="pokeIdle.dropsHint">
+          Todo lo que sueltan tus kills en esta sesión, en tiempo real (mismo dato que alimenta el oro/hora) — a
+          precio NPC. El contador se reinicia solo cuando cambiás de zona de caza (mismo comportamiento que el
+          propio Hunt Analyzer del juego).
+        </p>
+        <div id="poke-drops-wrap"></div>
+      </section>
+
+      <section id="poke-section-capturas" class="poke-section">
+        <h3 data-i18n="pokeIdle.tab.capturas">Capturas destacadas</h3>
+        <p class="settings-hint" data-i18n="pokeIdle.capturasHint">Todo lo capturado en esta sesión, en tiempo real (últimas 100).</p>
+        <div id="poke-idle-notable" class="poke-notable-list"></div>
+      </section>
+
+      <section id="poke-section-alertas" class="poke-section">
+        <h3 data-i18n="pokeIdle.tab.alertas">Alertas</h3>
+        <div class="settings-row">
+          <span data-i18n="pokeIdle.alertsEnable">Activar notificaciones</span>
+          <label class="switch"><input type="checkbox" id="poke-alert-enabled" /><span class="slider"></span></label>
+        </div>
+        <div class="settings-row">
+          <span data-i18n="pokeIdle.alertsShiny">✨ Shiny (capturado o visto)</span>
+          <label class="switch"><input type="checkbox" id="poke-alert-shiny" /><span class="slider"></span></label>
+        </div>
+        <div class="settings-row">
+          <span data-i18n="pokeIdle.alertsRare">⭐ Capturas raras (Lendária o más)</span>
+          <label class="switch"><input type="checkbox" id="poke-alert-rare" /><span class="slider"></span></label>
+        </div>
+        <div class="settings-row">
+          <span data-i18n="pokeIdle.alertsDisconnect">🔌 Desconexión / reconexión</span>
+          <label class="switch"><input type="checkbox" id="poke-alert-disconnect" /><span class="slider"></span></label>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div data-i18n="pokeIdle.alertsFewBalls">🎯 Pocas bolas</div>
+            <div class="settings-hint" data-i18n="pokeIdle.alertsFewBallsHint">Avisar cuando el total de bolas caiga por debajo de:</div>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <input type="number" id="poke-alert-balls-threshold" min="0" style="width:70px;" />
+            <label class="switch"><input type="checkbox" id="poke-alert-balls" /><span class="slider"></span></label>
+          </div>
+        </div>
+      </section>
+
     </div>
   </div>
 

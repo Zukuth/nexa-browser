@@ -62,11 +62,10 @@ const dlClear = document.getElementById('dl-clear');
 const cmdkModal = document.getElementById('cmdk-modal');
 const cmdkInput = document.getElementById('cmdk-input');
 const cmdkListEl = document.getElementById('cmdk-list');
-const pokeIdleModal = document.getElementById('poke-idle-modal');
+const pokeIdlePanel = document.getElementById('poke-idle-panel');
 const btnClosePokeIdle = document.getElementById('btn-close-poke-idle');
 const tbPokeIdle = document.getElementById('tb-poke-idle');
-const pokeNavItems = document.querySelectorAll('.poke-nav-item');
-const pokePanes = document.querySelectorAll('.poke-pane');
+const pokeNavItems = document.querySelectorAll('.poke-drawer-nav .poke-nav-item');
 const pokeIdleTeamEl = document.getElementById('poke-idle-team');
 const calcSourceEl = document.getElementById('calc-source');
 const calcSpeciesEl = document.getElementById('calc-species');
@@ -233,6 +232,8 @@ const pwAddPass = document.getElementById('pw-add-pass');
 const pwAddSave = document.getElementById('pw-add-save');
 
 const pokeIdleSummaryEl = document.getElementById('poke-idle-summary');
+const pokeSummaryChartEl = document.getElementById('poke-summary-chart');
+const pokeChartCurrentEl = document.getElementById('poke-chart-current');
 const pokeIdleAccountsEl = document.getElementById('poke-idle-accounts');
 const pokeIdleNotableEl = document.getElementById('poke-idle-notable');
 const pokeAlertEnabled = document.getElementById('poke-alert-enabled');
@@ -395,7 +396,7 @@ function applyLanguage(lang) {
   if (!shortcutsModal.classList.contains('hidden')) renderShortcutsList();
   if (!bookmarksModal.classList.contains('hidden')) renderBookmarksList();
   if (!downloadsModal.classList.contains('hidden')) renderDownloadsList();
-  if (!pokeIdleModal.classList.contains('hidden')) {
+  if (pokeIdlePanel.classList.contains('open')) {
     renderPokeIdle();
     renderPokeIdleNotable();
     renderPokeIdleTeam();
@@ -1648,7 +1649,7 @@ function getCommandActions() {
     },
     {
       icon: '🎮', label: t('cmdk.openPokeIdle'), keywords: 'poke idle pokemon equipo capturas alertas',
-      run: () => openPokeIdleModal()
+      run: () => openPokeIdlePanel()
     }
   );
 
@@ -2075,7 +2076,12 @@ function savePokeIdleAlertFields() {
 });
 pokeAlertBallsThreshold.addEventListener('change', savePokeIdleAlertFields);
 
-// Mirrors RARITY_THRESHOLDS in game-telemetry.js, low to high.
+// Mirrors RARITY_THRESHOLDS in game-telemetry.js, low to high — used both
+// for coloring (below) and to rank-filter "Capturas destacadas" so a flood
+// of Comum/Incomum catches doesn't bury the ones actually worth looking at.
+const POKE_RARITY_ORDER = ['Fraca', 'Comum', 'Incomum', 'Rara', 'Épica', 'Lendária', 'Mythic', 'Ancient', 'Divine'];
+const POKE_NOTABLE_MIN_RANK = POKE_RARITY_ORDER.indexOf('Épica');
+
 const POKE_RARITY_COLORS = {
   'Fraca': '#6b7280',
   'Comum': '#9ca3af',
@@ -2210,7 +2216,11 @@ function renderPokeIdleNotable() {
     (gs.notableCaptures || []).forEach((c) => all.push({ ...c, accountName: displayName(account, i) }));
   });
   all.sort((a, b) => b.at - a.at);
-  const top = all.slice(0, 20);
+  // Only Épica and above make the cut (shiny always does too, regardless of
+  // its stat rarity — a shiny Comum is still worth seeing) so a run of
+  // ordinary catches doesn't push out the ones actually worth a look.
+  const notable = all.filter((c) => c.shiny || POKE_RARITY_ORDER.indexOf(c.rarity) >= POKE_NOTABLE_MIN_RANK);
+  const top = notable.slice(0, 20);
 
   if (top.length === 0) {
     el.innerHTML = `<div class="settings-hint">${t('pokeIdle.capturasEmpty')}</div>`;
@@ -2252,6 +2262,111 @@ function renderPokeIdleNotable() {
   });
 }
 
+// Rolling client-side history for the "tendencia" chart — the telemetry
+// backend only ever hands over the current rate, not a time series, so this
+// keeps its own trailing window. renderPokeIdle() (and so this) actually
+// gets called far more often than gameStats itself refreshes — once a
+// second via the general render() loop, on top of the dedicated 5s
+// gameStats poll — so a new *point* is only recorded when enough time has
+// passed since the last one; every other call just redraws the same
+// history (cheap, keeps the canvas in sync with e.g. a resize) without
+// flooding it with duplicate samples. ~40 points at that ~5s cadence is
+// roughly the last 3-4 minutes.
+const POKE_CHART_MAX_POINTS = 40;
+const POKE_CHART_SAMPLE_MS = 4500;
+let pokeKillsHistory = [];
+let pokeKillsHistoryLastPushAt = 0;
+
+function drawPokeSummaryChart(value) {
+  if (!pokeSummaryChartEl) return;
+  const now = Date.now();
+  if (now - pokeKillsHistoryLastPushAt >= POKE_CHART_SAMPLE_MS) {
+    pokeKillsHistoryLastPushAt = now;
+    pokeKillsHistory.push(value);
+    if (pokeKillsHistory.length > POKE_CHART_MAX_POINTS) pokeKillsHistory.shift();
+  }
+  if (pokeChartCurrentEl) pokeChartCurrentEl.textContent = formatCompactNumber(value) + ' ' + t('pokeIdle.killsPerHour');
+
+  const canvas = pokeSummaryChartEl;
+  const cssWidth = canvas.clientWidth || 300;
+  const cssHeight = canvas.clientHeight || 120;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = cssWidth * dpr;
+  canvas.height = cssHeight * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+  const points = pokeKillsHistory;
+  const padTop = 10, padBottom = 18, padX = 4;
+  const plotW = cssWidth - padX * 2;
+  const plotH = cssHeight - padTop - padBottom;
+  const maxV = Math.max(...points, 1);
+  const minV = Math.min(...points, 0);
+  const range = Math.max(maxV - minV, 1);
+
+  const styles = getComputedStyle(document.documentElement);
+  const accent = styles.getPropertyValue('--accent').trim() || '#4f8cff';
+  const border = styles.getPropertyValue('--border').trim() || '#333';
+  const muted = styles.getPropertyValue('--muted').trim() || '#888';
+
+  // Gridlines: 3 horizontal guides, faint.
+  ctx.strokeStyle = border;
+  ctx.lineWidth = 1;
+  ctx.font = '9px sans-serif';
+  ctx.fillStyle = muted;
+  for (let i = 0; i <= 2; i++) {
+    const y = padTop + (plotH / 2) * i;
+    ctx.globalAlpha = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(padX, y);
+    ctx.lineTo(cssWidth - padX, y);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    const label = formatCompactNumber(Math.round(maxV - (range / 2) * i));
+    ctx.fillText(label, padX, y - 3);
+  }
+
+  if (points.length < 2) return;
+
+  const stepX = plotW / (POKE_CHART_MAX_POINTS - 1);
+  const startIdx = POKE_CHART_MAX_POINTS - points.length;
+  const xAt = (i) => padX + (startIdx + i) * stepX;
+  const yAt = (v) => padTop + plotH - ((v - minV) / range) * plotH;
+
+  // Smooth-ish line via quadratic midpoints between samples.
+  ctx.beginPath();
+  ctx.moveTo(xAt(0), yAt(points[0]));
+  for (let i = 1; i < points.length; i++) {
+    const midX = (xAt(i - 1) + xAt(i)) / 2;
+    const midY = (yAt(points[i - 1]) + yAt(points[i])) / 2;
+    ctx.quadraticCurveTo(xAt(i - 1), yAt(points[i - 1]), midX, midY);
+  }
+  ctx.lineTo(xAt(points.length - 1), yAt(points[points.length - 1]));
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+
+  // Gradient fill under the line, down to the plot's bottom edge.
+  ctx.lineTo(xAt(points.length - 1), padTop + plotH);
+  ctx.lineTo(xAt(0), padTop + plotH);
+  ctx.closePath();
+  const gradient = ctx.createLinearGradient(0, padTop, 0, padTop + plotH);
+  gradient.addColorStop(0, accent + '55');
+  gradient.addColorStop(1, accent + '00');
+  ctx.fillStyle = gradient;
+  ctx.fill();
+
+  // Highlight the latest point.
+  const lastX = xAt(points.length - 1);
+  const lastY = yAt(points[points.length - 1]);
+  ctx.beginPath();
+  ctx.arc(lastX, lastY, 3.5, 0, Math.PI * 2);
+  ctx.fillStyle = accent;
+  ctx.fill();
+}
+
 function renderPokeIdle() {
   if (!pokeIdleSummaryEl || !pokeIdleAccountsEl) return;
   const tracked = state.accounts.filter((a) => !a.closed && gameStats[a.id]);
@@ -2279,6 +2394,7 @@ function renderPokeIdle() {
     <div class="poke-summary-card"><div class="poke-summary-value">${formatCompactNumber(totalCaptures)}</div><div class="poke-summary-label">${t('pokeIdle.capturesPerHour')}</div></div>
     <div class="poke-summary-card"><div class="poke-summary-value">✨ ${totalShiny}</div><div class="poke-summary-label">${t('pokeIdle.shiny')}</div></div>
   `;
+  drawPokeSummaryChart(totalKills);
 
   pokeIdleAccountsEl.innerHTML = '';
   tracked.forEach((a) => {
@@ -2354,23 +2470,21 @@ function effectivenessBoxHtml(type1, type2) {
   return `<div class="poke-eff-box"><span class="poke-eff-title">${t('pokeIdle.damageBoxTitle')}</span><div class="poke-eff-chips">${chips}</div></div>`;
 }
 
-function activatePokeTab(tab) {
-  pokeNavItems.forEach((n) => n.classList.toggle('active', n.dataset.pokeTab === tab));
-  pokePanes.forEach((p) => p.classList.toggle('active', p.dataset.pokePane === tab));
-}
-
+// Every section lives in the drawer at once now — the nav pills just
+// scroll to their section instead of switching which pane is visible.
 pokeNavItems.forEach((navItem) => {
   navItem.addEventListener('click', () => {
-    activatePokeTab(navItem.dataset.pokeTab);
-    if (navItem.dataset.pokeTab === 'caza') runHuntTable();
-    if (navItem.dataset.pokeTab === 'tierlist') { populateTierFilters().then(renderTierList); }
-    if (navItem.dataset.pokeTab === 'drops') renderPokeIdleDrops();
+    document.getElementById('poke-section-' + navItem.dataset.pokeScroll)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 });
 
-function openPokeIdleModal() {
-  pokeIdleModal.classList.remove('hidden');
-  pushModal();
+// The panel is a docked drawer, not a modal: no pushModal()/hideViews()
+// here on purpose, since the whole point is being able to keep clicking
+// the account underneath while it's open. All 8 sections render once on
+// open — there's no lazy per-tab render anymore since nothing is hidden.
+function openPokeIdlePanel() {
+  pokeIdlePanel.classList.add('open');
   renderPokeIdle();
   renderPokeIdleNotable();
   renderPokeIdleTeam();
@@ -2378,19 +2492,19 @@ function openPokeIdleModal() {
   loadPokeIdleAlertFields();
   populateCalcSourceDropdown();
   populateHuntAttackerDropdown();
+  runHuntTable();
   populateTierFilters().then(renderTierList);
 }
 
-function closePokeIdleModal() {
-  pokeIdleModal.classList.add('hidden');
-  popModal();
+function closePokeIdlePanel() {
+  pokeIdlePanel.classList.remove('open');
 }
 
-tbPokeIdle.addEventListener('click', openPokeIdleModal);
-btnClosePokeIdle.addEventListener('click', closePokeIdleModal);
-pokeIdleModal.addEventListener('mousedown', (e) => {
-  if (e.target === pokeIdleModal) closePokeIdleModal();
+tbPokeIdle.addEventListener('click', () => {
+  if (pokeIdlePanel.classList.contains('open')) closePokeIdlePanel();
+  else openPokeIdlePanel();
 });
+btnClosePokeIdle.addEventListener('click', closePokeIdlePanel);
 
 function renderPokeIdleTeam() {
   if (!pokeIdleTeamEl) return;
@@ -3323,7 +3437,7 @@ setInterval(async () => {
 
 setInterval(async () => {
   gameStats = await window.api.getGameStats();
-  if (!pokeIdleModal.classList.contains('hidden')) {
+  if (pokeIdlePanel.classList.contains('open')) {
     renderPokeIdle();
     renderPokeIdleNotable();
     renderPokeIdleTeam();

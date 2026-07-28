@@ -1560,6 +1560,40 @@ html, body {
   margin-top: 2px;
 }
 
+.poke-chart-wrap {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px 6px;
+  margin-top: 10px;
+}
+
+.poke-chart-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 6px;
+}
+
+#poke-chart-current {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+#poke-summary-chart {
+  display: block;
+  width: 100%;
+  height: 120px;
+}
+
 .poke-account-item {
   display: flex;
   align-items: center;
@@ -1669,11 +1703,83 @@ html, body {
   to { opacity: 1; transform: translateY(0); }
 }
 
-.poke-idle-modal {
-  width: 860px;
-  max-height: 84vh;
-  padding: 0;
-  overflow: hidden;
+/* Poke Idle World panel: a docked drawer, not a modal — stays open while
+   the user keeps playing/clicking the account underneath (no backdrop, no
+   pushModal()/hideViews() — see renderer.js). Every section is mounted and
+   rendered at once instead of hiding behind tabs. */
+.poke-drawer {
+  position: fixed;
+  top: 44px;
+  right: 0;
+  bottom: 0;
+  width: 46vw;
+  min-width: 460px;
+  max-width: min(820px, calc(100vw - 40px));
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  box-shadow: -8px 0 24px rgba(0,0,0,0.25);
+  z-index: 55;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.22s ease-out;
+}
+
+.poke-drawer.open {
+  transform: translateX(0);
+}
+
+.poke-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.poke-drawer-header .modal-title {
+  margin-bottom: 0;
+}
+
+.poke-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 20px 24px;
+}
+
+.poke-drawer-nav {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 14px 0;
+  background: var(--panel);
+  z-index: 1;
+}
+
+.poke-drawer-nav .poke-nav-item {
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.poke-section {
+  padding: 18px 0;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.poke-section:first-of-type {
+  border-top: none;
+}
+
+.poke-section h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 2px;
 }
 
 .poke-calc-manual.hidden {
