@@ -71,7 +71,6 @@ const DEFAULT_DATA = {
     newSpaceDefaultLayout: 'grid',
     downloadsFolder: null,
     askDownloadLocation: false,
-    autoCheckUpdates: true,
     allMuted: false,
     extensions: [],
     maximizedAccountId: null,

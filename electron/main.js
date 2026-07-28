@@ -5,7 +5,6 @@ const https = require('https');
 const crypto = require('crypto');
 const extractZip = require('extract-zip');
 const store = require('./store');
-const { autoUpdater } = require('electron-updater');
 const { GAP, GRID_MAX_PANELS, MIN_SPLIT_FRAC, resolveFracs, cellsForMode, freeCells, normalizeFracsWithMin } = require('./layout-utils');
 const gameTelemetry = require('./game-telemetry');
 const pokeFormulas = require('./poke-formulas');
@@ -2440,8 +2439,7 @@ const SETTINGS_UPDATE_WHITELIST = new Set([
   'defaultStartUrl',
   'defaultZoom',
   'newSpaceDefaultLayout',
-  'askDownloadLocation',
-  'autoCheckUpdates'
+  'askDownloadLocation'
 ]);
 
 ipcMain.handle('settings:update', (_e, fields) => {
@@ -2472,20 +2470,6 @@ ipcMain.handle('settings:chooseDownloadsFolder', async () => {
   return data;
 });
 
-autoUpdater.autoDownload = true;
-autoUpdater.autoInstallOnAppQuit = true;
-
-function sendUpdateStatus(status, extra = {}) {
-  if (mainWindowAlive()) mainWindow.webContents.send('update:status', { status, ...extra });
-}
-
-autoUpdater.on('checking-for-update', () => sendUpdateStatus('checking'));
-autoUpdater.on('update-available', (info) => sendUpdateStatus('available', { version: info.version }));
-autoUpdater.on('update-not-available', () => sendUpdateStatus('not-available'));
-autoUpdater.on('download-progress', (p) => sendUpdateStatus('downloading', { percent: Math.round(p.percent) }));
-autoUpdater.on('update-downloaded', (info) => sendUpdateStatus('downloaded', { version: info.version }));
-autoUpdater.on('error', (err) => sendUpdateStatus('error', { message: err?.message || String(err) }));
-
 ipcMain.handle('plugins:list', () => {
   const lang = data.settings.language || 'es';
   return [
@@ -2504,16 +2488,6 @@ ipcMain.handle('plugins:list', () => {
       enabled: true
     }
   ];
-});
-
-ipcMain.handle('settings:checkUpdates', () => {
-  if (!app.isPackaged) return { devMode: true };
-  autoUpdater.checkForUpdates().catch((err) => sendUpdateStatus('error', { message: err?.message || String(err) }));
-  return { checking: true };
-});
-
-ipcMain.handle('settings:installUpdate', () => {
-  autoUpdater.quitAndInstall();
 });
 
 ipcMain.handle('settings:exportSpaces', async () => {
@@ -2947,10 +2921,6 @@ app.whenReady().then(() => {
     // upgrades it to the fuller cached/fresh list a moment later.
     loadCachedBlocklist().then(refreshBlocklistIfStale);
   });
-
-  if (app.isPackaged && data.settings.autoCheckUpdates !== false) {
-    setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 5000);
-  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

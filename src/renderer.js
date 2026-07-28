@@ -207,9 +207,6 @@ const setDefaultLayout = document.getElementById('set-default-layout');
 const setDownloadsFolderLabel = document.getElementById('set-downloads-folder-label');
 const setChooseFolder = document.getElementById('set-choose-folder');
 const setAskDownload = document.getElementById('set-ask-download');
-const setAutoUpdate = document.getElementById('set-auto-update');
-const setCheckUpdates = document.getElementById('set-check-updates');
-const setUpdateStatus = document.getElementById('set-update-status');
 const verApp = document.getElementById('ver-app');
 const verElectron = document.getElementById('ver-electron');
 const verChrome = document.getElementById('ver-chrome');
@@ -1918,8 +1915,6 @@ function openSettingsModal() {
   setDefaultLayout.value = s.newSpaceDefaultLayout || 'single';
   setDownloadsFolderLabel.textContent = s.downloadsFolder || t('settings.downloadsFolderDefault');
   setAskDownload.checked = !!s.askDownloadLocation;
-  setAutoUpdate.checked = s.autoCheckUpdates !== false;
-  setUpdateStatus.textContent = '';
 
   const versions = window.api.getVersions();
   verApp.textContent = versions.app;
@@ -3121,49 +3116,9 @@ setAskDownload.addEventListener('change', () => {
   window.api.updateSettings({ askDownloadLocation: setAskDownload.checked });
 });
 
-setAutoUpdate.addEventListener('change', () => {
-  window.api.updateSettings({ autoCheckUpdates: setAutoUpdate.checked });
-});
-
 setChooseFolder.addEventListener('click', async () => {
   const data = await window.api.chooseDownloadsFolder();
   setDownloadsFolderLabel.textContent = data.settings.downloadsFolder || t('settings.downloadsFolderDefault');
-});
-
-setCheckUpdates.addEventListener('click', async () => {
-  setUpdateStatus.textContent = t('update.checking');
-  const result = await window.api.checkUpdates();
-  if (result.devMode) setUpdateStatus.textContent = t('update.devMode');
-});
-
-// electron-updater's raw error message is a low-level network/HTTP string —
-// not fit to show as-is. Bucket it into "no connection" vs "nothing
-// published yet" (e.g. a 404 on latest.yml, which happens if a release was
-// created without running electron-builder's --publish) vs a generic
-// fallback that still surfaces the raw message for debugging.
-function classifyUpdateError(message) {
-  const msg = (message || '').toLowerCase();
-  if (/(enotfound|econnrefused|etimedout|network|dns)/.test(msg)) return t('update.errorNoConnection');
-  if (/(404|cannot find latest|no published)/.test(msg)) return t('update.errorNoRelease');
-  return t('update.error', { message });
-}
-
-window.api.onUpdateStatus((d) => {
-  if (d.status === 'downloaded') {
-    setUpdateStatus.innerHTML = '';
-    const label = document.createElement('span');
-    label.textContent = t('update.versionReady', { version: d.version });
-    const restartBtn = document.createElement('button');
-    restartBtn.textContent = t('update.restartToUpdate');
-    restartBtn.onclick = () => window.api.installUpdate();
-    setUpdateStatus.append(label, restartBtn);
-    return;
-  }
-  if (d.status === 'checking') { setUpdateStatus.textContent = t('update.checking'); return; }
-  if (d.status === 'not-available') { setUpdateStatus.textContent = t('update.notAvailable'); return; }
-  if (d.status === 'available') { setUpdateStatus.textContent = t('update.available', { version: d.version }); return; }
-  if (d.status === 'downloading') { setUpdateStatus.textContent = t('update.downloading', { percent: d.percent }); return; }
-  if (d.status === 'error') { setUpdateStatus.textContent = classifyUpdateError(d.message); return; }
 });
 
 setExportSpaces.addEventListener('click', async () => {
