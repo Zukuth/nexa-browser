@@ -222,17 +222,23 @@ function applyProxy(ses, account) {
 
 // A standard desktop Chrome UA — without this, Electron's default UA includes
 // "Electron/x.x.x", which some sites detect and block or serve a broken page for.
-// The Chrome version MUST come from process.versions.chrome (the actual
-// Chromium build this Electron ships), never a hardcoded number: a stale
-// literal here (this one said "131" while Electron 43 actually ships
-// Chromium 150) makes the legacy UA string disagree with
-// navigator.userAgentData/Client Hints, which Chromium always derives from
-// the real version — Cloudflare Turnstile cross-checks exactly that pair and
-// treats a mismatch as a strong bot signal. Confirmed live: this UA/Client-Hints
-// mismatch, not the fingerprint-noise code, was the actual cause of Turnstile
-// error 600010 blocking login on fresh installs.
-const CHROME_UA =
-  `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36`;
+// Real Chrome's UA string has been "reduced" since Chrome ~100: the trailing
+// three version components are always frozen to ".0.0.0" (e.g.
+// "Chrome/150.0.0.0"), even though the actual build is far more granular
+// (e.g. 150.0.7871.129) — that full build only ever appears in
+// navigator.userAgentData's high-entropy values, never in the plain UA
+// string. The previous version of this fix used process.versions.chrome
+// verbatim (the full build number) in the UA string itself, which is
+// exactly backwards: it made Nexa's UA string MORE granular than any real
+// Chrome install ever sends, a mismatch Cloudflare Turnstile's server-side
+// UA parsing can check directly from the raw request header, no JS
+// fingerprinting required. Confirmed against github.com/soufoka/PokeGrid,
+// a different Electron app for this same game whose login isn't blocked —
+// its whole fix is exactly this: strip "Electron/..." and freeze the Chrome
+// version at ".0.0.0". Still derived from process.versions.chrome (so it
+// tracks Electron/Chromium upgrades automatically), just frozen the same
+// way real Chrome freezes it.
+const CHROME_UA = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome.split('.')[0]}.0.0.0 Safari/537.36`;
 
 const RAIL_WIDTH = 56;
 const SIDEBAR_WIDTH_EXPANDED = 260;
