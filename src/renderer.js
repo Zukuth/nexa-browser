@@ -832,6 +832,13 @@ function reconcileWebviews() {
     wv.setAttribute('partition', 'persist:account-' + account.id);
     wv.setAttribute('preload', appMeta.accountPreloadUrl);
     wv.setAttribute('webpreferences', 'contextIsolation=yes,sandbox=yes');
+    // <webview> blocks window.open()/new-window entirely by default, no
+    // matter what setWindowOpenHandler on the main-process side returns —
+    // this attribute is the separate, additional opt-in <webview> itself
+    // needs. Without it, "Continue with Google" (and any other
+    // window.open()-based popup, e.g. some payment flows) silently never
+    // opens a window at all.
+    wv.setAttribute('allowpopups', '');
     // Starts on about:blank on purpose — main's did-attach-webview handler
     // (wireAccountWebContents) needs to finish wiring this webContents
     // (session, CDP telemetry, listeners) before the real navigation

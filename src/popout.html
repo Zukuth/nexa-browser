@@ -21,6 +21,7 @@
     wv.setAttribute('partition', info.partition);
     wv.setAttribute('preload', info.preload);
     wv.setAttribute('webpreferences', 'contextIsolation=yes,sandbox=yes');
+    wv.setAttribute('allowpopups', '');
     wv.src = 'about:blank';
     document.body.appendChild(wv);
 
