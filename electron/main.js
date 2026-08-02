@@ -3259,47 +3259,29 @@ async function refreshGameWalletSnapshots() {
   await Promise.allSettled(tasks);
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 async function pulseGameRealtimeConnection(wc) {
   const report = { ok: false, pulsed: false };
   if (!wc || wc.isDestroyed()) return { ...report, error: 'webContents no disponible' };
-  if (!wc.debugger || !wc.debugger.isAttached()) return { ...report, error: 'debugger no adjunto' };
   try {
-    // Buying through Nexa hits the same server API, but the game's Depot UI
-    // keeps its own live WebSocket-backed state. A very short offline/online
-    // pulse makes the game reconnect and receive a fresh `pokes`/`inventory`
-    // snapshot without reloading the page or asking the user to relog.
-    await wc.debugger.sendCommand('Network.emulateNetworkConditions', {
-      offline: true,
-      latency: 0,
-      downloadThroughput: 0,
-      uploadThroughput: 0,
-      connectionType: 'none'
-    });
+    // Used to force a real offline/online pulse via CDP Network conditions
+    // to make the game's WS reconnect. Dropped: that's a genuine navigator
+    // network state change, and the game's own client treats any WS
+    // reconnect as a connection-loss event — it kicks the user back to the
+    // shop/depot as a "safe" screen, killing the farming session it was
+    // supposed to unstick. Any way of forcing a reconnect (real network
+    // drop or closing the socket from JS) hits the same client-side
+    // handler, so the fix is to stop forcing reconnects at all and only
+    // send soft wake events the game's own polling/visibility logic may
+    // pick up on its own schedule.
+    await wc.executeJavaScript(`
+      try {
+        window.dispatchEvent(new Event('focus'));
+        window.dispatchEvent(new CustomEvent('nexa-reconnect', { detail: { reason: 'pulse' } }));
+      } catch(e) {}
+    `);
     report.pulsed = true;
-    await sleep(260);
-    await wc.debugger.sendCommand('Network.emulateNetworkConditions', {
-      offline: false,
-      latency: 0,
-      downloadThroughput: -1,
-      uploadThroughput: -1,
-      connectionType: 'wifi'
-    });
-    await sleep(850);
     return { ...report, ok: true };
   } catch (err) {
-    try {
-      await wc.debugger.sendCommand('Network.emulateNetworkConditions', {
-        offline: false,
-        latency: 0,
-        downloadThroughput: -1,
-        uploadThroughput: -1,
-        connectionType: 'wifi'
-      });
-    } catch {}
     return { ...report, error: String((err && err.message) || err) };
   }
 }
@@ -3710,13 +3692,6 @@ function startFreezeDetectorLoop() {
       frozenNotifiedAt.set(account.id, Date.now());
       console.log('[freeze-detector] account', account.id, 'silent for', Math.round(silent / 1000), 's — nudging WS');
       pulseGameRealtimeConnection(wc).catch(() => {});
-      // Also dispatch a focus event inside the page to wake React handlers.
-      wc.executeJavaScript(`
-        try {
-          window.dispatchEvent(new Event('focus'));
-          window.dispatchEvent(new CustomEvent('nexa-reconnect', { detail: { reason: 'freeze-detector' } }));
-        } catch(e) {}
-      `).catch(() => {});
     }
   }, 60 * 1000); // check every minute
 }

@@ -934,7 +934,17 @@ function reconcileWebviews() {
     wv.dataset.id = account.id;
     wv.setAttribute('partition', 'persist:account-' + account.id);
     wv.setAttribute('preload', appMeta.accountPreloadUrl);
-    wv.setAttribute('webpreferences', 'contextIsolation=yes,sandbox=yes');
+    // backgroundThrottling=no: inactive-panel <webview>s go display:none
+    // (see .hidden-panel in style.css), and Chromium's default background
+    // throttling treats that like any hidden/backgrounded page — rAF nearly
+    // stops and setInterval/setTimeout clamp down hard after a few minutes
+    // hidden. That silently starves the game's own WS keepalive/ping timer,
+    // the server times the connection out, and the character shows up
+    // "frozen" next time that panel is viewed. poke-idle-launcher (the
+    // reference project cited in game-telemetry.js) hits the same problem
+    // and fixes it the same way: keep the renderer's timers running at full
+    // speed regardless of paint visibility.
+    wv.setAttribute('webpreferences', 'contextIsolation=yes,sandbox=yes,backgroundThrottling=no');
     // <webview> blocks window.open()/new-window entirely by default, no
     // matter what setWindowOpenHandler on the main-process side returns —
     // this attribute is the separate, additional opt-in <webview> itself

@@ -87,6 +87,14 @@ Para quienes juegan [Poke Idle World](https://poke.idleworld.online), Nexa Brows
 
 **Requisitos:** Windows 10/11, 64 bits.
 
+### Si Windows bloquea la instalación por completo
+
+Como el instalador no tiene certificado de firma de código, en algunos equipos con Windows 11 puede aparecer un aviso de **"Control Inteligente de Aplicaciones"** que bloquea la app sin dar la opción de "Ejecutar de todas formas" (a diferencia del aviso normal de SmartScreen). Si te pasa eso:
+
+`Configuración → Privacidad y seguridad → Seguridad de Windows → Control de aplicaciones y del explorador → Control inteligente de aplicaciones → Apagado`
+
+⚠️ Esta función, una vez desactivada, **no se puede volver a activar sin reinstalar Windows desde cero** — es una decisión de una sola vía. Solo desactivala si confiás en el origen del instalador.
+
 ## Atajos de teclado
 
 | Atajo | Acción |
