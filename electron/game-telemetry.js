@@ -28,6 +28,7 @@
 const GAME_HOSTNAME = 'poke.idleworld.online';
 const HEARTBEAT_STALE_MS = 60_000;
 const HEARTBEAT_CHECK_MS = 15_000;
+const MAX_REASONABLE_DIAMONDS = 10_000_000;
 
 // Configurable from the "Poke Idle" settings tab (Fase C alerts).
 let ballsLowThreshold = 20;
@@ -88,7 +89,7 @@ function emptyLive() {
   };
 }
 
-const NOTABLE_CAPTURE_CAP = 100;
+const NOTABLE_CAPTURE_CAP = 30;
 const NOTABLE_RARITIES = new Set(['Lendária', 'Mythic', 'Ancient', 'Divine']);
 
 // One of these per account id that's ever matched isGameUrl().
@@ -98,6 +99,7 @@ function newState() {
     live: emptyLive(),
     huntKey: null,
     team: [],
+    wallet: { gold: null, goldSource: null, diamonds: null, diamondsSource: null, updatedAt: null },
     lastFrameTs: null,
     lastEvent: null // {type, at, payload} — most recent alert-worthy thing, for Fase C
   };
@@ -134,6 +136,7 @@ let itemPriceByName = null; // item name -> npcPrice (some events only give a na
 let itemNameById = null; // itemId -> name, for resolving field-kill loot (which only carries itemId+qty) into a readable drops list
 let itemIconById = null; // itemId -> icon URL, for the "Drops en vivo" panel
 let itemIconByName = null; // item name -> icon URL, for namedLoot (profession-photo)
+let itemCatalogItems = null; // enriched raw item rows for UI tools such as Pokepedia drops
 let itemPriceCatalogPromise = null;
 function ensureItemPriceCatalog() {
   if (itemPriceCatalog || itemPriceCatalogPromise) return itemPriceCatalogPromise;
@@ -145,8 +148,10 @@ function ensureItemPriceCatalog() {
       const nameById = new Map();
       const iconById = new Map();
       const iconByName = new Map();
+      const enrichedItems = [];
       for (const item of (data && data.items) || []) {
         if (item && item.id != null && typeof item.npcPrice === 'number') {
+          let iconUrl = null;
           byId.set(item.id, item.npcPrice);
           if (item.name) { byName.set(item.name, item.npcPrice); nameById.set(item.id, item.name); }
           // The game's own items.json serves icon as either a full external
@@ -154,10 +159,17 @@ function ensureItemPriceCatalog() {
           // (/assets/stones/...) — resolve the relative case here so the
           // renderer always gets a ready-to-use absolute URL.
           if (item.icon) {
-            const iconUrl = /^https?:\/\//.test(item.icon) ? item.icon : `https://${GAME_HOSTNAME}${item.icon}`;
+            iconUrl = /^https?:\/\//.test(item.icon) ? item.icon : `https://${GAME_HOSTNAME}${item.icon}`;
             iconById.set(item.id, iconUrl);
             if (item.name) iconByName.set(item.name, iconUrl);
           }
+          enrichedItems.push({
+            ...item,
+            icon: iconUrl,
+            iconUrl,
+            category: item.category || item.type || item.kind || null,
+            description: item.description || item.desc || ''
+          });
         }
       }
       itemPriceCatalog = byId;
@@ -165,6 +177,7 @@ function ensureItemPriceCatalog() {
       itemNameById = nameById;
       itemIconById = iconById;
       itemIconByName = iconByName;
+      itemCatalogItems = enrichedItems;
     })
     .catch((err) => {
       console.error('[game-telemetry] no se pudo cargar el catálogo de precios de items', err);
@@ -184,7 +197,13 @@ function ensureItemPriceCatalog() {
 // experience, loot), not just name/rarity/attacks.
 let creatureCatalog = null; // pokeId (== speciesId in poke-delta/pokes frames) -> full creatures.json record
 let creatureCatalogPromise = null;
-function ensureCreatureCatalog() {
+let creatureCatalogUpdatedAt = null;
+function ensureCreatureCatalog(forceRefresh = false) {
+  if (forceRefresh) {
+    creatureCatalog = null;
+    creatureCatalogPromise = null;
+    creatureCatalogUpdatedAt = null;
+  }
   if (creatureCatalog || creatureCatalogPromise) return creatureCatalogPromise;
   creatureCatalogPromise = fetch(`https://${GAME_HOSTNAME}/game/creatures.json`)
     .then((res) => res.json())
@@ -194,6 +213,7 @@ function ensureCreatureCatalog() {
         if (c && c.pokeId != null) byId.set(c.pokeId, c);
       }
       creatureCatalog = byId;
+      creatureCatalogUpdatedAt = Date.now();
     })
     .catch((err) => {
       console.error('[game-telemetry] no se pudo cargar el catálogo de criaturas', err);
@@ -206,8 +226,35 @@ function getCreatureCatalogArray() {
   return creatureCatalog ? Array.from(creatureCatalog.values()) : [];
 }
 
+function getCreatureCatalogMeta() {
+  const list = getCreatureCatalogArray();
+  const maxId = list.reduce((max, c) => Math.max(max, Number(c.pokeId) || 0), 0);
+  return {
+    count: list.length,
+    maxId,
+    updatedAt: creatureCatalogUpdatedAt
+  };
+}
+
 function getItemPriceByNameMap() {
   return itemPriceByName;
+}
+
+// For the sell-lock item picker (main.js) — needs id+name+icon together,
+// which the three separate itemXById/itemXByName maps above don't give in
+// one shape. Only meaningful after ensureItemPriceCatalog() has resolved.
+function getItemCatalogArray() {
+  if (itemCatalogItems) return itemCatalogItems.map((item) => ({ ...item }));
+  if (!itemNameById) return [];
+  return Array.from(itemNameById.entries()).map(([id, name]) => ({
+    id,
+    name,
+    icon: itemIconById.get(id) || null,
+    iconUrl: itemIconById.get(id) || null,
+    npcPrice: itemPriceCatalog.get(id) ?? null,
+    category: null,
+    description: ''
+  }));
 }
 
 function learnedMoves(speciesId, level) {
@@ -221,9 +268,88 @@ function learnedMoves(speciesId, level) {
 // Mirrors the documented frame-type behavior of game-parse.js — not its code.
 // Unknown/future frame types are ignored rather than throwing: the game is
 // under active development and its schema can change without notice.
+function parseWalletAmount(value) {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const suffix = raw.match(/[kmb]$/i)?.[0]?.toLowerCase();
+  const multiplier = suffix === 'k' ? 1_000 : suffix === 'm' ? 1_000_000 : suffix === 'b' ? 1_000_000_000 : 1;
+  const cleaned = raw
+    .replace(/[^\d.,-]/g, '')
+    .replace(/\.(?=\d{3}(?:\D|$))/g, '')
+    .replace(/,(?=\d{3}(?:\D|$))/g, '')
+    .replace(',', '.');
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? Math.round(n * multiplier) : null;
+}
+
+function mergeWallet(state, wallet) {
+  if (!state || !wallet || typeof wallet !== 'object') return;
+  const gold = parseWalletAmount(wallet.gold ?? wallet.money ?? wallet.cash ?? wallet.dollars ?? wallet.ouro);
+  const diamonds = parseWalletAmount(wallet.diamonds ?? wallet.diamond ?? wallet.diamantes);
+  if (gold == null && diamonds == null) return;
+  state.wallet = state.wallet || { gold: null, goldSource: null, diamonds: null, diamondsSource: null, updatedAt: null };
+  let changed = false;
+  if (gold != null) {
+    const existingGold = Number(state.wallet.gold);
+    const trustedGold = wallet.goldSource === 'visual-shop' || wallet.goldSource === 'visual-hud' || wallet.walletSource === 'visual';
+    const suspiciousDrop = Number.isFinite(existingGold) && existingGold >= 100_000 && gold < existingGold * 0.1 && !trustedGold;
+    if (!suspiciousDrop) {
+      state.wallet.gold = gold;
+      state.wallet.goldSource = trustedGold ? (wallet.goldSource || 'visual') : 'frame';
+      changed = true;
+    }
+  }
+  if (
+    wallet.diamondsSource === 'diamond-store' &&
+    diamonds != null &&
+    diamonds >= 0 &&
+    diamonds <= MAX_REASONABLE_DIAMONDS
+  ) {
+    state.wallet.diamonds = diamonds;
+    state.wallet.diamondsSource = 'diamond-store';
+    changed = true;
+  }
+  if (changed) state.wallet.updatedAt = Date.now();
+}
+
+function extractWalletFromObject(value, depth = 0) {
+  if (!value || typeof value !== 'object' || depth > 5) return null;
+  const wallet = {};
+  for (const [key, raw] of Object.entries(value)) {
+    const low = key.toLowerCase();
+    if (raw != null && typeof raw !== 'object') {
+      if (['gold', 'money', 'cash', 'dollars', 'ouro'].includes(low)) wallet.gold = raw;
+      if (['diamonds', 'diamond', 'diamantes'].includes(low)) wallet.diamonds = raw;
+    }
+    if (raw && typeof raw === 'object') {
+      const nested = extractWalletFromObject(raw, depth + 1);
+      if (nested) {
+        if (wallet.gold == null && nested.gold != null) wallet.gold = nested.gold;
+        if (wallet.diamonds == null && nested.diamonds != null) wallet.diamonds = nested.diamonds;
+      }
+    }
+  }
+  return wallet.gold != null || wallet.diamonds != null ? wallet : null;
+}
+
+// Frame types that explicitly carry the player's own wallet balance (not
+// market prices or reward amounts that look like wallet values).
+const WALLET_FRAME_TYPES = new Set(['player', 'balance', 'wallet', 'trainer', 'account']);
+
 function applyFrame(state, msg) {
   if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') return;
   const L = state.live;
+  const walletExtract = extractWalletFromObject(msg);
+  if (walletExtract && WALLET_FRAME_TYPES.has(msg.type)) {
+    // Mark as trusted so the renderer shows it instead of hiding it as a
+    // potentially-spurious frame value. These frame types come straight from
+    // the server's player-state push, not from item rewards or market events.
+    walletExtract.goldSource = 'visual-hud';
+    walletExtract.walletSource = 'visual';
+  }
+  mergeWallet(state, walletExtract);
 
   switch (msg.type) {
     case 'field-init': {
@@ -261,7 +387,7 @@ function applyFrame(state, msg) {
 
       L.captures += 1;
       if (typeof poke.sellValue === 'number') L.captureGold += poke.sellValue;
-      const rarity = poke.rarity || rarityFromQuality(poke.quality);
+      const rarity = rarityFromQuality(poke.quality) || poke.rarity;
       if (rarity) L.byRarity[rarity] = (L.byRarity[rarity] || 0) + 1;
       {
         L.notableCaptures.unshift({
@@ -355,6 +481,11 @@ function applyFrame(state, msg) {
       // Real per-item quantities ({itemId, quantity}), same itemId space as
       // loot/balls — cross-referenced against the ball catalog (from the
       // 'balls' frame above) to get the real ball count for the low/out alert.
+      if (Array.isArray(msg.items)) {
+        state.inventoryItems = msg.items
+          .filter((it) => it && it.itemId != null)
+          .map((it) => ({ itemId: it.itemId, quantity: Number(it.quantity) || 0 }));
+      }
       if (Array.isArray(msg.items) && state.ballCatalog) {
         const ballIds = new Set(state.ballCatalog.map((b) => b.id));
         const total = msg.items
@@ -449,9 +580,30 @@ function computeRates(state) {
     notableCaptures: L.notableCaptures,
     team: (state.team || []).map((p) => ({ ...p, moves: learnedMoves(p.speciesId, p.level) })),
     collectionSize: state.collectionSize || 0,
+    inventoryItems: state.inventoryItems || [],
+    ballCatalog: state.ballCatalog || [],
+    wallet: state.wallet || { gold: null, goldSource: null, diamonds: null, diamondsSource: null, updatedAt: null },
     lastEvent: state.lastEvent,
     connected: state.lastFrameTs != null && Date.now() - state.lastFrameTs < HEARTBEAT_STALE_MS
   };
+}
+
+function updateWallet(accountId, wallet) {
+  const state = getOrCreateState(accountId);
+  mergeWallet(state, wallet);
+}
+
+function adjustWallet(accountId, { currency, delta }) {
+  const state = getOrCreateState(accountId);
+  const amount = Number(delta);
+  if (!Number.isFinite(amount) || !currency) return;
+  state.wallet = state.wallet || { gold: null, goldSource: null, diamonds: null, diamondsSource: null, updatedAt: null };
+  const key = String(currency).toUpperCase().includes('DIAM') ? 'diamonds' : 'gold';
+  if (state.wallet[key] == null) return;
+  state.wallet[key] = Math.max(0, state.wallet[key] + amount);
+  if (key === 'gold' && !state.wallet.goldSource) state.wallet.goldSource = 'adjusted';
+  if (key === 'diamonds' && !state.wallet.diamondsSource) state.wallet.diamondsSource = 'adjusted';
+  state.wallet.updatedAt = Date.now();
 }
 
 // Attaches once per account webContents' lifetime — idempotent, safe to call
@@ -544,12 +696,17 @@ module.exports = {
   removeState,
   startHeartbeat,
   setBallsLowThreshold,
+  updateWallet,
+  adjustWallet,
   ensureCreatureCatalog,
   getCreatureCatalogArray,
+  getCreatureCatalogMeta,
   ensureItemPriceCatalog,
   getItemPriceByNameMap,
+  getItemCatalogArray,
   // exported for unit testing
   rarityFromQuality,
+  parseWalletAmount,
   applyFrame,
   computeRates,
   emptyLive

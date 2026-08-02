@@ -59,4 +59,34 @@ test.describe('accounts', () => {
     await expect(page.locator('.panel-header')).toHaveCount(0);
     await expect(page.locator('#empty-state')).toBeVisible();
   });
+
+  // Regression test for B-01: closing and reopening accounts must not corrupt
+  // state (e.g. duplicate event listeners causing double download records).
+  test('closing and reopening accounts does not corrupt sidebar state', async ({ page }) => {
+    // Open a second account so there is a survivor when we close the first.
+    await page.locator('#btn-new-tab').click();
+    await expect(page.locator('.account-item')).toHaveCount(2);
+
+    const stateBefore = await page.evaluate(() => window.api.getState());
+    const survivorId = stateBefore.accounts[1].id;
+
+    // Close the first account.
+    await closeAccountAt(page, 0);
+    await expect(page.locator('.account-item')).toHaveCount(1);
+
+    // The survivor is intact and is the only account in state.
+    const stateAfter = await page.evaluate(() => window.api.getState());
+    expect(stateAfter.accounts).toHaveLength(1);
+    expect(stateAfter.accounts[0].id).toBe(survivorId);
+
+    // Reopening a new account from a single-account state must work cleanly.
+    await page.locator('#btn-new-tab').click();
+    await expect(page.locator('.account-item')).toHaveCount(2);
+    await expect(page.locator('.panel-header')).toHaveCount(1);
+
+    const stateFinal = await page.evaluate(() => window.api.getState());
+    // No duplicate account ids — every id must be unique.
+    const ids = stateFinal.accounts.map((a) => a.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
 });

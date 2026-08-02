@@ -8,6 +8,7 @@ const store = require('./store');
 const { GAP, GRID_MAX_PANELS, MIN_SPLIT_FRAC, resolveFracs, cellsForMode, freeCells, normalizeFracsWithMin } = require('./layout-utils');
 const gameTelemetry = require('./game-telemetry');
 const pokeFormulas = require('./poke-formulas');
+const market = require('./market');
 // Catálogo único de traducciones compartido con el renderer — ver el comentario
 // de cabecera en src/i18n-data.js. El proceso main no tiene sandbox, así que
 // requerir un archivo bajo src/ funciona igual que con game-telemetry.js.
@@ -18,6 +19,18 @@ function mt(lang, key, vars) {
   return str;
 }
 
+// Maps Nexa's UI language ('es' / 'pt-BR' / 'en-US') to the Chromium spellcheck
+// locale Electron actually ships a dictionary for. Previously hardcoded to
+// ['es-419', 'en-US'] for every account regardless of settings.language —
+// loading dictionaries for languages the user never chose. en-US stays as a
+// secondary everywhere except when it's already the primary, since loanwords
+// and game terms in es/pt-BR text are commonly English.
+const SPELLCHECK_LOCALES = { es: 'es-419', 'pt-BR': 'pt-BR', 'en-US': 'en-US' };
+function spellCheckerLanguagesFor(lang) {
+  const primary = SPELLCHECK_LOCALES[lang] || 'es-419';
+  return primary === 'en-US' ? [primary] : [primary, 'en-US'];
+}
+
 // Last-resort net: an ipcMain.on (not .handle) listener that throws crashes the
 // whole app with no trace, since Electron only auto-catches .handle rejections.
 // This doesn't replace validating payloads at each handler — it's a backstop
@@ -26,8 +39,12 @@ function mt(lang, key, vars) {
 process.on('uncaughtException', (err) => {
   console.error('[uncaughtException]', err);
 });
+process.on('unhandledRejection', (err) => {
+  console.error('[unhandledRejection]', err);
+});
 
 const APP_ICON_PATH = path.join(__dirname, 'assets', 'icon.png');
+const GAME_STATE_RELOAD_TIMEOUT_MS = 12000;
 
 // app.getPath('userData') is derived from package.json's "name" field — keep that
 // field as "chilean-browser" even after rebranding, or existing spaces/accounts/
@@ -67,6 +84,11 @@ let blockedDomains = new Set(BUILTIN_BLOCKLIST);
 const blockedCounts = new Map();
 const crashCounts = new Map();
 let lastFocusedAccountId = null;
+const ADBLOCK_ALLOWLIST = new Set([
+  'poke.idleworld.online',
+  'challenges.cloudflare.com',
+  'static.cloudflareinsights.com'
+]);
 
 // Real password values never live on `data.passwords` — only id/name/url/
 // username do. `data` is what state:get/state:update hand the renderer
@@ -144,7 +166,9 @@ function refreshBlocklistIfStale() {
 function isBlockedHost(hostname) {
   if (!hostname) return false;
   let h = hostname.toLowerCase();
+  if (ADBLOCK_ALLOWLIST.has(h)) return false;
   while (h.includes('.')) {
+    if (ADBLOCK_ALLOWLIST.has(h)) return false;
     if (blockedDomains.has(h)) return true;
     h = h.slice(h.indexOf('.') + 1);
   }
@@ -190,11 +214,31 @@ const ALLOWED_PERMISSIONS = new Set([
   'openExternal'
 ]);
 
-function applyPermissionHandler(ses) {
+// Poke Idle World has no legitimate use for a camera, microphone, or the
+// player's real-world location — narrowing the default for that domain
+// specifically (instead of the same blanket ALLOWED_PERMISSIONS every other
+// site gets) cuts attack surface and avoids spurious OS permission prompts,
+// without touching normal browsing, where camera/mic requests are expected
+// (video calls, etc.).
+const GAME_DENIED_PERMISSIONS = new Set(['media', 'geolocation']);
+
+function isAllowedExternalSupportUrl(url) {
+  try {
+    const parsed = new URL(String(url || '').trim());
+    if (parsed.protocol !== 'https:') return false;
+    return /(^|\.)paypal\.com$/i.test(parsed.hostname) || /(^|\.)paypal\.me$/i.test(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function applyPermissionHandler(ses, account) {
+  const isGameAccount = !!(account && account.url && gameTelemetry.isGameUrl(account.url));
+  const allow = (permission) => ALLOWED_PERMISSIONS.has(permission) && !(isGameAccount && GAME_DENIED_PERMISSIONS.has(permission));
   ses.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(ALLOWED_PERMISSIONS.has(permission));
+    callback(allow(permission));
   });
-  ses.setPermissionCheckHandler((_wc, permission) => ALLOWED_PERMISSIONS.has(permission));
+  ses.setPermissionCheckHandler((_wc, permission) => allow(permission));
 }
 
 const proxyAuthWired = new WeakSet();
@@ -267,9 +311,11 @@ let data = store.load();
 // Always start on auto grid, regardless of whichever layout was active when the
 // app was last closed — the user wants a consistent, predictable starting layout.
 data.settings.layoutMode = 'grid';
+const disableHardwareAccelerationForTest = process.env.NEXA_E2E === '1';
+const forceSoftwareRendering = disableHardwareAccelerationForTest || process.env.NEXA_FORCE_SOFTWARE === '1';
 
 // Must run before app.whenReady() — can't be toggled live, only at the next launch.
-if (data.settings.hardwareAcceleration === false) {
+if (forceSoftwareRendering || data.settings.hardwareAcceleration === false) {
   app.disableHardwareAcceleration();
 }
 
@@ -510,6 +556,184 @@ function startPokeIdleAlertLoop() {
   }, 5000);
 }
 
+// Market IV-alert watch: per-account state so a fresh listing only ever
+// alerts once, and so turning the toggle on (or a fresh app boot) doesn't
+// immediately fire an alert for every listing already on the market — only
+// for ones that show up AFTER the first poll for that account establishes
+// a baseline.
+const marketWatch = new Map(); // accountId -> { seen: Set<string>, initialized: boolean }
+let marketAlertFeed = []; // most-recent-first, capped — shown in the Market tab's alert feed
+const MARKET_ALERT_FEED_CAP = 20;
+const MARKET_POLL_MS = 5 * 60 * 1000;
+const MARKET_ALERT_FEED_TTL_MS = 30 * 60 * 1000;
+
+function marketAlertId(accountId, listing) {
+  return String([
+    accountId || '',
+    listing?.listingId ?? listing?.marketId ?? listing?.id ?? listing?.refId ?? '',
+    listing?.price ?? '',
+    listing?.iv ?? listing?.ivTotal ?? listing?.totalIv ?? ''
+  ].join(':'));
+}
+
+function broadcastMarketAlertFeed() {
+  pruneMarketAlertFeed();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('market:alertFeedUpdated', marketAlertFeed.slice(0, MARKET_ALERT_FEED_CAP));
+  }
+}
+
+function pruneMarketAlertFeed() {
+  const cutoff = Date.now() - MARKET_ALERT_FEED_TTL_MS;
+  marketAlertFeed = marketAlertFeed
+    .filter((entry) => entry && (entry.at || 0) >= cutoff)
+    .sort((a, b) => (b.at || 0) - (a.at || 0))
+    .slice(0, MARKET_ALERT_FEED_CAP);
+}
+
+function marketListingName(listing) {
+  return listing?.name || listing?.title || listing?.speciesName || listing?.itemName || listing?.productName || 'Pokemon';
+}
+
+function marketListingIv(listing) {
+  const iv = listing?.iv ?? listing?.ivTotal ?? listing?.totalIv ?? null;
+  const n = Number(iv);
+  return Number.isFinite(n) ? n : null;
+}
+
+function marketListingQuality(listing) {
+  const raw = listing?.quality ?? listing?.qualityValue ?? listing?.pokemonQuality ?? listing?.pokemon?.quality ?? null;
+  if (raw == null || raw === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+function marketRarityFromQuality(quality) {
+  if (quality == null) return '';
+  if (quality < 1.0) return 'weak';
+  if (quality < 1.1) return 'common';
+  if (quality < 1.3) return 'uncommon';
+  if (quality < 1.5) return 'rare';
+  if (quality < 1.7) return 'epic';
+  if (quality < 2.0) return 'legendary';
+  if (quality < 3.0) return 'mythic';
+  if (quality < 4.0) return 'ancient';
+  return 'divine';
+}
+
+function marketRarityKey(value) {
+  const rarity = String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+  if (!rarity) return '';
+  if (rarity.includes('divine')) return 'divine';
+  if (rarity.includes('ancient')) return 'ancient';
+  if (rarity.includes('mythic')) return 'mythic';
+  if (rarity.includes('legend') || rarity.includes('lendar')) return 'legendary';
+  if (rarity.includes('epic') || rarity.includes('epica')) return 'epic';
+  if (rarity.includes('rare') || rarity.includes('rara')) return 'rare';
+  if (rarity.includes('incom')) return 'uncommon';
+  if (rarity.includes('comum') || rarity.includes('common')) return 'common';
+  if (rarity.includes('fraca') || rarity.includes('weak')) return 'weak';
+  return rarity;
+}
+
+function marketListingRarityKey(listing) {
+  const fromQuality = marketRarityFromQuality(marketListingQuality(listing));
+  if (fromQuality) return fromQuality;
+  return marketRarityKey(
+    listing?.rarity || listing?.rank || listing?.tier || listing?.qualityLabel ||
+    listing?.qualityName || listing?.pokemon?.rarity || listing?.pokemon?.qualityLabel ||
+    listing?.pokemon?.qualityName || ''
+  );
+}
+
+function marketListingPassesAlertRarity(listing, cfg) {
+  if (cfg?.marketIvRareOnly === false) return true;
+  return ['epic', 'legendary', 'mythic', 'ancient', 'divine'].includes(marketListingRarityKey(listing));
+}
+
+function marketListingPriceText(listing) {
+  const currency = market.normalizeCurrency(listing?.currency || listing?.paymentCurrency || listing?.moneyType);
+  const symbol = currency === 'DIAMONDS' ? 'diamantes' : 'dolares';
+  const price = listing?.price ?? listing?.amount ?? '?';
+  return `${price} ${symbol}`;
+}
+
+function showMarketIvNotification(account, listing, threshold) {
+  if (!Notification.isSupported()) return;
+  const iv = marketListingIv(listing);
+  const notif = new Notification({
+    title: `Market global: ${marketListingName(listing)} IV ${iv ?? '?'}`,
+    body: `${displayName(account)} · ${marketListingPriceText(listing)} · alerta >= ${threshold} IV`,
+    icon: APP_ICON_PATH,
+    silent: false
+  });
+  notif.on('click', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+    // Tell the renderer to open the Market panel and highlight this listing.
+    mainWindow.webContents.send('market:openAlert', {
+      alertId: marketAlertId(account.id, listing),
+      accountId: account.id,
+      listing
+    });
+  });
+  notif.show();
+}
+
+function startMarketAlertLoop() {
+  setInterval(async () => {
+    pruneMarketAlertFeed();
+    broadcastMarketAlertFeed();
+    const cfg = data.settings.pokeIdleAlerts;
+    if (!cfg || !cfg.marketIv) return;
+    const threshold = cfg.marketMinIv ?? 150;
+    let notificationsThisTick = 0;
+    for (const account of data.accounts) {
+      if (account.closed) continue;
+      const wc = views.get(account.id);
+      if (!wc || wc.isDestroyed() || !gameTelemetry.isGameUrl(wc.getURL())) continue;
+      let result;
+      try {
+        result = await wc.executeJavaScript(market.fetchListingsScript('Pokémon'));
+      } catch {
+        continue;
+      }
+      if (!result || !result.ok || !Array.isArray(result.listings)) continue;
+      let watch = marketWatch.get(account.id);
+      if (!watch) {
+        watch = { seen: new Set(), initialized: false };
+        marketWatch.set(account.id, watch);
+      }
+      const isFirstPoll = !watch.initialized;
+      for (const listing of result.listings) {
+        const id = listing && listing.id;
+        if (!id || watch.seen.has(id)) continue;
+        watch.seen.add(id);
+        if (isFirstPoll) continue; // baseline — don't alert on what was already there
+        const iv = marketListingIv(listing);
+        if (iv == null || iv < threshold) continue;
+        if (!marketListingPassesAlertRarity(listing, cfg)) continue;
+        const maxPrice = Number(cfg.marketIvMaxPrice ?? 0);
+        if (maxPrice > 0 && Number(listing.price ?? listing.amount ?? 0) > maxPrice) continue;
+        if (notificationsThisTick >= 10) continue;
+        marketAlertFeed.unshift({ alertId: marketAlertId(account.id, listing), accountId: account.id, listing, at: Date.now(), threshold });
+        pruneMarketAlertFeed();
+        broadcastMarketAlertFeed();
+        if (cfg.enabled !== false && cfg.marketIvDesktop !== false) showMarketIvNotification(account, listing, threshold);
+        notificationsThisTick += 1;
+      }
+      watch.initialized = true;
+      // Cap memory: keep only the most recent chunk of seen ids per account.
+      if (watch.seen.size > 2000) watch.seen = new Set([...watch.seen].slice(-1000));
+    }
+  }, MARKET_POLL_MS);
+}
+
 // Live DownloadItem handles, keyed by the same id as its `data.downloads`
 // record — the item only exists as a closure variable inside 'will-download'
 // otherwise, so pause/resume/cancel from the renderer has nothing to call
@@ -517,7 +741,15 @@ function startPokeIdleAlertLoop() {
 // interruption); pause/resume/cancel only make sense while it's live.
 const downloadItems = new Map();
 
+// Tracks which Session objects already have a 'will-download' listener so
+// re-opening an account (which reuses the same persist:account-N Session)
+// doesn't accumulate duplicate listeners — each duplicate would create an
+// extra data.downloads record and extra broadcastState() call per download.
+const downloadSessionsWired = new WeakSet();
+
 function handleDownloads(ses) {
+  if (downloadSessionsWired.has(ses)) return;
+  downloadSessionsWired.add(ses);
   ses.on('will-download', (event, item) => {
     let savePath = null;
     if (data.settings.askDownloadLocation) {
@@ -683,30 +915,6 @@ async function finishInstall(id, dir) {
   persist();
   broadcastState();
   return entry;
-}
-
-// IV Helper (Poke IdleWorld) used to be auto-seeded into fresh profiles as a
-// stopgap before Nexa had its own IV/Growth tooling (Calculadora IV, Tier
-// List, Caza & XP — see poke-formulas.js). Now that those exist natively,
-// the extension (and the in-game Gengar button that toggled its panel, see
-// removed injectGameOverlayButtons code) is redundant — this removes it from
-// any profile that still has it from that earlier seeding, one time.
-const RETIRED_EXTENSION_IDS = ['cpapjpndggpeepabijbaikmapdceldnl']; // IV Helper (Poke IdleWorld)
-function removeRetiredExtensions() {
-  let changed = false;
-  for (const id of RETIRED_EXTENSION_IDS) {
-    const ext = data.settings.extensions.find((e) => e.id === id);
-    if (!ext) continue;
-    unloadExtensionFromAllSessions(id);
-    try {
-      if (ext.path.startsWith(EXTENSIONS_DIR)) fs.rmSync(ext.path, { recursive: true, force: true });
-    } catch {
-      // best-effort cleanup
-    }
-    data.settings.extensions = data.settings.extensions.filter((e) => e.id !== id);
-    changed = true;
-  }
-  if (changed) persist();
 }
 
 function unloadExtensionFromAllSessions(id) {
@@ -978,7 +1186,7 @@ function wireAccountWebContents(wc, account, hostWebContents) {
   if (views.get(account.id) === wc) return; // already wired, no-op
   views.set(account.id, wc);
 
-  wc.session.setSpellCheckerLanguages(['es-419', 'en-US']);
+  wc.session.setSpellCheckerLanguages(spellCheckerLanguagesFor(data.settings.language));
   wc.setZoomFactor(account.zoom || data.settings.defaultZoom || 1);
   // Popups (e.g. a Google login window opened via window.open) get the same
   // isolated session and autofill preload as their opener.
@@ -998,16 +1206,24 @@ function wireAccountWebContents(wc, account, hostWebContents) {
   }));
   handleDownloads(wc.session);
   applyAdBlock(wc.session, account.id);
-  applyPermissionHandler(wc.session);
+  applyPermissionHandler(wc.session, account);
   applyProxy(wc.session, account);
-  data.settings.extensions
-    .filter((e) => e.enabled !== false)
-    .forEach((e) => {
-      wc.session.extensions
-        .loadExtension(e.path, { allowFileAccess: true })
-        .then(() => console.log('[ext] loaded', e.name, 'into', account.id))
-        .catch((err) => console.error('[ext] FAILED to load', e.name, 'into', account.id, err));
-    });
+  // Sequential, not Promise.all/forEach-fired-in-parallel: opening several
+  // accounts at once (e.g. a space with 4 accounts on launch) used to fire
+  // N extension loads per account all at the same moment, which is what
+  // actually competes for CPU/disk during boot. One extension load queue
+  // per account keeps the burst down without changing anything the user
+  // sees — the account's own page load isn't gated on this loop finishing.
+  (async () => {
+    for (const e of data.settings.extensions.filter((ext) => ext.enabled !== false)) {
+      try {
+        await wc.session.extensions.loadExtension(e.path, { allowFileAccess: true });
+        console.log('[ext] loaded', e.name, 'into', account.id);
+      } catch (err) {
+        console.error('[ext] FAILED to load', e.name, 'into', account.id, err);
+      }
+    }
+  })();
   // Must attach before the real navigation starts — CDP's Network.enable
   // needs to be on before the game's own page connects its WebSocket, or the
   // connection (and the frames right after it) is missed entirely. The
@@ -1024,14 +1240,6 @@ function wireAccountWebContents(wc, account, hostWebContents) {
   wc.on('did-navigate', (_e, url) => notifyNav(account.id, url));
   wc.on('did-navigate-in-page', (_e, url) => {
     notifyNav(account.id, url);
-    // poke.idleworld.online routes from /login to /play client-side (History
-    // API, no full reload) after a successful sign-in, so did-finish-load
-    // below never fires again for that transition and the overlay buttons
-    // used to never appear until the next full reload. injectGameOverlayButtons
-    // already no-ops off the URL check and off window.__cbOverlayWatchdog
-    // already existing, so calling it here too is safe and idempotent.
-    injectGameOverlayButtons(wc);
-    stopGameOverlayWatchdogIfLeft(wc, url);
     // Same /login → /play client-side transition: did-finish-load won't
     // fire again to trigger the telemetry attach below, so it has to be
     // done here too. isGameUrl() now excludes /login on purpose (see
@@ -1039,6 +1247,17 @@ function wireAccountWebContents(wc, account, hostWebContents) {
     // past the Turnstile challenge.
     if (gameTelemetry.isGameUrl(url)) {
       gameTelemetry.attachCapture(wc, account.id);
+      // /login → /play SPA transition: scrape wallet once the HUD has rendered.
+      // Two attempts (3 s and 7 s) because the game's React tree may still be
+      // mounting at 3 s on slow connections.
+      const scrapeAfterNav = () => {
+        if (wc.isDestroyed() || !gameTelemetry.isGameUrl(wc.getURL())) return;
+        wc.executeJavaScript(scrapeGameWalletScript())
+          .then((wallet) => wallet && gameTelemetry.updateWallet(account.id, wallet))
+          .catch(() => {});
+      };
+      setTimeout(scrapeAfterNav, 3000);
+      setTimeout(scrapeAfterNav, 7000);
     }
   });
   // Chromium resets zoom on full page loads/reloads — reassert the account's
@@ -1047,12 +1266,20 @@ function wireAccountWebContents(wc, account, hostWebContents) {
   wc.on('did-finish-load', () => {
     wc.setZoomFactor(account.zoom || data.settings.defaultZoom || 1);
     if (account.ecoMode) enableEcoMode(wc);
-    injectGameOverlayButtons(wc);
+    if (account.hideChat || account.hideGameBar) applyGameCssToggles(wc, account);
+    if (account.sellLockOn) applySellLock(wc, account);
     // Covers an account that started elsewhere and only just navigated to
     // the game — attachCapture() is idempotent (checks debugger.isAttached())
     // so this is a no-op for accounts that already attached before loadURL.
     if (gameTelemetry.isGameUrl(wc.getURL())) {
       gameTelemetry.attachCapture(wc, account.id);
+      // Full page reload: scrape wallet once the HUD has settled.
+      setTimeout(() => {
+        if (wc.isDestroyed() || !gameTelemetry.isGameUrl(wc.getURL())) return;
+        wc.executeJavaScript(scrapeGameWalletScript())
+          .then((wallet) => wallet && gameTelemetry.updateWallet(account.id, wallet))
+          .catch(() => {});
+      }, 4000);
     }
   });
   wc.on('page-title-updated', (_e, title) => updateHistoryTitle(wc.getURL(), title));
@@ -1104,7 +1331,11 @@ function wireAccountWebContents(wc, account, hostWebContents) {
     // attaches) — that's an expected, intentional teardown, not a real
     // account close, so finalizeAccountClose must not run for it.
     if (views.get(account.id) !== wc) return;
-    if (!account.closed) {
+    // The whole app quitting destroys every webview the same way a single
+    // tab close does — appQuitting distinguishes the two so a normal quit
+    // leaves account.closed exactly as it was (open accounts come back open
+    // on the next launch instead of every tab reverting to closed).
+    if (!account.closed && !appQuitting) {
       finalizeAccountClose(account, wc);
       persist();
       renderLayout();
@@ -1170,113 +1401,85 @@ function disableEcoMode(wc) {
   ).catch(() => {});
 }
 
-// Site-specific enhancement: on poke.idleworld.online's /play page only, add a
-// floating Pokéball button top-right that manually collapses/expands the
-// game's own top toolbar. Purely user-controlled, no auto-hide.
-// The toolbar's own class names are hashed/generated (Next.js), so instead of a
-// hardcoded selector (which would break on the next deploy) this heuristically
-// finds a fixed/sticky bar pinned near the top spanning most of the width with
-// several small icon-like children — matches the toolbar row shown in the app.
-function injectGameOverlayButtons(wc) {
-  let url;
-  try {
-    url = new URL(wc.getURL());
-  } catch {
-    return;
-  }
-  if (url.hostname !== 'poke.idleworld.online' || !url.pathname.startsWith('/play')) return;
-
+// Replaces the old floating Pokéball button (which toggled visibility by hand,
+// no actual savings) with real persistent settings: hiding the game's chat
+// (.chat-box) and top toolbar (.game-dock) via display:none genuinely removes
+// them from layout/paint, not just from view. Confirmed live via DevTools
+// against poke.idleworld.online — both are plain DOM elements with stable
+// class names, not canvas-drawn, so CSS hiding actually works and actually
+// saves the browser real work. Idempotent: reuses the same <style> tag across
+// calls instead of appending duplicates, so toggling on/off repeatedly or
+// re-running on every did-finish-load never leaks style elements.
+function applyGameCssToggles(wc, account) {
+  const css =
+    (account.hideChat ? '.chat-box{display:none !important}' : '') +
+    (account.hideGameBar ? '.game-dock{display:none !important}' : '');
   wc.executeJavaScript(
     `(function() {
-      if (window.__cbOverlayWatchdog) { window.__cbOverlayWatchdog(); return; }
-
-      function findToolbar() {
-        const all = document.querySelectorAll('body *');
-        let best = null;
-        let bestWidth = 0;
-        for (const el of all) {
-          if (el.id === 'cb-toggle-ball') continue;
-          const cs = getComputedStyle(el);
-          if (cs.position !== 'fixed' && cs.position !== 'sticky' && cs.position !== 'absolute') continue;
-          const r = el.getBoundingClientRect();
-          if (r.top > 40 || r.height < 16 || r.height > 160) continue;
-          if (r.width < window.innerWidth * 0.35) continue;
-          const kids = el.querySelectorAll(':scope > *');
-          if (kids.length < 4) continue;
-          if (r.width > bestWidth) { best = el; bestWidth = r.width; }
-        }
-        return best;
+      let style = document.getElementById('nexa-game-css');
+      if (!style) {
+        style = document.createElement('style');
+        style.id = 'nexa-game-css';
+        document.head.appendChild(style);
       }
-
-      function ensureToggleBall() {
-        if (document.getElementById('cb-toggle-ball')) return;
-        const ball = document.createElement('div');
-        ball.id = 'cb-toggle-ball';
-        ball.title = 'Mostrar/ocultar barra del juego';
-        Object.assign(ball.style, {
-          position: 'fixed', top: '120px', right: '8px', width: '34px', height: '34px',
-          borderRadius: '50%', cursor: 'pointer', zIndex: '2147483000',
-          boxShadow: '0 2px 8px rgba(0,0,0,.5)', border: '2px solid #1a1a1a',
-          background: 'linear-gradient(#ee1515 0 46%, #1a1a1a 46% 54%, #fff 54% 100%)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', boxSizing: 'border-box'
-        });
-        const dot = document.createElement('div');
-        Object.assign(dot.style, {
-          width: '10px', height: '10px', borderRadius: '50%', background: '#fff',
-          border: '2px solid #1a1a1a', boxSizing: 'border-box'
-        });
-        ball.appendChild(dot);
-
-        let hiddenBar = null;
-        let originalDisplay = '';
-        ball.addEventListener('click', () => {
-          if (hiddenBar) {
-            hiddenBar.style.display = originalDisplay;
-            hiddenBar = null;
-            return;
-          }
-          const bar = findToolbar();
-          if (!bar) return;
-          originalDisplay = bar.style.display;
-          bar.style.display = 'none';
-          hiddenBar = bar;
-        });
-
-        (document.body || document.documentElement).appendChild(ball);
-      }
-
-      // Self-healing: re-adds the button if the page's own re-renders ever
-      // strip it out, so it survives both reloads and in-page SPA routing
-      // without us having to detect that from the outside.
-      window.__cbOverlayWatchdog = function() {
-        ensureToggleBall();
-      };
-      window.__cbOverlayWatchdog();
-      window.__cbOverlayWatchdogTimer = setInterval(window.__cbOverlayWatchdog, 2000);
-    })();`
-  ).catch((err) => console.error('[overlay-buttons] inject failed', err));
-}
-
-// injectGameOverlayButtons only re-fires on a full page load (did-finish-load);
-// an in-page SPA navigation away from /play keeps the same JS realm alive, so
-// without this the watchdog interval above would keep polling the DOM every
-// 2s indefinitely even after the game's own toolbar is long gone.
-function stopGameOverlayWatchdogIfLeft(wc, url) {
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return;
-  }
-  if (parsed.hostname === 'poke.idleworld.online' && parsed.pathname.startsWith('/play')) return;
-  wc.executeJavaScript(
-    `(function() {
-      if (window.__cbOverlayWatchdogTimer) {
-        clearInterval(window.__cbOverlayWatchdogTimer);
-        window.__cbOverlayWatchdogTimer = null;
-      }
+      style.textContent = ${JSON.stringify(css)};
     })();`
   ).catch(() => {});
+}
+
+// Sell-lock: hard-blocks selling specific caught Pokémon (by their unique
+// instance id) or specific item types (by name) the user picked, instead of
+// PokeGrid's approach of just popping a confirm() the user can click through.
+// The game sells via plain fetch() to /api/game/pokemon/sell (body:
+// {pokeIds:[...]}) and /api/game/(shop|flint)/sell (body: {items:[{itemId,qty}]}
+// or {itemId,qty}) — confirmed live via DevTools. Filters the locked entries
+// out of the request body (letting an otherwise-mixed sell of unlocked items
+// still go through) and only rejects the fetch outright if every entry in it
+// was locked. Idempotent monkey-patch guarded by window.__nexaSellLock so
+// repeated calls (toggling the lock list) just update the live sets instead
+// of wrapping fetch twice.
+function sellLockScript(pokeIds, itemIds) {
+  return `(function() {
+    const pokeSet = new Set(${JSON.stringify((pokeIds || []).map(String))});
+    const itemSet = new Set(${JSON.stringify((itemIds || []).map(Number))});
+    if (window.__nexaSellLock) {
+      window.__nexaSellLock.pokeSet = pokeSet;
+      window.__nexaSellLock.itemSet = itemSet;
+      return;
+    }
+    window.__nexaSellLock = { pokeSet, itemSet };
+    const originalFetch = window.fetch;
+    window.fetch = function(input, init) {
+      try {
+        const url = (input && input.url) || input;
+        if (typeof url === 'string' && init && typeof init.body === 'string') {
+          if (/\\/api\\/game\\/pokemon\\/sell/.test(url)) {
+            const body = JSON.parse(init.body);
+            const ids = body.pokeIds || [];
+            const allowed = ids.filter((id) => !window.__nexaSellLock.pokeSet.has(String(id)));
+            if (allowed.length !== ids.length) {
+              if (!allowed.length) return Promise.reject(new Error('Venta bloqueada por el candado de Nexa'));
+              init = { ...init, body: JSON.stringify({ ...body, pokeIds: allowed }) };
+            }
+          } else if (/\\/api\\/game\\/(shop|flint)\\/sell/.test(url)) {
+            const body = JSON.parse(init.body);
+            const items = body.items ? body.items : (body.itemId != null ? [{ itemId: body.itemId, qty: body.qty }] : []);
+            const allowed = items.filter((it) => !window.__nexaSellLock.itemSet.has(Number(it.itemId)));
+            if (allowed.length !== items.length) {
+              if (!allowed.length) return Promise.reject(new Error('Venta bloqueada por el candado de Nexa'));
+              const newBody = body.items ? { ...body, items: allowed } : { itemId: allowed[0].itemId, qty: allowed[0].qty };
+              init = { ...init, body: JSON.stringify(newBody) };
+            }
+          }
+        }
+      } catch (e) {}
+      return originalFetch.call(this, input, init);
+    };
+  })();`;
+}
+
+function applySellLock(wc, account) {
+  wc.executeJavaScript(sellLockScript(account.sellLockPokeIds, account.sellLockItemIds)).catch(() => {});
 }
 
 function showPageContextMenu(wc, params) {
@@ -1492,6 +1695,8 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
+    show: false,
+    title: 'Nexa Browser',
     backgroundColor: '#111318',
     icon: APP_ICON_PATH,
     webPreferences: {
@@ -1505,6 +1710,32 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
+  mainWindow.once('ready-to-show', () => {
+    if (!mainWindowAlive()) return;
+    mainWindow.show();
+    mainWindow.focus();
+  });
+  mainWindow.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    console.error('[boot] did-fail-load', { errorCode, errorDescription, validatedURL, isMainFrame });
+  });
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    console.error('[boot] render-process-gone', details);
+  });
+  mainWindow.on('unresponsive', () => {
+    console.error('[boot] main window became unresponsive');
+  });
+
+  // Marks the quit as already in progress the moment the window starts
+  // closing — before Electron destroys the window's child <webview>
+  // webContents, which is what used to run the same 'destroyed' handler
+  // that a real one-tab close uses (see wireAccountWebContents below) and
+  // silently flip every open account to closed:true on a normal app quit.
+  // The old `appQuitting` flag (set in 'before-quit') was too late for this:
+  // that event only fires after 'window-all-closed', which itself only
+  // fires after every window (and its children) is already destroyed.
+  mainWindow.on('close', () => {
+    appQuitting = true;
+  });
 
   wireDidAttachWebview(mainWindow.webContents);
 
@@ -1539,9 +1770,21 @@ function createWindow() {
   return mainWindow;
 }
 
+// Coalesced across a microtask: several IPC handlers call persist() +
+// broadcastState() back to back within the same synchronous tick (e.g. a
+// batch action touching multiple accounts), which used to serialize and
+// send the entire `data` object once per call. Queuing on a microtask
+// collapses those into a single send of whatever `data` looks like once all
+// of that tick's synchronous mutations have landed — same end state, fewer
+// full-state IPC round-trips.
+let stateBroadcastQueued = false;
 function broadcastState() {
-  if (!mainWindowAlive()) return;
-  mainWindow.webContents.send('state:update', data);
+  if (!mainWindowAlive() || stateBroadcastQueued) return;
+  stateBroadcastQueued = true;
+  queueMicrotask(() => {
+    stateBroadcastQueued = false;
+    if (mainWindowAlive()) mainWindow.webContents.send('state:update', data);
+  });
 }
 
 // ---- IPC handlers ----
@@ -1741,7 +1984,7 @@ ipcMain.on('accounts:contextmenu', (_e, payload) => {
   menu.popup({ window: mainWindow });
 });
 
-ipcMain.handle('accounts:update', (_e, { id, name, color, url, proxy, ecoMode }) => {
+ipcMain.handle('accounts:update', (_e, { id, name, color, url, proxy, ecoMode, hideChat, hideGameBar, sellLockOn }) => {
   const account = getAccount(id);
   if (!account) return data;
   if (name !== undefined) account.name = name || null;
@@ -1766,8 +2009,53 @@ ipcMain.handle('accounts:update', (_e, { id, name, color, url, proxy, ecoMode })
       else disableEcoMode(wc);
     }
   }
+  if ((hideChat !== undefined && hideChat !== account.hideChat) || (hideGameBar !== undefined && hideGameBar !== account.hideGameBar)) {
+    if (hideChat !== undefined) account.hideChat = !!hideChat;
+    if (hideGameBar !== undefined) account.hideGameBar = !!hideGameBar;
+    const wc = views.get(id);
+    if (wc && !wc.isDestroyed()) applyGameCssToggles(wc, account);
+  }
+  if (sellLockOn !== undefined && sellLockOn !== account.sellLockOn) {
+    account.sellLockOn = !!sellLockOn;
+    const wc = views.get(id);
+    // Turning it off doesn't un-patch fetch (harmless no-op with empty sets
+    // once re-enabled) — only re-applying with the account's real lock lists
+    // when turned back on matters here.
+    if (wc && !wc.isDestroyed() && account.sellLockOn) applySellLock(wc, account);
+  }
   persist();
   broadcastGeometryOnly();
+  broadcastState();
+  return data;
+});
+
+// Toggles one Pokémon's sell-lock membership by its unique instance id (from
+// game-telemetry's team/roster data) — add/remove is symmetric on purpose so
+// the same handler serves both the lock and unlock click in the UI.
+ipcMain.handle('account:toggleSellLockPoke', (_e, { id, pokeId }) => {
+  const account = getAccount(id);
+  if (!account || pokeId == null) return data;
+  account.sellLockPokeIds = account.sellLockPokeIds || [];
+  const key = String(pokeId);
+  const idx = account.sellLockPokeIds.indexOf(key);
+  if (idx === -1) account.sellLockPokeIds.push(key);
+  else account.sellLockPokeIds.splice(idx, 1);
+  const wc = views.get(id);
+  if (wc && !wc.isDestroyed() && account.sellLockOn) applySellLock(wc, account);
+  persist();
+  broadcastState();
+  return data;
+});
+
+// Full-list replace (not toggle-one) for items — the renderer manages its own
+// add/remove UI over a plain item-id list and just resends the whole thing.
+ipcMain.handle('account:setSellLockItems', (_e, { id, itemIds }) => {
+  const account = getAccount(id);
+  if (!account || !Array.isArray(itemIds)) return data;
+  account.sellLockItemIds = itemIds.filter((n) => Number.isInteger(n));
+  const wc = views.get(id);
+  if (wc && !wc.isDestroyed() && account.sellLockOn) applySellLock(wc, account);
+  persist();
   broadcastState();
   return data;
 });
@@ -2437,9 +2725,11 @@ const SETTINGS_UPDATE_WHITELIST = new Set([
   'hardwareAcceleration',
   'adBlockEnabled',
   'defaultStartUrl',
+  'supportPaypalUrl',
   'defaultZoom',
   'newSpaceDefaultLayout',
-  'askDownloadLocation'
+  'askDownloadLocation',
+  'pokeIdleMarketPrefs'
 ]);
 
 ipcMain.handle('settings:update', (_e, fields) => {
@@ -2447,6 +2737,16 @@ ipcMain.handle('settings:update', (_e, fields) => {
   for (const key of Object.keys(fields)) {
     if (!SETTINGS_UPDATE_WHITELIST.has(key)) continue;
     if (key === 'pokeIdleAlerts' && (typeof fields[key] !== 'object' || fields[key] === null)) continue;
+    if (key === 'pokeIdleMarketPrefs' && (typeof fields[key] !== 'object' || fields[key] === null)) continue;
+    if (key === 'supportPaypalUrl' && fields[key]) {
+      try {
+        const parsed = new URL(String(fields[key]).trim());
+        if (!isAllowedExternalSupportUrl(parsed.toString())) continue;
+        fields[key] = parsed.toString();
+      } catch {
+        continue;
+      }
+    }
     if (key === 'language' && !Object.prototype.hasOwnProperty.call(I18N, fields[key])) continue;
     data.settings[key] = fields[key];
   }
@@ -2459,6 +2759,17 @@ ipcMain.handle('settings:update', (_e, fields) => {
   persist();
   broadcastState();
   return data;
+});
+
+ipcMain.handle('app:openExternal', async (_e, { url }) => {
+  try {
+    const parsed = new URL(String(url || '').trim());
+    if (parsed.protocol !== 'https:') return { ok: false, error: 'invalid-url' };
+    await shell.openExternal(parsed.toString());
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
 });
 
 ipcMain.handle('settings:chooseDownloadsFolder', async () => {
@@ -2524,10 +2835,12 @@ ipcMain.handle('settings:importSpaces', async () => {
       data.spaces.push({ ...s, id: newId });
     });
     (parsed.accounts || []).forEach((a) => {
+      const rawUrl = String(a.url || '').trim();
+      const safeUrl = /^https?:\/\//i.test(rawUrl) ? rawUrl : rawUrl ? `https://${rawUrl}` : 'about:blank';
       data.accounts.push({
         id: crypto.randomUUID(),
         name: a.name || null,
-        url: a.url || 'about:blank',
+        url: safeUrl,
         spaceId: idMap.get(a.spaceId) || getCurrentSpace()?.id || 'default',
         color: a.color || null
       });
@@ -2618,7 +2931,7 @@ ipcMain.handle('bookmarks:export', async () => {
   try {
     // Netscape Bookmark File format — the universal export/import standard
     // supported by Chrome, Firefox, Brave and Edge.
-    const items = data.bookmarks.map((b) => `    <DT><A HREF="${b.url}">${escapeHtml(b.title)}</A>`).join('\n');
+    const items = data.bookmarks.map((b) => `    <DT><A HREF="${escapeHtml(b.url)}">${escapeHtml(b.title)}</A>`).join('\n');
     const html =
       '<!DOCTYPE NETSCAPE-Bookmark-file-1>\n' +
       '<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">\n' +
@@ -2663,6 +2976,7 @@ ipcMain.handle('bookmarks:import', async () => {
     let added = 0;
     imported.forEach((b) => {
       if (!b.url || existingUrls.has(b.url)) return;
+      if (!/^https?:\/\//i.test(b.url)) return; // skip file://, javascript:, data: etc.
       existingUrls.add(b.url);
       data.bookmarks.push({ id: crypto.randomUUID(), title: b.title, url: b.url });
       added++;
@@ -2729,9 +3043,13 @@ function hostnameOf(url) {
   }
 }
 
-ipcMain.handle('autofill:query', (_e, origin) => {
+ipcMain.handle('autofill:query', (e, origin) => {
   const host = hostnameOf(origin);
   if (!host) return [];
+  // Verify that the real sender frame URL matches the claimed origin so a
+  // compromised renderer can't request credentials for a different domain.
+  const senderHost = hostnameOf(e.senderFrame?.url || '');
+  if (senderHost && senderHost !== host) return [];
   return data.passwords
     .filter((p) => hostnameOf(p.url) === host)
     .map((p) => ({ username: p.username, password: passwordSecrets.get(p.id) || '', name: p.name, url: p.url }));
@@ -2740,7 +3058,12 @@ ipcMain.handle('autofill:query', (_e, origin) => {
 // The only channel that hands back real password values for display — called
 // on demand when the renderer opens Configuración → Contraseñas, not folded
 // into the general state broadcast (see the comment on passwordSecrets).
-ipcMain.handle('passwords:list', () => {
+ipcMain.handle('passwords:list', (e) => {
+  // Only the main chrome window (settings panel) should be able to list
+  // all passwords. Account webviews use account-preload.js which does not
+  // expose this channel, but a belt-and-suspenders sender check ensures
+  // that even if that changes, credential data never leaks to a webview.
+  if (mainWindow && e.sender !== mainWindow.webContents) return [];
   return data.passwords.map((p) => ({ ...p, password: passwordSecrets.get(p.id) || '' }));
 });
 
@@ -2767,15 +3090,424 @@ ipcMain.handle('passwords:remove', (_e, { id }) => {
 // cada pocos segundos y solo le importa a las cuentas de poke.idleworld.online
 // (getStats devuelve null para cualquier otra, que el renderer simplemente no
 // muestra).
-ipcMain.handle('gameStats:get', () => gameTelemetry.getAllStats());
+function scrapeGameWalletScript() {
+  return `(() => {
+    const parseAmount = (value) => {
+      if (value == null) return null;
+      const raw = String(value).trim();
+      if (!raw) return null;
+      const suffix = (raw.match(/[kmb]$/i) || [null])[0];
+      const mult = suffix && suffix.toLowerCase() === 'k' ? 1000 : suffix && suffix.toLowerCase() === 'm' ? 1000000 : suffix && suffix.toLowerCase() === 'b' ? 1000000000 : 1;
+      const cleaned = raw.replace(/[^\\d.,-]/g, '').replace(/\\.(?=\\d{3}(?:\\D|$))/g, '').replace(/,(?=\\d{3}(?:\\D|$))/g, '').replace(',', '.');
+      const n = Number(cleaned);
+      return Number.isFinite(n) ? Math.round(n * mult) : null;
+    };
+    const visible = (el) => {
+      try {
+        const rect = el.getBoundingClientRect();
+        const style = getComputedStyle(el);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+      } catch {
+        return false;
+      }
+    };
+    const textOf = (el) => String(el.innerText || el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
+    const normalize = (value) => String(value || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase();
+    const candidates = Array.from(document.querySelectorAll('body *'))
+      .filter(visible)
+      .map((el) => ({ el, text: textOf(el), rect: el.getBoundingClientRect() }))
+      .filter((item) => item.text);
+    let gold = null;
+    let goldSource = null;
+    const MAX_REASONABLE_DIAMONDS = 10000000;
+    const diamondCandidates = [];
+    const goldCandidates = [];
+    const pushGold = (amount, item, reason) => {
+      if (amount == null || amount < 0) return;
+      const text = item && item.text ? item.text.replace(/\\s+/g, ' ') : '';
+      const rect = item && item.rect ? item.rect : { left: 0, top: 9999 };
+      const low = normalize(text);
+      let score = 0;
+      if (amount > 0) score += 80;
+      if (/\\$\\s*[\\d.,]+\\s*[kmb]?/i.test(text)) score += 70;
+      if (reason === 'visual-shop') score += 260;
+      if (reason === 'visual-hud') score += 160;
+      if (low.includes('buy') || low.includes('comprar') || low.includes('efficiency')) score -= 90;
+      if (rect.top < 520) score += 25;
+      if (rect.left > window.innerWidth / 2) score += 15;
+      goldCandidates.push({ amount, score, reason });
+    };
+    const pushDiamond = (amount, item, reason) => {
+      if (amount == null || amount < 0 || amount > MAX_REASONABLE_DIAMONDS) return;
+      if (!String(reason || '').startsWith('diamond-store')) return;
+      const text = item && item.text ? item.text.replace(/\\s+/g, ' ') : '';
+      const rect = item && item.rect ? item.rect : { left: 9999, top: 9999 };
+      const low = normalize(text);
+      let score = 0;
+      if (amount > 0) score += 100;
+      if (/\\d[\\d.,]*\\s*[kmb]?\\s*(diamonds?|diamantes?)/i.test(text)) score += 60;
+      if (/(diamonds?|diamantes?)\\s*\\d[\\d.,]*\\s*[kmb]?/i.test(text)) score += 45;
+      if (reason === 'diamond-balance-pattern') score += 80;
+      if (reason === 'diamond-store-balance') score += 250;
+      if (reason === 'diamond-store-label-near-number') score += 230;
+      if (low.includes('buy') || low.includes('comprar')) score -= 50;
+      if (low.includes('store') || low.includes('market') || low.includes('boosts') || low.includes('clans')) score += 20;
+      if (rect.left < 260) score += 30;
+      if (rect.top < 190) score += 15;
+      diamondCandidates.push({ amount, score, reason });
+    };
+    const closestPanel = (el) => {
+      let current = el;
+      while (current && current !== document.body) {
+        const rect = current.getBoundingClientRect();
+        if (rect.width >= 320 && rect.height >= 240) return current;
+        current = current.parentElement;
+      }
+      return null;
+    };
+    const storeTitle = candidates
+      .filter((item) => normalize(item.text).includes('diamond store'))
+      .sort((a, b) => a.text.length - b.text.length)[0];
+    const diamondStoreScope = storeTitle ? closestPanel(storeTitle.el) : null;
+    if (diamondStoreScope) {
+      const scoped = Array.from(diamondStoreScope.querySelectorAll('*'))
+        .filter(visible)
+        .map((el) => ({ el, text: textOf(el), rect: el.getBoundingClientRect() }))
+        .filter((item) => item.text);
+      for (const item of scoped) {
+        const text = item.text.replace(/\\s+/g, ' ');
+        const exact = text.match(/^\\s*(\\d[\\d.,]*\\s*[kmb]?)\\s*(diamonds?|diamantes?)\\s*$/i);
+        if (exact) pushDiamond(parseAmount(exact[1]), item, 'diamond-store-balance');
+      }
+      for (const label of scoped.filter((item) => /^(diamonds?|diamantes?)$/i.test(item.text.trim()))) {
+        const labelRect = label.rect;
+        const nearbyNumbers = scoped
+          .filter((item) => /^\\s*\\d[\\d.,]*\\s*[kmb]?\\s*$/i.test(item.text.trim()))
+          .map((item) => ({
+            item,
+            amount: parseAmount(item.text),
+            distance: Math.abs((item.rect.left + item.rect.width / 2) - (labelRect.left + labelRect.width / 2)) +
+              Math.abs((item.rect.top + item.rect.height / 2) - (labelRect.top + labelRect.height / 2))
+          }))
+          .filter((entry) => entry.amount != null && entry.distance < 90)
+          .sort((a, b) => a.distance - b.distance);
+        if (nearbyNumbers[0]) pushDiamond(nearbyNumbers[0].amount, nearbyNumbers[0].item, 'diamond-store-label-near-number');
+      }
+    }
+    const shopTitle = Array.from(document.querySelectorAll('body *'))
+      .filter(visible)
+      .map((el) => ({ el, text: textOf(el), rect: el.getBoundingClientRect() }))
+      .filter((item) => /mark'?s shop/i.test(item.text))
+      .sort((a, b) => a.text.length - b.text.length)[0];
+    const shopScope = shopTitle ? closestPanel(shopTitle.el) : null;
+    if (shopScope) {
+      const scoped = Array.from(shopScope.querySelectorAll('*'))
+        .filter(visible)
+        .map((el) => ({ el, text: textOf(el), rect: el.getBoundingClientRect() }))
+        .filter((item) => item.text);
+      for (const item of scoped) {
+        const text = item.text.replace(/\\s+/g, ' ');
+        const match = text.match(/\\$\\s*[\\d.,]+\\s*[kmb]?/i);
+        if (match) pushGold(parseAmount(match[0]), item, 'visual-shop');
+      }
+    }
+    for (const item of candidates) {
+      const text = item.text.replace(/\\s+/g, ' ');
+      const low = normalize(text);
+      if (/\\$\\s*[\\d.,]+\\s*[kmb]?/i.test(text)) pushGold(parseAmount(text.match(/\\$\\s*[\\d.,]+\\s*[kmb]?/i)[0]), item, 'visual-hud');
+      if (/(diamond|diamante|diamantes|💎)/.test(low)) {
+        const beforeLabel = text.match(/(\\d[\\d.,]*\\s*[kmb]?)\\s*(?:diamonds?|diamantes?)/i);
+        const afterLabel = text.match(/(?:diamonds?|diamantes?)\\s*(\\d[\\d.,]*\\s*[kmb]?)/i);
+        pushDiamond(parseAmount(beforeLabel && beforeLabel[1]), item, 'diamond-balance-pattern');
+        pushDiamond(parseAmount(afterLabel && afterLabel[1]), item, 'diamond-balance-pattern');
+      }
+    }
+    for (const img of Array.from(document.images || [])) {
+      const meta = normalize([img.alt, img.title, img.src, img.getAttribute('aria-label')].filter(Boolean).join(' '));
+      if (!/(diamond|diamante|diamantes)/.test(meta) || !visible(img)) continue;
+      for (const el of [img.parentElement, img.closest('div'), img.closest('button')].filter(Boolean)) {
+        const text = textOf(el);
+        if (!text || text.length > 80) continue;
+        pushDiamond(parseAmount(text), { text, rect: el.getBoundingClientRect() }, 'diamond-image-nearby-text');
+      }
+    }
+    const bestDiamond = diamondCandidates
+      .filter((item) => Number.isFinite(item.amount))
+      .sort((a, b) => b.score - a.score || b.amount - a.amount)[0];
+    const bestGold = goldCandidates
+      .filter((item) => Number.isFinite(item.amount))
+      .sort((a, b) => b.score - a.score || b.amount - a.amount)[0];
+    if (bestGold) {
+      gold = bestGold.amount;
+      goldSource = bestGold.reason;
+    }
+    const diamonds = bestDiamond ? bestDiamond.amount : null;
+    return { gold, goldSource, walletSource: bestGold ? 'visual' : null, diamonds, diamondsSource: bestDiamond ? 'diamond-store' : null };
+  })();`;
+}
+
+async function refreshGameWalletSnapshots() {
+  const tasks = [];
+  for (const account of data.accounts) {
+    if (account.closed) continue;
+    const wc = views.get(account.id);
+    if (!wc || wc.isDestroyed() || !gameTelemetry.isGameUrl(wc.getURL())) continue;
+    tasks.push(wc.executeJavaScript(scrapeGameWalletScript())
+      .then((wallet) => gameTelemetry.updateWallet(account.id, wallet))
+      .catch(() => {}));
+  }
+  await Promise.allSettled(tasks);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function pulseGameRealtimeConnection(wc) {
+  const report = { ok: false, pulsed: false };
+  if (!wc || wc.isDestroyed()) return { ...report, error: 'webContents no disponible' };
+  if (!wc.debugger || !wc.debugger.isAttached()) return { ...report, error: 'debugger no adjunto' };
+  try {
+    // Buying through Nexa hits the same server API, but the game's Depot UI
+    // keeps its own live WebSocket-backed state. A very short offline/online
+    // pulse makes the game reconnect and receive a fresh `pokes`/`inventory`
+    // snapshot without reloading the page or asking the user to relog.
+    await wc.debugger.sendCommand('Network.emulateNetworkConditions', {
+      offline: true,
+      latency: 0,
+      downloadThroughput: 0,
+      uploadThroughput: 0,
+      connectionType: 'none'
+    });
+    report.pulsed = true;
+    await sleep(260);
+    await wc.debugger.sendCommand('Network.emulateNetworkConditions', {
+      offline: false,
+      latency: 0,
+      downloadThroughput: -1,
+      uploadThroughput: -1,
+      connectionType: 'wifi'
+    });
+    await sleep(850);
+    return { ...report, ok: true };
+  } catch (err) {
+    try {
+      await wc.debugger.sendCommand('Network.emulateNetworkConditions', {
+        offline: false,
+        latency: 0,
+        downloadThroughput: -1,
+        uploadThroughput: -1,
+        connectionType: 'wifi'
+      });
+    } catch {}
+    return { ...report, error: String((err && err.message) || err) };
+  }
+}
+
+function reloadGamePageForFreshState(wc) {
+  return new Promise((resolve) => {
+    const report = { ok: false, reloaded: false };
+    if (!wc || wc.isDestroyed()) {
+      resolve({ ...report, error: 'webContents no disponible' });
+      return;
+    }
+    let settled = false;
+    const done = (payload) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      wc.removeListener('did-finish-load', onLoad);
+      wc.removeListener('did-fail-load', onFail);
+      resolve(payload);
+    };
+    const onLoad = () => done({ ok: true, reloaded: true });
+    const onFail = (_event, errorCode, errorDescription) => done({
+      ok: false,
+      reloaded: true,
+      error: `${errorCode || ''} ${errorDescription || 'reload fallido'}`.trim()
+    });
+    const timer = setTimeout(() => done({ ok: false, reloaded: true, error: 'timeout esperando recarga del juego' }), GAME_STATE_RELOAD_TIMEOUT_MS);
+    wc.once('did-finish-load', onLoad);
+    wc.once('did-fail-load', onFail);
+    try {
+      wc.reload();
+    } catch (err) {
+      done({ ok: false, reloaded: false, error: String((err && err.message) || err) });
+    }
+  });
+}
+
+ipcMain.handle('gameStats:get', async () => {
+  await refreshGameWalletSnapshots();
+  return gameTelemetry.getAllStats();
+});
 
 // For the Tier List / Comparador / Caza & XP tools — works even if the user
 // opens them before any account has attached to the game (triggers the same
 // cached fetch attachCapture() would have).
-ipcMain.handle('pokeFormulas:getCreatureCatalog', async () => {
-  await gameTelemetry.ensureCreatureCatalog();
-  return gameTelemetry.getCreatureCatalogArray();
+ipcMain.handle('pokeFormulas:getCreatureCatalog', async (_e, { forceRefresh } = {}) => {
+  await gameTelemetry.ensureCreatureCatalog(!!forceRefresh);
+  return {
+    creatures: gameTelemetry.getCreatureCatalogArray(),
+    meta: gameTelemetry.getCreatureCatalogMeta()
+  };
 });
+
+// For the sell-lock item picker in the account modal.
+ipcMain.handle('pokeFormulas:getItemCatalog', async () => {
+  await gameTelemetry.ensureItemPriceCatalog();
+  return gameTelemetry.getItemCatalogArray();
+});
+
+// Market tab — browse/buy straight from the account's own session, no travel
+// to an in-game NPC needed. See electron/market.js for the confirmed API shape.
+ipcMain.handle('market:getListings', async (_e, { id, category }) => {
+  const wc = views.get(id);
+  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  try {
+    return await wc.executeJavaScript(market.fetchListingsScript(category));
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+});
+
+ipcMain.handle('market:buy', async (_e, { id, listing }) => {
+  const wc = views.get(id);
+  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  const normalizedListing = listing ? {
+    ...listing,
+    kind: listing.kind ?? listing.type ?? listing.category ?? listing.slot ?? null,
+    currency: String(listing.currency || listing.paymentCurrency || listing.moneyType || 'GOLD').trim().toUpperCase()
+  } : listing;
+  // Only reject outright when we have no id or price — kind defaults to 'item'
+  // via normalizeKindCandidates, and refId is derived from listingId for stack
+  // listings (st:…) so requiring it here would silently block all stack buys.
+  if (!normalizedListing || normalizedListing.id == null || normalizedListing.price == null) {
+    return { ok: false, error: 'Datos del listado incompletos (faltan id o precio)' };
+  }
+  let freshListing = normalizedListing;
+  try {
+    let freshResult = await wc.executeJavaScript(market.fetchListingsScript('All'));
+    if (freshResult && freshResult.ok && Array.isArray(freshResult.listings)) {
+      const freshMatch = freshResult.listings.find((item) => {
+        if (normalizedListing.listingId != null && item.listingId != null) return String(item.listingId) === String(normalizedListing.listingId);
+        if (normalizedListing.marketId != null && item.marketId != null) return String(item.marketId) === String(normalizedListing.marketId);
+        if (normalizedListing.id != null && item.id != null) return String(item.id) === String(normalizedListing.id);
+        if (
+          normalizedListing.refId != null &&
+          item.refId != null &&
+          String(normalizedListing.refId) !== '0' &&
+          String(item.refId) !== '0'
+        ) return String(item.refId) === String(normalizedListing.refId);
+        return false;
+      });
+      if (!freshMatch) {
+        return { ok: false, error: 'El listado ya no está disponible en el Market global. Actualiza la tienda.' };
+      }
+      if (freshMatch) {
+        freshListing = {
+          ...normalizedListing,
+          ...freshMatch,
+          kind: freshMatch.kind ?? freshMatch.type ?? freshMatch.category ?? freshMatch.slot ?? normalizedListing.kind,
+          currency: String(freshMatch.currency || freshMatch.paymentCurrency || freshMatch.moneyType || normalizedListing.currency || 'GOLD').trim().toUpperCase()
+        };
+      }
+    }
+  } catch (e) {
+    console.warn('[market] refresh before buy failed', e);
+  }
+  const listingIdForAttempts = freshListing.listingId ?? freshListing.marketId ?? freshListing.id ?? null;
+  const isStackListingForAttempts = typeof listingIdForAttempts === 'string' && listingIdForAttempts.startsWith('st:');
+  const attempts = isStackListingForAttempts
+    ? [freshListing.kind || freshListing.itemCategory || freshListing.category || 'item']
+    : market.normalizeKindCandidates(freshListing).slice(0, 6);
+  let result = { ok: false, error: 'Compra fallida' };
+  for (const kindCandidate of attempts) {
+    const scripts = market.buyListingScripts(freshListing, kindCandidate);
+    if (!scripts.length && isStackListingForAttempts) {
+      result = { ok: false, status: 404, error: 'Listado agrupado sin anuncio real comprable. Actualiza el Market global.' };
+      break;
+    }
+    for (const script of scripts) {
+      try {
+        result = await wc.executeJavaScript(script);
+      } catch (e) {
+        result = { ok: false, error: String((e && e.message) || e) };
+      }
+      if (result && result.ok) break;
+    }
+    if (result && result.ok) break;
+  }
+  if (result && !result.ok) {
+    const detail = typeof result.payload === 'string'
+      ? result.payload
+      : (result.payload && (result.payload.message || result.payload.error || JSON.stringify(result.payload))) || result.error;
+    const requestHint = result.requestBody ? ` · body ${JSON.stringify(result.requestBody)}` : '';
+    result.error = detail ? `Compra fallida (${result.status || 'sin estado'}): ${detail}${requestHint}` : `Compra fallida (${result.status || 'sin estado'})${requestHint}`;
+  }
+  // Bought (or attempted) from the alert feed — either way it's stale now,
+  // drop it so the same card doesn't linger offering a purchase that either
+  // already happened or just failed for a reason retrying won't fix (listing
+  // gone).
+  if (result && result.ok) {
+    const paidCurrency = market.normalizeCurrency(freshListing.currency || freshListing.paymentCurrency || freshListing.moneyType);
+    const paidPrice = Number(freshListing.price ?? freshListing.amount ?? 0) || 0;
+    if (paidPrice > 0) gameTelemetry.adjustWallet(id, { currency: paidCurrency, delta: -paidPrice });
+    try {
+      result.postBuySync = await wc.executeJavaScript(market.postBuySyncScript(freshListing));
+    } catch (e) {
+      result.postBuySync = { ok: false, error: String((e && e.message) || e) };
+    }
+    result.realtimeSync = await pulseGameRealtimeConnection(wc);
+    try {
+      result.postBuySyncAfterPulse = await wc.executeJavaScript(market.postBuySyncScript(freshListing));
+    } catch (e) {
+      result.postBuySyncAfterPulse = { ok: false, error: String((e && e.message) || e) };
+    }
+    // Full page reload removed: postBuySyncScript + pulseGameRealtimeConnection
+    // are enough to deliver the purchased item to the depot. A reload was
+    // interrupting gameplay (losing the displayed Pokémon level, mid-battle
+    // state, etc.) for no additional benefit.
+    result.gameStateReload = { ok: true, reloaded: false, skipped: true };
+    marketAlertFeed = marketAlertFeed.filter((a) => a.listing.id !== freshListing.id);
+    data.marketPurchases = data.marketPurchases || [];
+    data.marketPurchases.unshift({
+      accountId: id,
+      listingId: freshListing.listingId ?? freshListing.marketId ?? freshListing.id ?? null,
+      refId: freshListing.refId ?? null,
+      name: freshListing.name || freshListing.title || freshListing.speciesName || freshListing.itemName || freshListing.productName || 'Market listing',
+      kind: freshListing.itemCategory || freshListing.kind || freshListing.category || freshListing.type || null,
+      currency: paidCurrency,
+      price: paidPrice,
+      rarity: freshListing.rarity || freshListing.qualityLabel || freshListing.qualityName || null,
+      quality: freshListing.quality ?? freshListing.qualityValue ?? null,
+      iv: freshListing.iv ?? freshListing.ivTotal ?? freshListing.totalIv ?? null,
+      itemId: freshListing.itemId ?? freshListing.productId ?? freshListing.item?.id ?? null,
+      speciesId: freshListing.pokeId ?? freshListing.speciesId ?? freshListing.dexId ?? null,
+      at: Date.now()
+    });
+    if (data.marketPurchases.length > 200) data.marketPurchases.length = 200;
+    persist();
+  }
+  return result;
+});
+
+ipcMain.handle('market:getAlertFeed', () => {
+  pruneMarketAlertFeed();
+  return marketAlertFeed.slice(0, MARKET_ALERT_FEED_CAP);
+});
+ipcMain.handle('market:dismissAlert', (_e, { alertId }) => {
+  const id = String(alertId || '');
+  if (!id) {
+    pruneMarketAlertFeed();
+    return marketAlertFeed.slice(0, MARKET_ALERT_FEED_CAP);
+  }
+  marketAlertFeed = marketAlertFeed.filter((entry) => String(entry.alertId || marketAlertId(entry.accountId, entry.listing)) !== id);
+  pruneMarketAlertFeed();
+  broadcastMarketAlertFeed();
+  return marketAlertFeed.slice(0, MARKET_ALERT_FEED_CAP);
+});
+ipcMain.handle('market:getPurchaseHistory', () => data.marketPurchases || []);
 
 const CALC_STAT_KEYS = ['hp', 'atk', 'def', 'spatk', 'spdef', 'speed'];
 ipcMain.handle('pokeFormulas:computeGrowth', async (_e, payload) => {
@@ -2859,6 +3591,144 @@ ipcMain.handle('pokeFormulas:getHuntTable', async (_e, payload) => {
     }));
 });
 
+// ── Memory optimizer ────────────────────────────────────────────────────────
+// Safe operations only: clears HTTP cache and Cache Storage (cached files,
+// service-worker caches) — never touches cookies, localStorage, IndexedDB or
+// any other storage that keeps the user logged in. Inactive renderers also
+// get a CDP memory purge so their JS heaps can shrink without a reload.
+let lastOptimizeAt = 0;
+let optimizeRunning = false;
+
+function broadcastOptimizeStatus() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('memory:optimizeStatus', {
+    lastOptimizeAt,
+    running: optimizeRunning,
+    dueIn: Math.max(0, lastOptimizeAt + 24 * 60 * 60 * 1000 - Date.now())
+  });
+}
+
+async function optimizeMemory() {
+  if (optimizeRunning) return { ok: false, reason: 'already running' };
+  optimizeRunning = true;
+  broadcastOptimizeStatus();
+  const result = { sessionsCleaned: 0, viewsPurged: 0, cacheCleared: 0 };
+  try {
+    // 1. Clear HTTP disk cache for every account session (safe — just cached
+    //    network responses, not auth state or game data).
+    const clearedSessions = new Set();
+    for (const account of data.accounts) {
+      const ses = views.has(account.id) && !views.get(account.id).isDestroyed()
+        ? views.get(account.id).session
+        : session.fromPartition(accountPartition(account.id));
+      const key = ses.storagePath || account.id;
+      if (clearedSessions.has(key)) continue;
+      clearedSessions.add(key);
+      try {
+        await ses.clearCache();
+        // Cache Storage API (service-worker offline caches) — also safe.
+        await ses.clearStorageData({ storages: ['cachestorage', 'serviceworkers'] });
+        result.sessionsCleaned++;
+      } catch {}
+    }
+    // Also clear the main window's session.
+    try {
+      await session.defaultSession.clearCache();
+      result.cacheCleared++;
+    } catch {}
+
+    // 2. For INACTIVE account renderers: ask Chromium to purge renderer memory
+    //    via CDP. The active account is left untouched so farming isn't broken.
+    const activeId = data.settings.activeAccountId;
+    for (const [accountId, wc] of views.entries()) {
+      if (accountId === activeId || wc.isDestroyed()) continue;
+      try {
+        if (wc.debugger.isAttached()) {
+          await wc.debugger.sendCommand('Memory.forciblyPurgeJavaScriptMemory').catch(() => {});
+        }
+        // Ask the renderer to GC its own JS heap (works if game exposes gc()).
+        await wc.executeJavaScript('try{window.gc&&window.gc()}catch(e){}').catch(() => {});
+        result.viewsPurged++;
+      } catch {}
+    }
+
+    lastOptimizeAt = Date.now();
+  } finally {
+    optimizeRunning = false;
+    broadcastOptimizeStatus();
+  }
+  return { ok: true, ...result };
+}
+
+// Auto-optimize: check every 30 min, fire when 24 h have elapsed.
+function startAutoOptimizeLoop() {
+  setInterval(async () => {
+    if (optimizeRunning) return;
+    const elapsed = Date.now() - lastOptimizeAt;
+    if (elapsed >= 24 * 60 * 60 * 1000) {
+      console.log('[optimize] 24 h threshold reached — running auto-optimization');
+      await optimizeMemory();
+    }
+  }, 30 * 60 * 1000);
+}
+
+// ── Freeze / stuck-character detector ───────────────────────────────────────
+// When the game's WebSocket drops, the character stops moving and kills/XP
+// drop to 0 even though the account looks "connected". We track the last
+// non-zero activity timestamp per account and pulse the WS when it's been
+// silent for too long while the page is still on the game URL.
+const lastActivityAt = new Map(); // accountId → timestamp of last kill/frame
+const FREEZE_THRESHOLD_MS = 4 * 60 * 1000; // 4 min of 0 activity = probably frozen
+const frozenNotifiedAt = new Map(); // prevent repeated notifications per account
+
+function startFreezeDetectorLoop() {
+  setInterval(async () => {
+    const stats = gameTelemetry.getAllStats();
+    for (const account of data.accounts) {
+      if (account.closed) continue;
+      const wc = views.get(account.id);
+      if (!wc || wc.isDestroyed() || !gameTelemetry.isGameUrl(wc.getURL())) continue;
+      const s = stats[account.id];
+      if (!s) continue;
+      // If kills > 0 recently, mark activity.
+      if (s.killsPerHour > 0 || (s.lastEvent && s.lastEvent.at > (lastActivityAt.get(account.id) || 0))) {
+        lastActivityAt.set(account.id, Date.now());
+        frozenNotifiedAt.delete(account.id); // reset freeze notice for this account
+        continue;
+      }
+      const lastActive = lastActivityAt.get(account.id);
+      if (!lastActive) {
+        // No baseline yet — set now so the detector has a reference point.
+        lastActivityAt.set(account.id, Date.now());
+        continue;
+      }
+      const silent = Date.now() - lastActive;
+      if (silent < FREEZE_THRESHOLD_MS) continue;
+      // Looks frozen — pulse the WS quietly to unstick it.
+      const lastNotified = frozenNotifiedAt.get(account.id) || 0;
+      if (Date.now() - lastNotified < 5 * 60 * 1000) continue; // max once per 5 min
+      frozenNotifiedAt.set(account.id, Date.now());
+      console.log('[freeze-detector] account', account.id, 'silent for', Math.round(silent / 1000), 's — nudging WS');
+      pulseGameRealtimeConnection(wc).catch(() => {});
+      // Also dispatch a focus event inside the page to wake React handlers.
+      wc.executeJavaScript(`
+        try {
+          window.dispatchEvent(new Event('focus'));
+          window.dispatchEvent(new CustomEvent('nexa-reconnect', { detail: { reason: 'freeze-detector' } }));
+        } catch(e) {}
+      `).catch(() => {});
+    }
+  }, 60 * 1000); // check every minute
+}
+
+ipcMain.handle('memory:optimize', async () => optimizeMemory());
+ipcMain.handle('memory:getOptimizeStatus', () => ({
+  lastOptimizeAt,
+  running: optimizeRunning,
+  dueIn: Math.max(0, lastOptimizeAt + 24 * 60 * 60 * 1000 - Date.now())
+}));
+// ────────────────────────────────────────────────────────────────────────────
+
 ipcMain.handle('metrics:get', () => {
   const metrics = app.getAppMetrics();
   const byPid = new Map(metrics.map((m) => [m.pid, m]));
@@ -2893,6 +3763,8 @@ if (!gotSingleInstanceLock) {
 }
 
 app.whenReady().then(() => {
+  try {
+  if (process.platform === 'win32') app.setAppUserModelId('com.nexabrowser.app');
   // Must happen before anything reads data.passwords (createWindow/renderLayout
   // below broadcast full state right after) — safeStorage's OS-keychain backend
   // isn't reliably available until app.whenReady() resolves, so load() above
@@ -2906,10 +3778,15 @@ app.whenReady().then(() => {
     return meta;
   });
   Menu.setApplicationMenu(null);
-  removeRetiredExtensions();
+  store.watchDataFile(() => {
+    console.warn('[main] data file externally modified; a restart is recommended to avoid state divergence');
+  });
   gameTelemetry.startHeartbeat();
   gameTelemetry.setBallsLowThreshold(data.settings.pokeIdleAlerts?.ballsThreshold ?? 20);
   startPokeIdleAlertLoop();
+  startMarketAlertLoop();
+  startAutoOptimizeLoop();
+  startFreezeDetectorLoop();
   app.setLoginItemSettings({ openAtLogin: !!data.settings.startWithWindows });
   createWindow();
   mainWindow.webContents.once('did-finish-load', () => {
@@ -2925,6 +3802,10 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+  } catch (err) {
+    console.error('[boot] failed during app.whenReady()', err);
+    dialog.showErrorBox('Nexa Browser', String(err && err.stack ? err.stack : err));
+  }
 });
 
 app.on('window-all-closed', () => {

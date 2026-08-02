@@ -47,13 +47,14 @@ function decryptStoredPasswords(passwords) {
 
 const DEFAULT_DATA = {
   spaces: [
-    { id: 'default', name: 'General', color: '#4f8cff', icon: 'grid', defaultUrl: 'https://www.google.com', defaultLayout: 'single' }
+    { id: 'default', name: 'General', color: '#4f8cff', icon: 'grid', defaultUrl: 'https://poke.idleworld.online/login', defaultLayout: 'single' }
   ],
   accounts: [],
   bookmarks: [],
   passwords: [],
   history: [],
   downloads: [],
+  marketPurchases: [],
   settings: {
     // 'system' sigue la preferencia del SO (prefers-color-scheme); 'dark'/'light'
     // fuerzan el tema explícitamente, elegido por el usuario en Configuración.
@@ -66,7 +67,8 @@ const DEFAULT_DATA = {
     language: 'es',
     startWithWindows: false,
     reopenLastSpace: true,
-    defaultStartUrl: 'https://www.google.com',
+    defaultStartUrl: 'https://poke.idleworld.online/login',
+    supportPaypalUrl: 'https://paypal.me/Zukuth',
     defaultZoom: 1,
     newSpaceDefaultLayout: 'grid',
     downloadsFolder: null,
@@ -82,7 +84,22 @@ const DEFAULT_DATA = {
       rare: true,
       ballsLow: true,
       disconnect: true,
-      ballsThreshold: 20
+      ballsThreshold: 20,
+      marketIv: false,
+      marketIvDesktop: true,
+      marketIvRareOnly: true,
+      marketMinIv: 150
+    },
+    pokeIdleMarketPrefs: {
+      rarityFilterVersion: 2,
+      showEpic: false,
+      showLegendary: false,
+      showDollar: true,
+      showDiamonds: true,
+      autoRefresh: false,
+      refreshSeconds: 15,
+      dealMaxPrice: 0,
+      dealNotify: true
     }
   }
 };
@@ -102,6 +119,7 @@ function load() {
       ...parsed,
       settings: { ...DEFAULT_DATA.settings, ...(parsed.settings || {}) }
     };
+    if (!merged.settings.supportPaypalUrl) merged.settings.supportPaypalUrl = DEFAULT_DATA.settings.supportPaypalUrl;
     // Passwords are decrypted later via decryptStoredPasswords(), once
     // app.whenReady() has resolved — see the comment on that function.
     return merged;
@@ -136,4 +154,26 @@ function save(data) {
   fs.renameSync(TMP_FILE, DATA_FILE);
 }
 
-module.exports = { load, save, decryptStoredPasswords, DATA_FILE };
+// Watches the data file for external modifications (e.g. a second app instance
+// or a manual edit) and logs a warning so stale in-memory state is visible in
+// the logs. Returns the watcher so the caller can close it on quit.
+function watchDataFile(onChange) {
+  try {
+    if (!fs.existsSync(DATA_FILE)) return null;
+    let debounce = null;
+    const watcher = fs.watch(DATA_FILE, () => {
+      clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        console.warn('[store] data file was modified outside this process — in-memory state may be stale');
+        if (typeof onChange === 'function') onChange();
+      }, 300);
+    });
+    watcher.on('error', (err) => console.warn('[store] fs.watch error', err));
+    return watcher;
+  } catch (err) {
+    console.warn('[store] could not start fs.watch on data file', err);
+    return null;
+  }
+}
+
+module.exports = { load, save, decryptStoredPasswords, watchDataFile, DATA_FILE };

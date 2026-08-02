@@ -88,6 +88,7 @@
 
       <button id="tb-fullscreen" title="Pantalla completa" data-i18n-title="topbar.fullscreen">⛶</button>
       <button id="tb-poke-idle" title="Poke Idle World">🎮</button>
+      <button id="tb-support" class="support-btn" title="Aportar al proyecto" data-i18n-title="topbar.support">❤</button>
       <button id="tb-downloads" title="Descargas" data-i18n-title="topbar.downloads">⬇</button>
       <button id="tb-settings" title="Configuración" data-i18n-title="topbar.settings">⚙</button>
       <button id="tb-bookmarks" title="Favoritos" data-i18n-title="topbar.bookmarks">
@@ -131,6 +132,7 @@
       <span id="status-ram"></span>
       <span id="status-fps"></span>
       <span id="status-time"></span>
+      <button id="btn-optimize" class="status-optimize-btn" title="Optimizar memoria — libera caché y RAM innecesaria sin cerrar sesiones">⚡ Optimizar</button>
       <span id="status-version"></span>
     </div>
   </div>
@@ -218,6 +220,37 @@
           <div class="settings-hint" data-i18n="field.ecoModeHint">Reduce la frecuencia de animación de esta cuenta para ahorrar CPU. No afecta el progreso en segundo plano.</div>
         </div>
         <label class="switch"><input type="checkbox" id="account-input-eco" /><span class="slider"></span></label>
+      </div>
+
+      <div class="settings-row" style="padding:0; margin-top:8px;">
+        <div>
+          <div data-i18n="field.hideChat">Ocultar chat del juego</div>
+          <div class="settings-hint" data-i18n="field.hideChatHint">Quita el chat del árbol de la página (no solo lo tapa) — menos trabajo de layout/pintado para el navegador.</div>
+        </div>
+        <label class="switch"><input type="checkbox" id="account-input-hide-chat" /><span class="slider"></span></label>
+      </div>
+
+      <div class="settings-row" style="padding:0; margin-top:8px;">
+        <div>
+          <div data-i18n="field.hideGameBar">Ocultar barra superior del juego</div>
+          <div class="settings-hint" data-i18n="field.hideGameBarHint">Reemplaza a la antigua Pokébola flotante — mismo resultado, sin botón ni observador corriendo en la página.</div>
+        </div>
+        <label class="switch"><input type="checkbox" id="account-input-hide-gamebar" /><span class="slider"></span></label>
+      </div>
+
+      <div class="settings-row" style="padding:0; margin-top:8px;">
+        <div>
+          <div data-i18n="field.sellLock">Candado de venta</div>
+          <div class="settings-hint" data-i18n="field.sellLockHint">Bloquea de verdad la venta de los Pokémon e ítems marcados abajo — no es solo un aviso de confirmación.</div>
+        </div>
+        <label class="switch"><input type="checkbox" id="account-input-selllock" /><span class="slider"></span></label>
+      </div>
+
+      <label data-i18n="field.sellLockItems">Ítems bloqueados</label>
+      <div id="account-selllock-items" class="selllock-item-list"></div>
+      <div class="swatch-row" style="gap:8px;">
+        <select id="account-selllock-item-picker" style="flex:1;"></select>
+        <button id="account-selllock-item-add" type="button" data-i18n="action.add">Agregar</button>
       </div>
 
       <div class="modal-actions">
@@ -415,6 +448,17 @@
               <div class="settings-row"><span data-i18n="settings.electron">Electron</span><span id="ver-electron"></span></div>
               <div class="settings-row"><span data-i18n="settings.chromium">Chromium</span><span id="ver-chrome"></span></div>
             </div>
+            <div class="settings-support-card">
+              <div>
+                <div class="settings-support-title" data-i18n="settings.supportTitle">Aporta al proyecto</div>
+                <p class="settings-hint" data-i18n="settings.supportHint">Configura tu enlace real de PayPal para que el botón de aporte abra una vía segura de apoyo.</p>
+              </div>
+              <label class="poke-field">
+                <span data-i18n="settings.supportPaypalUrl">Link o código PayPal</span>
+                <textarea id="set-support-paypal-url" rows="3" placeholder="https://paypal.me/Zukuth" data-i18n-placeholder="settings.supportPaypalPlaceholder"></textarea>
+              </label>
+              <button id="support-open-paypal" type="button" class="primary" data-i18n="settings.supportOpen">Abrir aporte</button>
+            </div>
           </div>
 
         </div>
@@ -445,19 +489,46 @@
       <button id="btn-close-poke-idle" class="icon-close">✕</button>
     </div>
     <div class="poke-drawer-body">
+      <svg class="poke-icon-sprite" aria-hidden="true" focusable="false">
+        <symbol id="poke-icon-command" viewBox="0 0 24 24"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h4v4h-4A1.5 1.5 0 0 1 4 6.5v-1Zm10.5-1.5h4A1.5 1.5 0 0 1 20 5.5v1A1.5 1.5 0 0 1 18.5 8h-4V4ZM4 17.5A1.5 1.5 0 0 1 5.5 16h4v4h-4A1.5 1.5 0 0 1 4 18.5v-1Zm10.5-1.5h4a1.5 1.5 0 0 1 1.5 1.5v1a1.5 1.5 0 0 1-1.5 1.5h-4v-4ZM9.5 8h5v8h-5V8Z"/></symbol>
+        <symbol id="poke-icon-dashboard" viewBox="0 0 24 24"><path d="M4 13h7V4H4v9Zm0 7h7v-5H4v5Zm9 0h7v-9h-7v9Zm0-16v5h7V4h-7Z"/></symbol>
+        <symbol id="poke-icon-team" viewBox="0 0 24 24"><path d="M8 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm8 0a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM4 21v-2.2C4 16.1 5.8 14 8.1 14h.8c2.3 0 4.1 2.1 4.1 4.8V21H4Zm11 0v-2.2c0-1.7-.6-3.2-1.6-4.3.7-.3 1.5-.5 2.4-.5h.8c2.3 0 4.1 2.1 4.1 4.8V21H15Z"/></symbol>
+        <symbol id="poke-icon-calc" viewBox="0 0 24 24"><path d="M6 3h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm2 4v3h8V7H8Zm0 6v2h2v-2H8Zm4 0v2h2v-2h-2Zm4 0v2h2v-2h-2Zm-8 4v2h2v-2H8Zm4 0v2h2v-2h-2Zm4 0v2h2v-2h-2Z"/></symbol>
+        <symbol id="poke-icon-hunt" viewBox="0 0 24 24"><path d="M12 2 8.8 8.8 2 12l6.8 3.2L12 22l3.2-6.8L22 12l-6.8-3.2L12 2Zm0 6.2 1.3 2.5 2.5 1.3-2.5 1.3L12 15.8l-1.3-2.5L8.2 12l2.5-1.3L12 8.2Z"/></symbol>
+        <symbol id="poke-icon-tier" viewBox="0 0 24 24"><path d="M5 20h14v-3H5v3Zm2-5h10v-3H7v3Zm2-5h6V7H9v3Zm2-5h2V2h-2v3Z"/></symbol>
+        <symbol id="poke-icon-drops" viewBox="0 0 24 24"><path d="M12 2s7 7.2 7 12.2A7 7 0 0 1 5 14.2C5 9.2 12 2 12 2Zm0 4.6c-2.1 2.5-4 5.5-4 7.6a4 4 0 0 0 8 0c0-2.1-1.9-5.1-4-7.6Z"/></symbol>
+        <symbol id="poke-icon-book" viewBox="0 0 24 24"><path d="M5 4.5A2.5 2.5 0 0 1 7.5 2H20v17H7.5A2.5 2.5 0 0 0 5 21.5v-17ZM8 5v2h9V5H8Zm0 4v2h9V9H8Zm0 4v2h6v-2H8Z"/></symbol>
+        <symbol id="poke-icon-capture" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 3a6 6 0 0 1 5.7 4H6.3A6 6 0 0 1 12 6Zm0 12a6 6 0 0 1-5.7-4h11.4A6 6 0 0 1 12 18Zm0-7.5A1.5 1.5 0 1 0 12 13.5a1.5 1.5 0 0 0 0-3Z"/></symbol>
+        <symbol id="poke-icon-market" viewBox="0 0 24 24"><path d="M6 6h14l-1.5 8.5A2 2 0 0 1 16.5 16H9a2 2 0 0 1-2-1.7L5.5 4H3V2h4l.4 4ZM9 20a2 2 0 1 1 0-4 2 2 0 0 1 0 4Zm8 0a2 2 0 1 1 0-4 2 2 0 0 1 0 4Z"/></symbol>
+        <symbol id="poke-icon-alert" viewBox="0 0 24 24"><path d="M12 2 2 20h20L12 2Zm1 15h-2v-2h2v2Zm0-4h-2V8h2v5Z"/></symbol>
+        <symbol id="poke-icon-settings" viewBox="0 0 24 24"><path d="M19.4 13.5c.1-.5.1-1 .1-1.5s0-1-.1-1.5l2-1.5-2-3.5-2.4 1a8 8 0 0 0-2.6-1.5L14 2h-4l-.4 2.5A8 8 0 0 0 7 6L4.6 5 2.6 8.5l2 1.5c-.1.5-.1 1-.1 1.5s0 1 .1 1.5l-2 1.5 2 3.5 2.4-1a8 8 0 0 0 2.6 1.5L10 22h4l.4-2.5A8 8 0 0 0 17 18l2.4 1 2-3.5-2-1.5ZM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5Z"/></symbol>
+      </svg>
+      <div class="poke-hero">
+        <div>
+          <div class="poke-hero-kicker" data-i18n="pokeIdle.heroKicker">Nexa Game Center</div>
+          <h2 data-i18n="pokeIdle.heroTitle">Centro táctico Poke Idle</h2>
+          <p data-i18n="pokeIdle.heroDesc">Resumen vivo, market global, equipo, drops y calculadoras en un solo panel mientras sigues jugando.</p>
+        </div>
+        <div class="poke-hero-badge" aria-hidden="true"><svg><use href="#poke-icon-command"></use></svg><span>NEXU</span></div>
+      </div>
       <div class="poke-drawer-nav">
-        <div class="poke-nav-item" data-poke-scroll="resumen" data-i18n="pokeIdle.tab.resumen">Resumen</div>
-        <div class="poke-nav-item" data-poke-scroll="equipo" data-i18n="pokeIdle.tab.equipo">Mi Equipo</div>
-        <div class="poke-nav-item" data-poke-scroll="calculadora" data-i18n="pokeIdle.tab.calculadora">Calculadora IV</div>
-        <div class="poke-nav-item" data-poke-scroll="caza" data-i18n="pokeIdle.tab.caza">Caza &amp; XP</div>
-        <div class="poke-nav-item" data-poke-scroll="tierlist" data-i18n="pokeIdle.tab.tierlist">Tier List</div>
-        <div class="poke-nav-item" data-poke-scroll="drops" data-i18n="pokeIdle.tab.drops">Drops en vivo</div>
-        <div class="poke-nav-item" data-poke-scroll="capturas" data-i18n="pokeIdle.tab.capturas">Capturas destacadas</div>
-        <div class="poke-nav-item" data-poke-scroll="alertas" data-i18n="pokeIdle.tab.alertas">Alertas</div>
+        <div class="poke-nav-item" data-poke-scroll="resumen"><span><svg><use href="#poke-icon-dashboard"></use></svg></span><b data-i18n="pokeIdle.tab.resumen">Resumen</b></div>
+        <div class="poke-nav-item" data-poke-scroll="equipo"><span><svg><use href="#poke-icon-team"></use></svg></span><b data-i18n="pokeIdle.tab.equipo">Mi Equipo</b></div>
+        <div class="poke-nav-item" data-poke-scroll="calculadora"><span><svg><use href="#poke-icon-calc"></use></svg></span><b data-i18n="pokeIdle.tab.calculadora">Calculadora IV</b></div>
+        <div class="poke-nav-item" data-poke-scroll="caza"><span><svg><use href="#poke-icon-hunt"></use></svg></span><b data-i18n="pokeIdle.tab.caza">Caza &amp; XP</b></div>
+        <div class="poke-nav-item" data-poke-scroll="tierlist"><span><svg><use href="#poke-icon-tier"></use></svg></span><b data-i18n="pokeIdle.tab.tierlist">Tier List</b></div>
+        <div class="poke-nav-item" data-poke-scroll="drops"><span><svg><use href="#poke-icon-drops"></use></svg></span><b data-i18n="pokeIdle.tab.drops">Drops en vivo</b></div>
+        <div class="poke-nav-item" data-poke-scroll="pokedexitems"><span><svg><use href="#poke-icon-book"></use></svg></span><b data-i18n="pokeIdle.tab.pokedexItems">Poképedia drops</b></div>
+        <div class="poke-nav-item" data-poke-scroll="capturas"><span><svg><use href="#poke-icon-capture"></use></svg></span><b data-i18n="pokeIdle.tab.capturas">Capturas destacadas</b></div>
+        <div class="poke-nav-item" data-poke-scroll="market"><span><svg><use href="#poke-icon-market"></use></svg></span><b data-i18n="pokeIdle.tab.market">Market</b></div>
+        <div class="poke-nav-item" data-poke-scroll="alertas"><span><svg><use href="#poke-icon-alert"></use></svg></span><b data-i18n="pokeIdle.tab.alertas">Alertas</b></div>
+        <div class="poke-nav-item" data-poke-scroll="ajustes"><span><svg><use href="#poke-icon-settings"></use></svg></span><b data-i18n="pokeIdle.tab.ajustes">Ajustes</b></div>
       </div>
 
       <section id="poke-section-resumen" class="poke-section">
-        <h3 data-i18n="pokeIdle.tab.resumen">Resumen</h3>
+        <div class="poke-section-heading">
+          <div><span class="poke-section-eyebrow" data-i18n="pokeIdle.sectionLive">En vivo</span><h3 data-i18n="pokeIdle.tab.resumen">Resumen</h3></div>
+        </div>
         <p class="settings-hint" data-i18n="pokeIdle.resumenHint">
           Estadísticas en vivo de Poke Idle World, leídas de los datos que el propio juego transmite por
           WebSocket — solo lectura: nunca automatiza capturas ni toca el captcha. El contador de cada cuenta se
@@ -564,6 +635,10 @@
           <span data-i18n="pokeIdle.filterByType">Filtrar por tipo</span>
           <select id="tier-type"><option value="" data-i18n="pokeIdle.typeAll">Todos</option></select>
         </div>
+        <div class="settings-row">
+          <span id="tier-meta" class="settings-hint" data-i18n="pokeIdle.tierMetaLoading">Catálogo pendiente de cargar.</span>
+          <button id="tier-refresh" type="button" data-i18n="pokeIdle.refreshCatalog">Actualizar catálogo</button>
+        </div>
         <div id="tier-list-wrap" class="poke-tier-wrap"></div>
         <div id="tier-detail" class="poke-tier-detail"></div>
       </section>
@@ -578,10 +653,144 @@
         <div id="poke-drops-wrap"></div>
       </section>
 
+      <section id="poke-section-pokedexitems" class="poke-section">
+        <h3 data-i18n="pokeIdle.tab.pokedexItems">Poképedia drops</h3>
+        <p class="settings-hint" data-i18n="pokeIdle.pokedexItemsHint">
+          Catálogo de ítems del juego cruzado con criaturas: busca un item y mira qué Pokémon lo dropean, su valor NPC e imagen.
+        </p>
+        <div class="poke-pedia-toolbar">
+          <input id="poke-item-pedia-search" type="search" placeholder="Buscar item, categoría o Pokémon..." data-i18n-placeholder="pokeIdle.pokedexItemsSearch" />
+          <select id="poke-item-pedia-category"></select>
+        </div>
+        <div id="poke-item-pedia" class="poke-item-pedia"></div>
+      </section>
+
       <section id="poke-section-capturas" class="poke-section">
         <h3 data-i18n="pokeIdle.tab.capturas">Capturas destacadas</h3>
-        <p class="settings-hint" data-i18n="pokeIdle.capturasHint">Todo lo capturado en esta sesión, en tiempo real (últimas 100).</p>
+        <p class="settings-hint" data-i18n="pokeIdle.capturasHint">Todo lo capturado en esta sesión, en tiempo real (últimas 30 destacadas guardadas).</p>
         <div id="poke-idle-notable" class="poke-notable-list"></div>
+      </section>
+
+      <section id="poke-section-market" class="poke-section">
+        <h3 data-i18n="pokeIdle.tab.market">Market</h3>
+        <p class="settings-hint" data-i18n="pokeIdle.marketHint">
+          Compra directa desde el Market global del juego — misma sesión y saldo de la cuenta elegida, sin
+          mover al personaje ni viajar a ningún NPC.
+        </p>
+        <div class="settings-row">
+          <span data-i18n="pokeIdle.account">Cuenta</span>
+          <select id="market-account"></select>
+        </div>
+        <div class="poke-market-categories" id="market-categories">
+          <button type="button" class="poke-market-cat active" data-cat="All">All</button>
+          <button type="button" class="poke-market-cat" data-cat="Items">Items</button>
+          <button type="button" class="poke-market-cat" data-cat="Stones">Stones</button>
+          <button type="button" class="poke-market-cat" data-cat="Poké Balls">Poké Balls</button>
+          <button type="button" class="poke-market-cat" data-cat="Diamonds">Diamonds</button>
+          <button type="button" class="poke-market-cat" data-cat="Pokémon">Pokémon</button>
+        </div>
+        <div class="market-toolbar">
+          <input id="market-search" type="search" placeholder="Buscar por nombre, rareza, tipo, precio o dueño" data-i18n-placeholder="pokeIdle.marketSearch" />
+          <select id="market-sort" title="Ordenar" data-i18n-title="pokeIdle.marketSort">
+            <option value="recent" data-i18n="pokeIdle.marketSortRecent">Más recientes</option>
+            <option value="oldest" data-i18n="pokeIdle.marketSortOldest">Más antiguos</option>
+            <option value="price-asc" data-i18n="pokeIdle.marketSortPriceAsc">Menor precio</option>
+            <option value="price-desc" data-i18n="pokeIdle.marketSortPriceDesc">Mayor precio</option>
+            <option value="iv-desc" data-i18n="pokeIdle.marketSortIvDesc">Mayor IV</option>
+            <option value="name-asc" data-i18n="pokeIdle.marketSortNameAsc">Nombre A-Z</option>
+          </select>
+          <div class="market-view-switch" role="group" aria-label="Vista">
+            <button type="button" class="market-view-btn active" data-view="grid" data-i18n="pokeIdle.marketViewGrid">Grilla</button>
+            <button type="button" class="market-view-btn" data-view="list" data-i18n="pokeIdle.marketViewList">Lista</button>
+          </div>
+          <button type="button" id="market-refresh" data-i18n="pokeIdle.marketRefresh">Actualizar</button>
+        </div>
+        <div class="market-meta">
+          <div id="market-status" class="settings-hint"></div>
+          <div id="market-last-updated" class="settings-hint"></div>
+        </div>
+        <div class="market-control-deck">
+          <div class="market-control-card">
+            <div class="market-control-title" data-i18n="pokeIdle.marketSniperTitle">Sniper seguro</div>
+            <div class="market-control-grid">
+              <label class="market-control-inline">
+                <span data-i18n="pokeIdle.marketAutoRefresh">Auto-refresh</span>
+                <label class="switch"><input type="checkbox" id="market-auto-refresh" /><span class="slider"></span></label>
+              </label>
+              <label class="market-control-inline">
+                <span data-i18n="pokeIdle.marketRefreshEvery">Cada</span>
+                <input type="number" id="market-refresh-seconds" min="5" max="120" value="15" />
+              </label>
+              <label class="market-control-inline">
+                <span data-i18n="pokeIdle.marketDealMax">Precio máx.</span>
+                <input type="number" id="market-deal-max-price" min="0" value="0" />
+              </label>
+              <label class="market-control-inline">
+                <span data-i18n="pokeIdle.marketDealNotify">Alertar ofertas</span>
+                <label class="switch"><input type="checkbox" id="market-deal-notify" /><span class="slider"></span></label>
+              </label>
+            </div>
+            <div id="market-deal-status" class="settings-hint"></div>
+          </div>
+          <div class="market-control-card">
+            <div class="market-control-title" data-i18n="pokeIdle.marketHealthTitle">Salud de cuentas</div>
+            <div id="market-health" class="market-health-list"></div>
+          </div>
+        </div>
+        <div class="market-filter-card">
+          <div id="market-iv-filter" class="settings-row" style="display:none;">
+            <span data-i18n="pokeIdle.minIv">IV mínimo</span>
+            <input type="number" id="market-iv-min" min="0" max="192" value="0" style="width:70px;" />
+          </div>
+          <div class="settings-row">
+            <span data-i18n="pokeIdle.marketRarityFilter">Rareza</span>
+            <select id="market-rarity-filter">
+              <option value="all" data-i18n="pokeIdle.marketRarityAll">Todas</option>
+              <option value="Fraca">Fraca</option>
+              <option value="Comum">Comum</option>
+              <option value="Incomum">Incomum</option>
+              <option value="Rara">Rara</option>
+              <option value="Épica">Épica</option>
+              <option value="Lendária">Lendária</option>
+              <option value="Mythic">Mythic</option>
+              <option value="Ancient">Ancient</option>
+              <option value="Divine">Divine</option>
+            </select>
+          </div>
+          <div class="settings-row market-toggle-row">
+            <span data-i18n="pokeIdle.marketShowEpic">Mostrar épicos</span>
+            <label class="switch">
+              <input type="checkbox" id="market-show-epic" />
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="settings-row market-toggle-row">
+            <span data-i18n="pokeIdle.marketShowLegendary">Mostrar legendarios</span>
+            <label class="switch">
+              <input type="checkbox" id="market-show-legendary" />
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="settings-row market-toggle-row">
+            <span data-i18n="pokeIdle.marketShowDollar">Mostrar dólares</span>
+            <label class="switch">
+              <input type="checkbox" id="market-show-dollar" />
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="settings-row market-toggle-row">
+            <span data-i18n="pokeIdle.marketShowDiamonds">Mostrar diamantes</span>
+            <label class="switch">
+              <input type="checkbox" id="market-show-diamonds" />
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+        <div id="market-results" class="poke-market-grid"></div>
+        <div class="settings-subheading" data-i18n="pokeIdle.marketAlertFeed">Alertas de Pokémon recientes</div>
+        <div id="market-alert-feed" class="poke-market-grid"></div>
+        <div class="settings-subheading" data-i18n="pokeIdle.marketHistoryTitle">Últimas compras</div>
+        <div id="market-purchase-history" class="market-history-list"></div>
       </section>
 
       <section id="poke-section-alertas" class="poke-section">
@@ -612,6 +821,104 @@
             <label class="switch"><input type="checkbox" id="poke-alert-balls" /><span class="slider"></span></label>
           </div>
         </div>
+        <div class="settings-row">
+          <div>
+            <div data-i18n="pokeIdle.alertsMarketIv">🛒 Pokémon en el Market</div>
+            <div class="settings-hint" data-i18n="pokeIdle.alertsMarketIvHint">Avisar cuando aparezca un Pokémon nuevo a la venta con IV igual o mayor a:</div>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <input type="number" id="poke-alert-market-iv-threshold" min="0" max="192" style="width:70px;" />
+            <label class="switch"><input type="checkbox" id="poke-alert-market-iv" /><span class="slider"></span></label>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div data-i18n="pokeIdle.alertsMarketIvDesktop">NotificaciÃ³n de PC para Market IV</div>
+            <div class="settings-hint" data-i18n="pokeIdle.alertsMarketIvDesktopHint">Si lo apagas, Nexa sigue guardando los Ãºltimos 5 avisos en la interfaz, pero no muestra notificaciones del sistema.</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="poke-alert-market-iv-desktop" /><span class="slider"></span></label>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div data-i18n="pokeIdle.alertsMarketIvRareOnly">Solo Epica/Lendaria+</div>
+            <div class="settings-hint" data-i18n="pokeIdle.alertsMarketIvRareOnlyHint">Filtra las alertas de IV para ocultar Fraca, Comum, Incomum y Rara aunque tengan IV alto.</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="poke-alert-market-iv-rare-only" /><span class="slider"></span></label>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div data-i18n="pokeIdle.alertsMarketIvMaxPrice">💰 Precio máximo (sniper)</div>
+            <div class="settings-hint" data-i18n="pokeIdle.alertsMarketIvMaxPriceHint">Solo alertar si el precio está por debajo de este valor. Pon 0 para sin límite.</div>
+          </div>
+          <input type="number" id="poke-alert-market-iv-max-price" min="0" step="1000" style="width:90px;" placeholder="0 = sin límite" />
+        </div>
+      </section>
+
+      <section id="poke-section-ajustes" class="poke-section">
+        <h3 data-i18n="pokeIdle.tab.ajustes">Ajustes</h3>
+        <p class="settings-hint" data-i18n="pokeIdle.settingsHint">Opciones rápidas por cuenta para rendimiento, limpieza visual y protección de venta, sin abrir el editor de cuentas.</p>
+        <label class="poke-field">
+          <span data-i18n="pokeIdle.account">Cuenta</span>
+          <select id="poke-settings-account"></select>
+        </label>
+        <div class="poke-settings-tabs">
+          <button type="button" class="poke-settings-tab active" data-poke-settings-tab="performance" data-i18n="pokeIdle.settingsTabPerformance">Rendimiento</button>
+          <button type="button" class="poke-settings-tab" data-poke-settings-tab="interface" data-i18n="pokeIdle.settingsTabInterface">Interfaz del juego</button>
+          <button type="button" class="poke-settings-tab" data-poke-settings-tab="protection" data-i18n="pokeIdle.settingsTabProtection">Protección</button>
+        </div>
+        <div id="poke-settings-empty" class="market-empty-state hidden" data-i18n="pokeIdle.settingsNoAccount">No hay cuentas disponibles.</div>
+        <div class="poke-settings-panels">
+          <div class="poke-settings-panel active" data-poke-settings-panel="performance">
+            <div class="settings-row">
+              <div>
+                <div data-i18n="field.ecoMode">Modo Eco</div>
+                <div class="settings-hint" data-i18n="field.ecoModeHint">Reduce la frecuencia de animación de esta cuenta para ahorrar CPU. No afecta el progreso en segundo plano.</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="poke-settings-eco" /><span class="slider"></span></label>
+            </div>
+            <div class="poke-eco-benchmark-card">
+              <div>
+                <strong data-i18n="pokeIdle.ecoBenchmarkTitle">Comparativa Eco</strong>
+                <p data-i18n="pokeIdle.ecoBenchmarkHint">Mide esta cuenta con Eco apagado y encendido, luego restaura tu preferencia.</p>
+              </div>
+              <button type="button" id="poke-settings-eco-benchmark" data-i18n="pokeIdle.ecoBenchmarkRun">Medir Eco</button>
+              <div id="poke-settings-eco-benchmark-result" class="poke-eco-benchmark-result" data-i18n="pokeIdle.ecoBenchmarkEmpty">Sin mediciÃ³n todavÃ­a.</div>
+            </div>
+          </div>
+          <div class="poke-settings-panel" data-poke-settings-panel="interface">
+            <div class="settings-row">
+              <div>
+                <div data-i18n="field.hideChat">Ocultar chat del juego</div>
+                <div class="settings-hint" data-i18n="field.hideChatHint">Quita el chat del árbol de la página (no solo lo tapa) — menos trabajo de layout/pintado para el navegador.</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="poke-settings-hide-chat" /><span class="slider"></span></label>
+            </div>
+            <div class="settings-row">
+              <div>
+                <div data-i18n="field.hideGameBar">Ocultar barra superior del juego</div>
+                <div class="settings-hint" data-i18n="field.hideGameBarHint">Reemplaza a la antigua Pokébola flotante — mismo resultado, sin botón ni observador corriendo en la página.</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="poke-settings-hide-gamebar" /><span class="slider"></span></label>
+            </div>
+          </div>
+          <div class="poke-settings-panel" data-poke-settings-panel="protection">
+            <div class="settings-row">
+              <div>
+                <div data-i18n="field.sellLock">Candado de venta</div>
+                <div class="settings-hint" data-i18n="field.sellLockHint">Bloquea de verdad la venta de los Pokémon e ítems marcados abajo — no es solo un aviso de confirmación.</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="poke-settings-selllock" /><span class="slider"></span></label>
+            </div>
+            <label class="poke-field">
+              <span data-i18n="field.sellLockItems">Ítems bloqueados</span>
+              <div id="poke-settings-selllock-items" class="selllock-item-list"></div>
+            </label>
+            <div class="poke-settings-lock-row">
+              <select id="poke-settings-selllock-item-picker"></select>
+              <button id="poke-settings-selllock-item-add" type="button" data-i18n="action.add">Agregar</button>
+            </div>
+          </div>
+        </div>
       </section>
 
     </div>
@@ -621,6 +928,23 @@
     <div class="modal cmdk-modal">
       <input id="cmdk-input" type="text" placeholder="Buscar cuentas, espacios, acciones o ir a una URL..." data-i18n-placeholder="cmdk.placeholder" autocomplete="off" spellcheck="false" />
       <div id="cmdk-list" class="cmdk-list"></div>
+    </div>
+  </div>
+
+  <div id="market-modal" class="modal-overlay hidden">
+    <div class="modal market-modal">
+      <div class="settings-header">
+        <div class="modal-title" data-i18n="pokeIdle.marketDetails">Detalle del listado</div>
+        <button id="btn-close-market-modal" class="icon-close" data-i18n-title="action.close" title="Cerrar">✕</button>
+      </div>
+      <div id="market-detail-body" class="market-detail-body"></div>
+      <div class="modal-actions">
+        <div class="settings-hint" id="market-detail-status"></div>
+        <div class="modal-actions-right">
+          <button id="market-detail-buy" class="primary" data-i18n="pokeIdle.marketBuy">Comprar</button>
+          <button id="btn-close-market-modal-2" data-i18n="action.close">Cerrar</button>
+        </div>
+      </div>
     </div>
   </div>
 

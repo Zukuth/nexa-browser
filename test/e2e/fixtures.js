@@ -19,8 +19,15 @@ const test = base.extend({
   },
 
   electronApp: async ({ userDataDir }, use) => {
+    const dataFile = path.join(userDataDir, 'chilean-browser-data.json');
+    fs.writeFileSync(
+      dataFile,
+      JSON.stringify({ settings: { hardwareAcceleration: false } }, null, 2),
+      'utf-8'
+    );
     const app = await electron.launch({
-      args: [PROJECT_ROOT, `--user-data-dir=${userDataDir}`],
+      args: [PROJECT_ROOT, '--disable-gpu', '--use-angle=warp', `--user-data-dir=${userDataDir}`],
+      env: { ...process.env, NEXA_E2E: '1' },
       executablePath: require('electron')
     });
     await use(app);
