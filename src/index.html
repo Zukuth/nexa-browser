@@ -532,6 +532,7 @@
         <div class="poke-nav-item" data-poke-scroll="market"><span><svg><use href="#poke-icon-market"></use></svg></span><b data-i18n="pokeIdle.tab.market">Market</b></div>
         <div class="poke-nav-item" data-poke-scroll="shop"><span><svg><use href="#poke-icon-market"></use></svg></span><b data-i18n="pokeIdle.tab.shop">Tienda</b></div>
         <div class="poke-nav-item" data-poke-scroll="sellhub"><span><svg><use href="#poke-icon-market"></use></svg></span><b data-i18n="pokeIdle.tab.sellhub">Venta masiva</b></div>
+        <div class="poke-nav-item" data-poke-scroll="depot"><span><svg><use href="#poke-icon-market"></use></svg></span><b data-i18n="pokeIdle.tab.depot">Depot</b></div>
         <div class="poke-nav-item" data-poke-scroll="alertas"><span><svg><use href="#poke-icon-alert"></use></svg></span><b data-i18n="pokeIdle.tab.alertas">Alertas</b></div>
         <div class="poke-nav-item" data-poke-scroll="ajustes"><span><svg><use href="#poke-icon-settings"></use></svg></span><b data-i18n="pokeIdle.tab.ajustes">Ajustes</b></div>
       </div>
@@ -762,6 +763,52 @@
             <button type="button" class="primary" id="sellhub-pokemon-sell" data-i18n="pokeIdle.sellhubSell">Vender seleccionados</button>
           </div>
           <div id="sellhub-pokemon-wrap"></div>
+        </div>
+      </section>
+
+      <section id="poke-section-depot" class="poke-section">
+        <div class="poke-section-heading">
+          <div><span class="poke-section-eyebrow" data-i18n="pokeIdle.sectionLive">En vivo</span><h3 data-i18n="pokeIdle.tab.depot">Depot</h3></div>
+        </div>
+        <p class="settings-hint" data-i18n="pokeIdle.depotHint">
+          Movimientos entre tu mochila/equipo y el Depot, sin abrir la ventana del juego. Click en un ítem o
+          Pokémon para moverlo al otro lado.
+        </p>
+        <div class="settings-row">
+          <span data-i18n="pokeIdle.account">Cuenta</span>
+          <select id="depot-account"></select>
+        </div>
+        <div class="poke-market-categories" id="depot-tabs">
+          <button type="button" class="poke-market-cat active" data-tab="items" data-i18n="pokeIdle.sellhubItems">Ítems</button>
+          <button type="button" class="poke-market-cat" data-tab="pokemon" data-i18n="pokeIdle.sellhubPokemon">Pokémon</button>
+        </div>
+        <div id="depot-items-panel">
+          <div class="settings-row">
+            <span id="depot-slots" class="settings-hint"></span>
+            <button type="button" id="depot-items-refresh" data-i18n="pokeIdle.shopRefresh">Actualizar</button>
+          </div>
+          <div class="poke-depot-columns">
+            <div>
+              <div class="settings-subheading" data-i18n="pokeIdle.depotBackpack">Mochila</div>
+              <div id="depot-backpack-wrap"></div>
+            </div>
+            <div>
+              <div class="settings-subheading" data-i18n="pokeIdle.depotStorage">Depot</div>
+              <div id="depot-storage-wrap"></div>
+            </div>
+          </div>
+        </div>
+        <div id="depot-pokemon-panel" class="hidden">
+          <div class="poke-depot-columns">
+            <div>
+              <div class="settings-subheading" data-i18n="pokeIdle.depotTeam">Equipo</div>
+              <div id="depot-team-wrap"></div>
+            </div>
+            <div>
+              <div class="settings-subheading" data-i18n="pokeIdle.depotBox">Box</div>
+              <div id="depot-box-wrap"></div>
+            </div>
+          </div>
         </div>
       </section>
 

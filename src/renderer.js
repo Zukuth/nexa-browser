@@ -120,6 +120,16 @@ const sellConfirmModalStatusEl = document.getElementById('sell-confirm-modal-sta
 const btnCloseSellModal = document.getElementById('btn-close-sell-modal');
 const btnCloseSellModal2 = document.getElementById('btn-close-sell-modal-2');
 const sellConfirmBtn = document.getElementById('sell-confirm-btn');
+const depotAccountEl = document.getElementById('depot-account');
+const depotTabsEl = document.getElementById('depot-tabs');
+const depotItemsPanelEl = document.getElementById('depot-items-panel');
+const depotPokemonPanelEl = document.getElementById('depot-pokemon-panel');
+const depotSlotsEl = document.getElementById('depot-slots');
+const depotItemsRefreshBtn = document.getElementById('depot-items-refresh');
+const depotBackpackWrapEl = document.getElementById('depot-backpack-wrap');
+const depotStorageWrapEl = document.getElementById('depot-storage-wrap');
+const depotTeamWrapEl = document.getElementById('depot-team-wrap');
+const depotBoxWrapEl = document.getElementById('depot-box-wrap');
 const pokeItemPediaSearchEl = document.getElementById('poke-item-pedia-search');
 const pokeItemPediaCategoryEl = document.getElementById('poke-item-pedia-category');
 const pokeItemPediaEl = document.getElementById('poke-item-pedia');
@@ -3597,6 +3607,170 @@ sellConfirmBtn?.addEventListener('click', async () => {
   }
 });
 
+// ---- Depot (Etapa 7) ----
+// Endpoints confirmed live (NEXA_DEBUG_NET capture): items move over REST
+// (POST /api/game/depot/move, which usefully returns the full fresh
+// {inventory,depot,maxSlots} in its own response — no separate refresh
+// needed); pokemon move over the game's own WebSocket
+// (poke-store/poke-withdraw), same mechanism as mass-sell's pokes-get wait.
+// Family depot intentionally NOT implemented — the account used to verify
+// this had no family (`family:null` in the live capture), so there was
+// nothing to confirm the family move endpoints against; adding it later
+// needs a live test with an account that's actually in one.
+let depotActiveTab = 'items';
+let depotCache = null; // { inventory, depot, maxSlots }
+let depotBusy = false;
+
+function populateDepotAccountDropdown() {
+  if (!depotAccountEl) return;
+  const spaceAccounts = currentSpaceAccounts();
+  const openAccounts = spaceAccounts.filter((a) => !a.closed);
+  const prev = depotAccountEl.value;
+  depotAccountEl.innerHTML = openAccounts
+    .map((a) => `<option value="${a.id}">${escapeHtmlClient(displayName(a, spaceAccounts.indexOf(a)))}</option>`)
+    .join('');
+  if (openAccounts.some((a) => a.id === prev)) depotAccountEl.value = prev;
+}
+
+depotTabsEl?.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-tab]');
+  if (!btn) return;
+  depotActiveTab = btn.dataset.tab;
+  depotTabsEl.querySelectorAll('button[data-tab]').forEach((b) => b.classList.toggle('active', b === btn));
+  depotItemsPanelEl.classList.toggle('hidden', depotActiveTab !== 'items');
+  depotPokemonPanelEl.classList.toggle('hidden', depotActiveTab !== 'pokemon');
+});
+
+depotAccountEl?.addEventListener('change', () => {
+  depotCache = null;
+  renderDepotItems({ forceRefresh: true });
+  renderDepotPokemon();
+});
+
+depotItemsRefreshBtn?.addEventListener('click', () => renderDepotItems({ forceRefresh: true }));
+
+function depotItemRowHtml(entry, dir) {
+  return `
+    <div class="poke-depot-row" data-item-id="${entry.id}" data-dir="${dir}">
+      <img class="poke-sell-icon" loading="lazy" src="${escapeHtmlClient(entry.icon || '')}" onerror="this.style.visibility='hidden'" alt="" />
+      <div class="poke-sell-main">
+        <div class="poke-sell-name">${escapeHtmlClient(entry.name)}</div>
+        <div class="poke-sell-meta">×${formatCompactNumber(entry.quantity)}</div>
+      </div>
+      <span class="poke-depot-arrow">${dir === 'store' ? '→' : '←'}</span>
+    </div>
+  `;
+}
+
+async function renderDepotItems({ forceRefresh } = {}) {
+  if (!depotBackpackWrapEl) return;
+  const accountId = depotAccountEl.value;
+  if (!accountId) {
+    depotBackpackWrapEl.innerHTML = `<div class="settings-hint">${t('pokeIdle.noAccounts')}</div>`;
+    depotStorageWrapEl.innerHTML = '';
+    return;
+  }
+  if (!depotCache || forceRefresh) {
+    depotBackpackWrapEl.innerHTML = `<div class="settings-hint poke-skeleton-hint">${t('pokeIdle.shopLoading')}</div>`;
+    depotStorageWrapEl.innerHTML = '';
+    const result = await window.api.getDepot(accountId);
+    if (!result || !result.ok) {
+      depotBackpackWrapEl.innerHTML = `<div class="settings-hint">${t('pokeIdle.sellhubError', { message: (result && result.error) || '?' })}</div>`;
+      return;
+    }
+    depotCache = result;
+  }
+  const { inventory, depot, maxSlots } = depotCache;
+  depotSlotsEl.textContent = maxSlots != null ? t('pokeIdle.depotSlots', { used: formatCompactNumber(depot.length), max: formatCompactNumber(maxSlots) }) : '';
+  depotBackpackWrapEl.innerHTML = inventory.length
+    ? inventory.map((it) => depotItemRowHtml(it, 'store')).join('')
+    : `<div class="settings-hint">${t('pokeIdle.sellhubItemsEmpty')}</div>`;
+  depotStorageWrapEl.innerHTML = depot.length
+    ? depot.map((it) => depotItemRowHtml(it, 'withdraw')).join('')
+    : `<div class="settings-hint">${t('pokeIdle.depotStorageEmpty')}</div>`;
+}
+
+async function handleDepotItemClick(e) {
+  const row = e.target.closest('.poke-depot-row[data-item-id]');
+  if (!row || depotBusy) return;
+  const accountId = depotAccountEl.value;
+  const itemId = Number(row.dataset.itemId);
+  const dir = row.dataset.dir;
+  depotBusy = true;
+  row.classList.add('poke-depot-row-busy');
+  try {
+    const result = await window.api.moveDepotItem(accountId, itemId, dir);
+    if (!result || !result.ok) {
+      alert(t('pokeIdle.sellhubError', { message: (result && result.error) || '?' }));
+      return;
+    }
+    depotCache = result;
+    renderDepotItems();
+  } finally {
+    depotBusy = false;
+  }
+}
+
+depotBackpackWrapEl?.addEventListener('click', handleDepotItemClick);
+depotStorageWrapEl?.addEventListener('click', handleDepotItemClick);
+
+function depotPokeRowHtml(p, dir) {
+  const rarity = pokeRarityOf(p);
+  return `
+    <div class="poke-depot-row" data-poke-id="${escapeHtmlClient(String(p.id))}" data-dir="${dir}">
+      <img class="poke-sell-icon" loading="lazy" src="${escapeHtmlClient(pokeSpriteUrl(p.speciesId, p.name) || '')}" onerror="window.pokeSpriteFallback(this,'')" alt="" />
+      <div class="poke-sell-main">
+        <div class="poke-sell-name">${escapeHtmlClient(p.name || '?')}</div>
+        <div class="poke-sell-meta">Lv.${p.level ?? '?'} ${rarity ? '· ' + escapeHtmlClient(rarity) : ''} ${p.ivTotal != null ? '· IV ' + formatCompactNumber(p.ivTotal) : ''}</div>
+      </div>
+      <span class="poke-depot-arrow">${dir === 'store' ? '→' : '←'}</span>
+    </div>
+  `;
+}
+
+function renderDepotPokemon() {
+  if (!depotTeamWrapEl) return;
+  const accountId = depotAccountEl.value;
+  const gs = gameStats[accountId];
+  if (!gs) {
+    depotTeamWrapEl.innerHTML = `<div class="settings-hint">${t('pokeIdle.noAccounts')}</div>`;
+    depotBoxWrapEl.innerHTML = '';
+    return;
+  }
+  const collection = gs.collection || [];
+  const team = collection.filter((p) => p.team);
+  const box = collection.filter((p) => !p.team);
+  depotTeamWrapEl.innerHTML = team.length
+    ? team.map((p) => depotPokeRowHtml(p, 'store')).join('')
+    : `<div class="settings-hint">${t('pokeIdle.sellhubPokemonEmpty')}</div>`;
+  depotBoxWrapEl.innerHTML = box.length
+    ? box.map((p) => depotPokeRowHtml(p, 'withdraw')).join('')
+    : `<div class="settings-hint">${t('pokeIdle.depotBoxEmpty')}</div>`;
+}
+
+async function handleDepotPokeClick(e) {
+  const row = e.target.closest('.poke-depot-row[data-poke-id]');
+  if (!row || depotBusy) return;
+  const accountId = depotAccountEl.value;
+  const pokeId = row.dataset.pokeId;
+  const dir = row.dataset.dir;
+  depotBusy = true;
+  row.classList.add('poke-depot-row-busy');
+  try {
+    const result = await window.api.moveDepotPoke(accountId, pokeId, dir);
+    await refreshGameStatsNow();
+    renderDepotPokemon();
+    if (!result || !result.ok) {
+      alert(t('pokeIdle.sellhubError', { message: (result && result.error) || '?' }));
+    }
+  } finally {
+    depotBusy = false;
+  }
+}
+
+depotTeamWrapEl?.addEventListener('click', handleDepotPokeClick);
+depotBoxWrapEl?.addEventListener('click', handleDepotPokeClick);
+
 function renderPokeIdleNotable() {
   const el = pokeIdleNotableEl;
   if (!el) return;
@@ -3931,6 +4105,9 @@ function openPokeIdlePanel() {
   populateSellhubAccountDropdown();
   renderSellhubItems();
   renderSellhubPokemon();
+  populateDepotAccountDropdown();
+  renderDepotItems();
+  renderDepotPokemon();
   populateCalcSourceDropdown();
   populateHuntAttackerDropdown();
   runHuntTable();
@@ -4888,6 +5065,7 @@ function renderPokeIdleLivePanels() {
   populateTierCaptureAccountFilter();
   populateShopAccountDropdown();
   populateSellhubAccountDropdown();
+  populateDepotAccountDropdown();
   renderMarketAlertFeed();
   renderMarketHealth();
 }

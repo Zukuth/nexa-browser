@@ -3941,6 +3941,52 @@ ipcMain.handle('pokemon:sell', async (_e, { id, pokeIds }) => {
   }
 });
 
+// Depot (Etapa 7) — endpoints confirmed live (NEXA_DEBUG_NET capture): items
+// move over REST (POST /api/game/depot/move), pokemon move over the game's
+// own WebSocket (poke-store/poke-withdraw), mirroring how sell/teleport
+// already work for each of those two systems respectively.
+ipcMain.handle('depot:get', async (_e, { id }) => {
+  const wc = views.get(id);
+  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  try {
+    return await wc.executeJavaScript(market.fetchDepotScript());
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+});
+
+ipcMain.handle('depot:moveItem', async (_e, { id, itemId, dir }) => {
+  const wc = views.get(id);
+  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  if (!Number.isInteger(itemId) || (dir !== 'store' && dir !== 'withdraw')) return { ok: false, error: 'Datos inválidos' };
+  purchaseInFlight.add(id);
+  try {
+    return await wc.executeJavaScript(market.depotMoveItemScript(itemId, dir));
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  } finally {
+    purchaseInFlight.delete(id);
+  }
+});
+
+ipcMain.handle('depot:movePoke', async (_e, { id, pokeId, dir }) => {
+  const wc = views.get(id);
+  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  if (!pokeId || (dir !== 'store' && dir !== 'withdraw')) return { ok: false, error: 'Datos inválidos' };
+  purchaseInFlight.add(id);
+  try {
+    const waitPromise = gameTelemetry.waitForNextPokes(id);
+    const sent = await wc.executeJavaScript(sendGameSocketFrameScript({ type: dir === 'store' ? 'poke-store' : 'poke-withdraw', pokeId: String(pokeId) }));
+    if (!sent) return { ok: false, error: 'No se pudo enviar el movimiento (socket del juego no disponible).' };
+    await waitPromise;
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  } finally {
+    purchaseInFlight.delete(id);
+  }
+});
+
 ipcMain.handle('market:getAlertFeed', () => {
   pruneMarketAlertFeed();
   return marketAlertFeed.slice(0, MARKET_ALERT_FEED_CAP);

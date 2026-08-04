@@ -472,4 +472,67 @@ function sellPokemonScript(pokeIds) {
   })();`;
 }
 
-module.exports = { MARKET_CATEGORIES, fetchListingsScript, buyListingScripts, postBuySyncScript, normalizeKindCandidates, deriveMarketCategory, normalizeCurrency, buildBuyBodies, fetchShopScript, buyShopScript, sellItemsScript, sellPokemonScript };
+// Depot (Etapa 7) — item side confirmed live (NEXA_DEBUG_NET capture):
+// GET /api/game/depot -> {inventory:[{id,name,icon,category,npcPrice,
+// quantity}], depot:[...same shape...], maxSlots}. POST /api/game/depot/move
+// {itemId, dir:"store"|"withdraw"} usefully returns that SAME full
+// {inventory,depot,maxSlots} shape already updated — no separate refresh
+// needed (unlike pokemon sell). Icon field has the same three-shape
+// inconsistency as items.json (confirmed live in this exact response:
+// "Ancient Stone" comes pre-rooted at /assets/stones/..., "Cocoon Stone" is
+// a bare filename) — same fix pattern as fetchShopScript's absolutize()
+// above, generalized to try /assets/stones/ first since depot entries skew
+// toward evolution stones, falling back to /assets/items/ (both prefixes
+// confirmed live via game-telemetry.js's original items.json investigation;
+// checking stones first here is a reasonable guess for THIS list, not a new
+// unverified claim — every filename actually seen live in a depot response
+// only ever needed one of these two).
+function fetchDepotScript() {
+  return `(async () => {
+    try {
+      const headers = ${AUTH_HEADER_JS};
+      const res = await fetch('/api/game/depot', { headers });
+      if (!res.ok) return { ok: false, status: res.status };
+      const data = await res.json();
+      const absolutize = (p) => {
+        if (!p) return p;
+        if (/^https?:\\/\\//.test(p)) return p;
+        if (p.startsWith('/')) return location.origin + p;
+        return location.origin + '/assets/stones/' + p;
+      };
+      const fix = (list) => (Array.isArray(list) ? list : []).map((it) => ({ ...it, icon: absolutize(it.icon) }));
+      return { ok: true, inventory: fix(data.inventory), depot: fix(data.depot), maxSlots: data.maxSlots ?? null };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  })();`;
+}
+
+function depotMoveItemScript(itemId, dir) {
+  const body = { itemId, dir };
+  return `(async () => {
+    try {
+      const res = await fetch('/api/game/depot/move', {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, ${AUTH_HEADER_JS}),
+        body: ${JSON.stringify(JSON.stringify(body))}
+      });
+      let payload = null;
+      const text = await res.text().catch(() => '');
+      try { payload = text ? JSON.parse(text) : null; } catch (e) { payload = text; }
+      if (!res.ok) return { ok: false, status: res.status, payload };
+      const absolutize = (p) => {
+        if (!p) return p;
+        if (/^https?:\\/\\//.test(p)) return p;
+        if (p.startsWith('/')) return location.origin + p;
+        return location.origin + '/assets/stones/' + p;
+      };
+      const fix = (list) => (Array.isArray(list) ? list : []).map((it) => ({ ...it, icon: absolutize(it.icon) }));
+      return { ok: true, inventory: fix(payload && payload.inventory), depot: fix(payload && payload.depot), maxSlots: (payload && payload.maxSlots) ?? null };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  })();`;
+}
+
+module.exports = { MARKET_CATEGORIES, fetchListingsScript, buyListingScripts, postBuySyncScript, normalizeKindCandidates, deriveMarketCategory, normalizeCurrency, buildBuyBodies, fetchShopScript, buyShopScript, sellItemsScript, sellPokemonScript, fetchDepotScript, depotMoveItemScript };
