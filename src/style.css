@@ -3901,7 +3901,11 @@ html, body {
 }
 
 #sellhub-items-search,
-#sellhub-pokemon-search {
+#sellhub-pokemon-search,
+#depot-items-search,
+#depot-pokemon-search,
+#depot-family-items-search,
+#depot-family-pokemon-search {
   display: block;
   width: 100%;
   margin: 10px 0;

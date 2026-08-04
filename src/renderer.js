@@ -142,6 +142,10 @@ const depotFamilyBackpackWrapEl = document.getElementById('depot-family-backpack
 const depotFamilyStorageWrapEl = document.getElementById('depot-family-storage-wrap');
 const depotFamilyBoxWrapEl = document.getElementById('depot-family-box-wrap');
 const depotFamilyPokeStorageWrapEl = document.getElementById('depot-family-poke-storage-wrap');
+const depotItemsSearchEl = document.getElementById('depot-items-search');
+const depotPokemonSearchEl = document.getElementById('depot-pokemon-search');
+const depotFamilyItemsSearchEl = document.getElementById('depot-family-items-search');
+const depotFamilyPokemonSearchEl = document.getElementById('depot-family-pokemon-search');
 const pokeItemPediaSearchEl = document.getElementById('poke-item-pedia-search');
 const pokeItemPediaCategoryEl = document.getElementById('poke-item-pedia-category');
 const pokeItemPediaEl = document.getElementById('poke-item-pedia');
@@ -3665,6 +3669,10 @@ depotAccountEl?.addEventListener('change', () => {
 });
 
 depotItemsRefreshBtn?.addEventListener('click', () => renderDepotItems({ forceRefresh: true }));
+depotItemsSearchEl?.addEventListener('input', () => renderDepotItems());
+depotPokemonSearchEl?.addEventListener('input', () => renderDepotPokemon());
+depotFamilyItemsSearchEl?.addEventListener('input', () => renderDepotFamily());
+depotFamilyPokemonSearchEl?.addEventListener('input', () => renderDepotFamily());
 
 function depotItemRowHtml(entry, dir) {
   return `
@@ -3699,11 +3707,15 @@ async function renderDepotItems({ forceRefresh } = {}) {
   }
   const { inventory, depot, maxSlots } = depotCache;
   depotSlotsEl.textContent = maxSlots != null ? t('pokeIdle.depotSlots', { used: formatCompactNumber(depot.length), max: formatCompactNumber(maxSlots) }) : '';
-  depotBackpackWrapEl.innerHTML = inventory.length
-    ? inventory.map((it) => depotItemRowHtml(it, 'store')).join('')
+  const query = normalizeTextForFilter(depotItemsSearchEl ? depotItemsSearchEl.value : '');
+  const filterByName = (list) => query ? list.filter((it) => normalizeTextForFilter(it.name || '').includes(query)) : list;
+  const inv = filterByName(inventory);
+  const dep = filterByName(depot);
+  depotBackpackWrapEl.innerHTML = inv.length
+    ? inv.map((it) => depotItemRowHtml(it, 'store')).join('')
     : `<div class="settings-hint">${t('pokeIdle.sellhubItemsEmpty')}</div>`;
-  depotStorageWrapEl.innerHTML = depot.length
-    ? depot.map((it) => depotItemRowHtml(it, 'withdraw')).join('')
+  depotStorageWrapEl.innerHTML = dep.length
+    ? dep.map((it) => depotItemRowHtml(it, 'withdraw')).join('')
     : `<div class="settings-hint">${t('pokeIdle.depotStorageEmpty')}</div>`;
 }
 
@@ -3755,8 +3767,10 @@ function renderDepotPokemon() {
     return;
   }
   const collection = gs.collection || [];
-  const team = collection.filter((p) => p.team);
-  const box = collection.filter((p) => !p.team);
+  const query = normalizeTextForFilter(depotPokemonSearchEl ? depotPokemonSearchEl.value : '');
+  const matches = (p) => !query || normalizeTextForFilter(p.name || '').includes(query);
+  const team = collection.filter((p) => p.team && matches(p));
+  const box = collection.filter((p) => !p.team && matches(p));
   depotTeamWrapEl.innerHTML = team.length
     ? team.map((p) => depotPokeRowHtml(p, 'store')).join('')
     : `<div class="settings-hint">${t('pokeIdle.sellhubPokemonEmpty')}</div>`;
@@ -3823,26 +3837,29 @@ async function renderDepotFamily({ forceRefresh } = {}) {
     max: formatCompactNumber(family.info.movesCap)
   }) + (family.info.frozen ? ` · ${t('pokeIdle.depotFamilyFrozen')}` : '');
 
+  const itemQuery = normalizeTextForFilter(depotFamilyItemsSearchEl ? depotFamilyItemsSearchEl.value : '');
+  const pokeQuery = normalizeTextForFilter(depotFamilyPokemonSearchEl ? depotFamilyPokemonSearchEl.value : '');
+
   const catalog = await ensureItemCatalogRenderer();
   const byId = new Map((catalog || []).map((it) => [it.id, it]));
   const inv = (gs.inventoryItems || []).filter((it) => it.quantity > 0).map((it) => {
     const meta = byId.get(it.itemId);
     return { id: it.itemId, quantity: it.quantity, name: (meta && meta.name) || `Item #${it.itemId}`, icon: meta && meta.icon };
-  });
+  }).filter((it) => !itemQuery || normalizeTextForFilter(it.name).includes(itemQuery));
   depotFamilyBackpackWrapEl.innerHTML = inv.length
     ? inv.map((it) => `<div class="poke-depot-row" data-family-item-id="${it.id}" data-family-qty="${it.quantity}" data-dir="deposit">${depotRowInnerHtml(it, '→')}</div>`).join('')
     : `<div class="settings-hint">${t('pokeIdle.sellhubItemsEmpty')}</div>`;
-  const famItems = family.depot.items || [];
+  const famItems = (family.depot.items || []).filter((it) => !itemQuery || normalizeTextForFilter(it.name || '').includes(itemQuery));
   depotFamilyStorageWrapEl.innerHTML = famItems.length
     ? famItems.map((it) => `<div class="poke-depot-row" data-family-item-id="${it.itemId}" data-family-qty="${it.quantity}" data-dir="withdraw">${depotRowInnerHtml({ ...it, id: it.itemId }, '←')}</div>`).join('')
     : `<div class="settings-hint">${t('pokeIdle.depotStorageEmpty')}</div>`;
 
   const collection = gs.collection || [];
-  const box = collection.filter((p) => !p.team);
+  const box = collection.filter((p) => !p.team && (!pokeQuery || normalizeTextForFilter(p.name || '').includes(pokeQuery)));
   depotFamilyBoxWrapEl.innerHTML = box.length
     ? box.map((p) => `<div class="poke-depot-row" data-family-poke-id="${escapeHtmlClient(String(p.id))}" data-dir="deposit">${depotPokeRowInnerHtml(p, '→')}</div>`).join('')
     : `<div class="settings-hint">${t('pokeIdle.sellhubPokemonEmpty')}</div>`;
-  const famPokes = family.depot.pokes || [];
+  const famPokes = (family.depot.pokes || []).filter((p) => !pokeQuery || normalizeTextForFilter(p.name || '').includes(pokeQuery));
   depotFamilyPokeStorageWrapEl.innerHTML = famPokes.length
     ? famPokes.map((p) => `<div class="poke-depot-row" data-family-poke-id="${escapeHtmlClient(String(p.id))}" data-dir="withdraw">${depotPokeRowInnerHtml(p, '←')}</div>`).join('')
     : `<div class="settings-hint">${t('pokeIdle.depotStorageEmpty')}</div>`;
