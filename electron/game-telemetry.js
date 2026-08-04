@@ -747,6 +747,13 @@ function attachCapture(wc, accountId, { onDetach, onFrame } = {}) {
         line = `[REQUEST] ${params.request.method} ${params.request.url} ${params.request.postData || ''}`;
       } else if (method === 'Network.webSocketFrameSent') {
         line = `[WS-SENT] ${(params.response && params.response.payloadData) || ''}`;
+      } else if (method === 'Network.webSocketFrameReceived' && params.response && params.response.payloadData) {
+        try {
+          const parsed = JSON.parse(params.response.payloadData);
+          line = `[WS-RECV] ${parsed && parsed.type} ${JSON.stringify(parsed).slice(0, 400)}`;
+        } catch {}
+      } else if (method === 'Network.webSocketClosed' || method === 'Network.webSocketCreated') {
+        line = `[WS-LIFECYCLE] ${method} ${JSON.stringify(params).slice(0, 200)}`;
       } else if (method === 'Network.responseReceived' && params.response && /\/api\/game\/(shop|depot|family)(\?|\/|$)/.test(params.response.url || '')) {
         const logPath = require('path').join(__dirname, '..', 'netdebug.log');
         wc.debugger.sendCommand('Network.getResponseBody', { requestId: params.requestId })
@@ -778,6 +785,9 @@ function attachCapture(wc, accountId, { onDetach, onFrame } = {}) {
 
   wc.debugger.on('detach', (_event, reason) => {
     console.log('[game-telemetry] debugger detached for', accountId, reason);
+    if (process.env.NEXA_DEBUG_NET === '1') {
+      try { require('fs').appendFileSync(require('path').join(__dirname, '..', 'netdebug.log'), `[DEBUGGER-DETACH] ${accountId} ${reason}\n`); } catch {}
+    }
     attachedAccounts.delete(accountId);
     // Previously this only logged — nothing ever re-attached automatically,
     // so a detach (confirmed live: opening regular DevTools on an account

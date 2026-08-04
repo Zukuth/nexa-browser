@@ -3566,6 +3566,23 @@ sellConfirmBtn?.addEventListener('click', async () => {
     // full page reload — refreshing here instead lets the list self-correct
     // to whatever really happened, without needing that reload.
     await refreshGameStatsNow();
+    // Items specifically: confirmed live that /api/game/shop/sell never
+    // gets the server to push a fresh `inventory` frame on its own — for
+    // pokemon the main process now explicitly requests one (pokes-get,
+    // matching what the game's own sell button does), but there's no
+    // confirmed equivalent for items yet, so patch the already-known sold
+    // quantities out of the cached inventory here instead of guessing a WS
+    // message name. Self-heals anyway once a real `inventory` frame
+    // eventually arrives from unrelated game activity.
+    if (kind === 'items' && result && result.ok) {
+      const gs = gameStats[accountId];
+      if (gs && Array.isArray(gs.inventoryItems)) {
+        const soldByItemId = new Map(payload.map((it) => [it.itemId, it.qty]));
+        gs.inventoryItems = gs.inventoryItems
+          .map((it) => soldByItemId.has(it.itemId) ? { ...it, quantity: Math.max(0, it.quantity - soldByItemId.get(it.itemId)) } : it)
+          .filter((it) => it.quantity > 0);
+      }
+    }
     if (kind === 'items') renderSellhubItems(); else renderSellhubPokemon();
     if (!result || !result.ok) {
       const detail = (result && (result.error || (result.status ? `HTTP ${result.status}` : null))) || '?';

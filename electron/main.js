@@ -1674,13 +1674,27 @@ function enableGameSocketCapture(wc) {
 // near-instant, but not guaranteed to have happened yet right after a fresh
 // navigation) before giving up, rather than silently no-op-ing on a race.
 function enterHuntScript(slug) {
+  return sendGameSocketFrameScript({ type: 'enter-hunt', slug });
+}
+
+// Generic version of the same wait-for-socket-then-send pattern —
+// confirmed live that selling a pokemon via our own direct fetch() to
+// /api/game/pokemon/sell does NOT get the collection refreshed automatically
+// the way the game's own UI does: the native sell button also fires
+// {"type":"pokes-get"} over the WS afterward, and the server only pushes an
+// updated `pokes` frame in response to that explicit request — never
+// unprompted after a sell. Skipping this left the mass-sell panel showing
+// already-sold pokemon until a full page reload (which re-syncs everything
+// from scratch). Reused for any future "sell/buy doesn't auto-refresh"
+// case instead of writing a new one-off sender each time.
+function sendGameSocketFrameScript(frame) {
   return `(function() {
     return new Promise((resolve) => {
       let tries = 0;
       const trySend = () => {
         const ws = window.__nexaGameSocket;
         if (ws && ws.readyState === 1) {
-          ws.send(JSON.stringify({ type: 'enter-hunt', slug: ${JSON.stringify(slug)} }));
+          ws.send(JSON.stringify(${JSON.stringify(frame)}));
           resolve(true);
           return;
         }
@@ -3905,7 +3919,15 @@ ipcMain.handle('pokemon:sell', async (_e, { id, pokeIds }) => {
   if (!filtered.length) return { ok: false, error: 'Todos los Pokémon seleccionados están protegidos.' };
   purchaseInFlight.add(id);
   try {
-    return await wc.executeJavaScript(market.sellPokemonScript(filtered));
+    const result = await wc.executeJavaScript(market.sellPokemonScript(filtered));
+    if (result && result.ok) {
+      // See sendGameSocketFrameScript's comment: the server never pushes an
+      // updated `pokes` frame on its own after a sell, only in response to
+      // this explicit request — without it the mass-sell panel kept
+      // showing already-sold pokemon until a full page reload.
+      wc.executeJavaScript(sendGameSocketFrameScript({ type: 'pokes-get' })).catch(() => {});
+    }
+    return result;
   } catch (e) {
     return { ok: false, error: String((e && e.message) || e) };
   } finally {
