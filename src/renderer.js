@@ -3557,14 +3557,23 @@ sellConfirmBtn?.addEventListener('click', async () => {
     const result = kind === 'items'
       ? await window.api.sellItems(accountId, payload)
       : await window.api.sellPokemon(accountId, payload);
+    // Refresh regardless of ok/error: a big batch sell can tear down the
+    // game webview's JS execution context mid-request (confirmed live —
+    // selling 14 pokemon at once reported "no se pudo vender" here, but the
+    // sale had actually gone through server-side; the executeJavaScript
+    // call itself failed to report back, not the sell). Not refreshing on
+    // the error path left stale (already-sold) entries on screen until a
+    // full page reload — refreshing here instead lets the list self-correct
+    // to whatever really happened, without needing that reload.
+    await refreshGameStatsNow();
+    if (kind === 'items') renderSellhubItems(); else renderSellhubPokemon();
     if (!result || !result.ok) {
-      sellConfirmModalStatusEl.textContent = t('pokeIdle.sellhubError', { message: (result && result.error) || '?' });
+      const detail = (result && (result.error || (result.status ? `HTTP ${result.status}` : null))) || '?';
+      sellConfirmModalStatusEl.textContent = t('pokeIdle.sellhubError', { message: detail });
       return;
     }
     if (kind === 'items') sellhubSelectedItemIds.clear(); else sellhubSelectedPokeIds.clear();
     closeSellConfirmModal();
-    refreshGameStatsNow();
-    if (kind === 'items') renderSellhubItems(); else renderSellhubPokemon();
   } finally {
     sellConfirmBtn.disabled = false;
     sellConfirmBtn.textContent = t('pokeIdle.sellhubSell');
