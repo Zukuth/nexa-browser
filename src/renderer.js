@@ -130,6 +130,18 @@ const depotBackpackWrapEl = document.getElementById('depot-backpack-wrap');
 const depotStorageWrapEl = document.getElementById('depot-storage-wrap');
 const depotTeamWrapEl = document.getElementById('depot-team-wrap');
 const depotBoxWrapEl = document.getElementById('depot-box-wrap');
+const depotFamilyItemsPanelEl = document.getElementById('depot-family-items-panel');
+const depotFamilyPokemonPanelEl = document.getElementById('depot-family-pokemon-panel');
+const depotFamilyNoneEl = document.getElementById('depot-family-none');
+const depotFamilyItemsBodyEl = document.getElementById('depot-family-items-body');
+const depotFamilyPokemonNoneEl = document.getElementById('depot-family-pokemon-none');
+const depotFamilyPokemonBodyEl = document.getElementById('depot-family-pokemon-body');
+const depotFamilyMovesEl = document.getElementById('depot-family-moves');
+const depotFamilyRefreshBtn = document.getElementById('depot-family-refresh');
+const depotFamilyBackpackWrapEl = document.getElementById('depot-family-backpack-wrap');
+const depotFamilyStorageWrapEl = document.getElementById('depot-family-storage-wrap');
+const depotFamilyBoxWrapEl = document.getElementById('depot-family-box-wrap');
+const depotFamilyPokeStorageWrapEl = document.getElementById('depot-family-poke-storage-wrap');
 const pokeItemPediaSearchEl = document.getElementById('poke-item-pedia-search');
 const pokeItemPediaCategoryEl = document.getElementById('poke-item-pedia-category');
 const pokeItemPediaEl = document.getElementById('poke-item-pedia');
@@ -3639,12 +3651,17 @@ depotTabsEl?.addEventListener('click', (e) => {
   depotTabsEl.querySelectorAll('button[data-tab]').forEach((b) => b.classList.toggle('active', b === btn));
   depotItemsPanelEl.classList.toggle('hidden', depotActiveTab !== 'items');
   depotPokemonPanelEl.classList.toggle('hidden', depotActiveTab !== 'pokemon');
+  depotFamilyItemsPanelEl.classList.toggle('hidden', depotActiveTab !== 'family-items');
+  depotFamilyPokemonPanelEl.classList.toggle('hidden', depotActiveTab !== 'family-pokemon');
+  if (depotActiveTab === 'family-items' || depotActiveTab === 'family-pokemon') renderDepotFamily({ forceRefresh: !depotFamilyLoaded });
 });
 
 depotAccountEl?.addEventListener('change', () => {
   depotCache = null;
+  depotFamilyLoaded = false;
   renderDepotItems({ forceRefresh: true });
   renderDepotPokemon();
+  if (depotActiveTab === 'family-items' || depotActiveTab === 'family-pokemon') renderDepotFamily({ forceRefresh: true });
 });
 
 depotItemsRefreshBtn?.addEventListener('click', () => renderDepotItems({ forceRefresh: true }));
@@ -3770,6 +3787,132 @@ async function handleDepotPokeClick(e) {
 
 depotTeamWrapEl?.addEventListener('click', handleDepotPokeClick);
 depotBoxWrapEl?.addEventListener('click', handleDepotPokeClick);
+
+// ---- Depot familiar — Etapa 7 (segunda parte) ----
+// Endpoints confirmed live (NEXA_DEBUG_NET capture, an account actually in a
+// family): everything over the game's own WebSocket — {"type":"family-get"}
+// to fetch, {"type":"family-action","action":"item"|"poke","dir":"deposit"|
+// "withdraw", itemId+quantity (items) or capturedId (pokemon)} to move.
+// game-telemetry.js stores the result on gameStats[accountId].family
+// ({info, canCreate, invites, depot:{items,pokes}}) — this just renders it
+// and triggers refetches, no separate data model needed. Item moves send
+// the item's FULL current quantity per click (no quantity prompt) — same
+// simplification already used for the individual Depot's item columns,
+// kept consistent rather than adding a one-off prompt just for this tab.
+let depotFamilyLoaded = false;
+
+async function renderDepotFamily({ forceRefresh } = {}) {
+  const accountId = depotAccountEl.value;
+  if (!accountId) return;
+  if (forceRefresh) {
+    await window.api.getFamily(accountId);
+    await refreshGameStatsNow();
+    depotFamilyLoaded = true;
+  }
+  const gs = gameStats[accountId];
+  const family = gs && gs.family;
+  const hasFamily = !!(family && family.info);
+  depotFamilyNoneEl.classList.toggle('hidden', hasFamily);
+  depotFamilyItemsBodyEl.classList.toggle('hidden', !hasFamily);
+  depotFamilyPokemonNoneEl.classList.toggle('hidden', hasFamily);
+  depotFamilyPokemonBodyEl.classList.toggle('hidden', !hasFamily);
+  if (!hasFamily) return;
+
+  depotFamilyMovesEl.textContent = t('pokeIdle.depotFamilyMoves', {
+    used: formatCompactNumber(family.info.movesUsed),
+    max: formatCompactNumber(family.info.movesCap)
+  }) + (family.info.frozen ? ` · ${t('pokeIdle.depotFamilyFrozen')}` : '');
+
+  const catalog = await ensureItemCatalogRenderer();
+  const byId = new Map((catalog || []).map((it) => [it.id, it]));
+  const inv = (gs.inventoryItems || []).filter((it) => it.quantity > 0).map((it) => {
+    const meta = byId.get(it.itemId);
+    return { id: it.itemId, quantity: it.quantity, name: (meta && meta.name) || `Item #${it.itemId}`, icon: meta && meta.icon };
+  });
+  depotFamilyBackpackWrapEl.innerHTML = inv.length
+    ? inv.map((it) => `<div class="poke-depot-row" data-family-item-id="${it.id}" data-family-qty="${it.quantity}" data-dir="deposit">${depotRowInnerHtml(it, '→')}</div>`).join('')
+    : `<div class="settings-hint">${t('pokeIdle.sellhubItemsEmpty')}</div>`;
+  const famItems = family.depot.items || [];
+  depotFamilyStorageWrapEl.innerHTML = famItems.length
+    ? famItems.map((it) => `<div class="poke-depot-row" data-family-item-id="${it.itemId}" data-family-qty="${it.quantity}" data-dir="withdraw">${depotRowInnerHtml({ ...it, id: it.itemId }, '←')}</div>`).join('')
+    : `<div class="settings-hint">${t('pokeIdle.depotStorageEmpty')}</div>`;
+
+  const collection = gs.collection || [];
+  const box = collection.filter((p) => !p.team);
+  depotFamilyBoxWrapEl.innerHTML = box.length
+    ? box.map((p) => `<div class="poke-depot-row" data-family-poke-id="${escapeHtmlClient(String(p.id))}" data-dir="deposit">${depotPokeRowInnerHtml(p, '→')}</div>`).join('')
+    : `<div class="settings-hint">${t('pokeIdle.sellhubPokemonEmpty')}</div>`;
+  const famPokes = family.depot.pokes || [];
+  depotFamilyPokeStorageWrapEl.innerHTML = famPokes.length
+    ? famPokes.map((p) => `<div class="poke-depot-row" data-family-poke-id="${escapeHtmlClient(String(p.id))}" data-dir="withdraw">${depotPokeRowInnerHtml(p, '←')}</div>`).join('')
+    : `<div class="settings-hint">${t('pokeIdle.depotStorageEmpty')}</div>`;
+}
+
+function depotRowInnerHtml(entry, arrow) {
+  return `
+    <img class="poke-sell-icon" loading="lazy" src="${escapeHtmlClient(entry.icon || '')}" onerror="this.style.visibility='hidden'" alt="" />
+    <div class="poke-sell-main">
+      <div class="poke-sell-name">${escapeHtmlClient(entry.name)}</div>
+      <div class="poke-sell-meta">×${formatCompactNumber(entry.quantity)}</div>
+    </div>
+    <span class="poke-depot-arrow">${arrow}</span>
+  `;
+}
+
+function depotPokeRowInnerHtml(p, arrow) {
+  const rarity = pokeRarityOf(p);
+  return `
+    <img class="poke-sell-icon" loading="lazy" src="${escapeHtmlClient(pokeSpriteUrl(p.speciesId, p.name) || '')}" onerror="window.pokeSpriteFallback(this,'')" alt="" />
+    <div class="poke-sell-main">
+      <div class="poke-sell-name">${escapeHtmlClient(p.name || '?')}</div>
+      <div class="poke-sell-meta">Lv.${p.level ?? '?'} ${rarity ? '· ' + escapeHtmlClient(rarity) : ''} ${p.ivTotal != null ? '· IV ' + formatCompactNumber(p.ivTotal) : ''}</div>
+    </div>
+    <span class="poke-depot-arrow">${arrow}</span>
+  `;
+}
+
+async function handleDepotFamilyItemClick(e) {
+  const row = e.target.closest('.poke-depot-row[data-family-item-id]');
+  if (!row || depotBusy) return;
+  const accountId = depotAccountEl.value;
+  const itemId = Number(row.dataset.familyItemId);
+  const quantity = Number(row.dataset.familyQty);
+  const dir = row.dataset.dir;
+  depotBusy = true;
+  row.classList.add('poke-depot-row-busy');
+  try {
+    const result = await window.api.moveFamilyItem(accountId, itemId, quantity, dir);
+    await refreshGameStatsNow();
+    renderDepotFamily();
+    if (!result || !result.ok) alert(t('pokeIdle.sellhubError', { message: (result && result.error) || '?' }));
+  } finally {
+    depotBusy = false;
+  }
+}
+
+async function handleDepotFamilyPokeClick(e) {
+  const row = e.target.closest('.poke-depot-row[data-family-poke-id]');
+  if (!row || depotBusy) return;
+  const accountId = depotAccountEl.value;
+  const pokeId = row.dataset.familyPokeId;
+  const dir = row.dataset.dir;
+  depotBusy = true;
+  row.classList.add('poke-depot-row-busy');
+  try {
+    const result = await window.api.moveFamilyPoke(accountId, pokeId, dir);
+    await refreshGameStatsNow();
+    renderDepotFamily();
+    if (!result || !result.ok) alert(t('pokeIdle.sellhubError', { message: (result && result.error) || '?' }));
+  } finally {
+    depotBusy = false;
+  }
+}
+
+depotFamilyBackpackWrapEl?.addEventListener('click', handleDepotFamilyItemClick);
+depotFamilyStorageWrapEl?.addEventListener('click', handleDepotFamilyItemClick);
+depotFamilyBoxWrapEl?.addEventListener('click', handleDepotFamilyPokeClick);
+depotFamilyPokeStorageWrapEl?.addEventListener('click', handleDepotFamilyPokeClick);
+depotFamilyRefreshBtn?.addEventListener('click', () => renderDepotFamily({ forceRefresh: true }));
 
 function renderPokeIdleNotable() {
   const el = pokeIdleNotableEl;

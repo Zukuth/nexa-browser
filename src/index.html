@@ -781,6 +781,8 @@
         <div class="poke-market-categories" id="depot-tabs">
           <button type="button" class="poke-market-cat active" data-tab="items" data-i18n="pokeIdle.sellhubItems">Ítems</button>
           <button type="button" class="poke-market-cat" data-tab="pokemon" data-i18n="pokeIdle.sellhubPokemon">Pokémon</button>
+          <button type="button" class="poke-market-cat" data-tab="family-items" data-i18n="pokeIdle.depotFamilyItems">Familia: Ítems</button>
+          <button type="button" class="poke-market-cat" data-tab="family-pokemon" data-i18n="pokeIdle.depotFamilyPokemon">Familia: Pokémon</button>
         </div>
         <div id="depot-items-panel">
           <div class="settings-row">
@@ -807,6 +809,40 @@
             <div>
               <div class="settings-subheading" data-i18n="pokeIdle.depotBox">Box</div>
               <div id="depot-box-wrap"></div>
+            </div>
+          </div>
+        </div>
+        <div id="depot-family-items-panel" class="hidden">
+          <div id="depot-family-none" class="settings-hint hidden" data-i18n="pokeIdle.depotNoFamily">Esta cuenta no pertenece a ninguna familia.</div>
+          <div id="depot-family-items-body">
+            <div class="settings-row">
+              <span id="depot-family-moves" class="settings-hint"></span>
+              <button type="button" id="depot-family-refresh" data-i18n="pokeIdle.shopRefresh">Actualizar</button>
+            </div>
+            <div class="poke-depot-columns">
+              <div>
+                <div class="settings-subheading" data-i18n="pokeIdle.depotBackpack">Mochila</div>
+                <div id="depot-family-backpack-wrap"></div>
+              </div>
+              <div>
+                <div class="settings-subheading" data-i18n="pokeIdle.depotFamilyStorage">Depot familiar</div>
+                <div id="depot-family-storage-wrap"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="depot-family-pokemon-panel" class="hidden">
+          <div id="depot-family-pokemon-none" class="settings-hint hidden" data-i18n="pokeIdle.depotNoFamily">Esta cuenta no pertenece a ninguna familia.</div>
+          <div id="depot-family-pokemon-body">
+            <div class="poke-depot-columns">
+              <div>
+                <div class="settings-subheading" data-i18n="pokeIdle.depotBox">Box</div>
+                <div id="depot-family-box-wrap"></div>
+              </div>
+              <div>
+                <div class="settings-subheading" data-i18n="pokeIdle.depotFamilyStorage">Depot familiar</div>
+                <div id="depot-family-poke-storage-wrap"></div>
+              </div>
             </div>
           </div>
         </div>

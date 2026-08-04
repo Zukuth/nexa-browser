@@ -3827,7 +3827,13 @@ html, body {
 #sellhub-items-panel.hidden,
 #sellhub-pokemon-panel.hidden,
 #depot-items-panel.hidden,
-#depot-pokemon-panel.hidden {
+#depot-pokemon-panel.hidden,
+#depot-family-items-panel.hidden,
+#depot-family-pokemon-panel.hidden,
+#depot-family-none.hidden,
+#depot-family-items-body.hidden,
+#depot-family-pokemon-none.hidden,
+#depot-family-pokemon-body.hidden {
   display: none;
 }
 

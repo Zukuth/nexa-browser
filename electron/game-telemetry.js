@@ -26,6 +26,21 @@
 // (575 Ultra Ball × $130 = $74.750).
 
 const GAME_HOSTNAME = 'poke.idleworld.online';
+
+// Same three-shape icon resolution confirmed live for items.json
+// (ensureItemPriceCatalog below) and reused verbatim wherever else the game
+// hands back a bare `icon` field (e.g. the family depot's `family` frame) —
+// absolute URL as-is, already-rooted path gets the hostname prefixed, a bare
+// filename needs /assets/items/ (confirmed via curl HTTP-status probes when
+// this was first chased down, NOT /assets/stones/ — that guess broke depot
+// icons and had to be corrected).
+function resolveGameIconUrl(icon) {
+  if (!icon) return null;
+  if (/^https?:\/\//.test(icon)) return icon;
+  if (icon.startsWith('/')) return `https://${GAME_HOSTNAME}${icon}`;
+  return `https://${GAME_HOSTNAME}/assets/items/${icon}`;
+}
+
 const HEARTBEAT_STALE_MS = 60_000;
 const HEARTBEAT_CHECK_MS = 15_000;
 const MAX_REASONABLE_DIAMONDS = 10_000_000;
@@ -138,16 +153,23 @@ const attachedAccounts = new Set();
 // already-sold pokemon) — this resolves exactly when the real frame lands,
 // with a bounded timeout as a fallback so a caller never hangs forever if
 // the frame never arrives for some other reason.
-const pendingPokesWaiters = new Map(); // accountId -> Set<() => void>
+// Generalized to any frame `type` (originally pokes-only) once the same
+// wait-for-the-real-response need showed up again for family-action
+// (deposit/withdraw against the family depot) — same underlying problem:
+// the server never pushes an update on its own, only in response to an
+// explicit request, and only awaiting the REAL frame (not a fixed delay)
+// reliably reflects it.
+const pendingFrameWaiters = new Map(); // `${accountId}:${type}` -> Set<() => void>
 
-function resolvePokesWaiters(accountId) {
-  const waiters = pendingPokesWaiters.get(accountId);
+function resolveFrameWaiters(accountId, type) {
+  const key = `${accountId}:${type}`;
+  const waiters = pendingFrameWaiters.get(key);
   if (!waiters) return;
-  pendingPokesWaiters.delete(accountId);
+  pendingFrameWaiters.delete(key);
   for (const done of waiters) done();
 }
 
-function waitForNextPokes(accountId, timeoutMs = 4000) {
+function waitForFrame(accountId, type, timeoutMs = 4000) {
   return new Promise((resolve) => {
     let settled = false;
     const done = () => {
@@ -155,10 +177,15 @@ function waitForNextPokes(accountId, timeoutMs = 4000) {
       settled = true;
       resolve();
     };
-    if (!pendingPokesWaiters.has(accountId)) pendingPokesWaiters.set(accountId, new Set());
-    pendingPokesWaiters.get(accountId).add(done);
+    const key = `${accountId}:${type}`;
+    if (!pendingFrameWaiters.has(key)) pendingFrameWaiters.set(key, new Set());
+    pendingFrameWaiters.get(key).add(done);
     setTimeout(done, timeoutMs);
   });
+}
+
+function waitForNextPokes(accountId, timeoutMs = 4000) {
+  return waitForFrame(accountId, 'pokes', timeoutMs);
 }
 
 function getOrCreateState(accountId) {
@@ -610,6 +637,28 @@ function applyFrame(state, msg) {
       state.lastEvent = { type: 'session_replaced', at: Date.now() };
       break;
     }
+    case 'family': {
+      // Confirmed against a real frame (Etapa 7 family depot capture):
+      // {type:"family", family:{id,name,isOwner,frozen,movesUsed,movesCap,
+      // lockedUntil,leaveCost,members:[{userId,name,level,vip,banned,isMe,
+      // joinedAt,idx}],pendingInvites}, canCreate, invites, depot:{items:
+      // [{itemId,quantity,name,icon}], pokes:[{id,speciesId,name,level,
+      // looktype,shiny,isDitto,tms,type1,type2,stats,ivTotal,quality,
+      // power}]}}. `family` is null (with canCreate:true) for an account
+      // that isn't in one — stored as-is either way so the UI can show the
+      // right empty state.
+      const familyDepot = msg.depot || { items: [], pokes: [] };
+      state.family = {
+        info: msg.family || null,
+        canCreate: !!msg.canCreate,
+        invites: msg.invites || [],
+        depot: {
+          items: (familyDepot.items || []).map((it) => ({ ...it, icon: resolveGameIconUrl(it.icon) })),
+          pokes: familyDepot.pokes || []
+        }
+      };
+      break;
+    }
     case 'profession-photo': {
       // Confirmed against a real frame (at the time): gives an itemName
       // (e.g. "Rare Pokémon Picture"), not an itemId — a separate income
@@ -714,7 +763,8 @@ function computeRates(state) {
     previousHunt: state.previousHunt || null,
     huntHistory: state.huntHistory || [],
     capturedSpeciesIds: state.capturedSpeciesIds ? Array.from(state.capturedSpeciesIds) : [],
-    collection: state.collection || []
+    collection: state.collection || [],
+    family: state.family || null
   };
 }
 
@@ -783,7 +833,7 @@ function attachCapture(wc, accountId, { onDetach, onFrame } = {}) {
       } else if (method === 'Network.webSocketFrameReceived' && params.response && params.response.payloadData) {
         try {
           const parsed = JSON.parse(params.response.payloadData);
-          line = `[WS-RECV] ${parsed && parsed.type} ${JSON.stringify(parsed).slice(0, 400)}`;
+          line = `[WS-RECV] ${parsed && parsed.type} ${JSON.stringify(parsed).slice(0, parsed && parsed.type === 'family' ? 4000 : 400)}`;
         } catch {}
       } else if (method === 'Network.webSocketClosed' || method === 'Network.webSocketCreated') {
         line = `[WS-LIFECYCLE] ${method} ${JSON.stringify(params).slice(0, 200)}`;
@@ -811,7 +861,7 @@ function attachCapture(wc, accountId, { onDetach, onFrame } = {}) {
       return; // not JSON — not one of the game's own protocol frames
     }
     applyFrame(state, msg);
-    if (msg && msg.type === 'pokes') resolvePokesWaiters(accountId);
+    if (msg && msg.type) resolveFrameWaiters(accountId, msg.type);
     if (typeof onFrame === 'function') {
       try { onFrame(msg); } catch (err) { console.error('[game-telemetry] onFrame handler failed for', accountId, err); }
     }
@@ -926,6 +976,7 @@ module.exports = {
   getItemPriceByNameMap,
   getItemCatalogArray,
   waitForNextPokes,
+  waitForFrame,
   // exported for unit testing
   rarityFromQuality,
   parseWalletAmount,

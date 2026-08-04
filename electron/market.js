@@ -478,15 +478,16 @@ function sellPokemonScript(pokeIds) {
 // {itemId, dir:"store"|"withdraw"} usefully returns that SAME full
 // {inventory,depot,maxSlots} shape already updated — no separate refresh
 // needed (unlike pokemon sell). Icon field has the same three-shape
-// inconsistency as items.json (confirmed live in this exact response:
-// "Ancient Stone" comes pre-rooted at /assets/stones/..., "Cocoon Stone" is
-// a bare filename) — same fix pattern as fetchShopScript's absolutize()
-// above, generalized to try /assets/stones/ first since depot entries skew
-// toward evolution stones, falling back to /assets/items/ (both prefixes
-// confirmed live via game-telemetry.js's original items.json investigation;
-// checking stones first here is a reasonable guess for THIS list, not a new
-// unverified claim — every filename actually seen live in a depot response
-// only ever needed one of these two).
+// inconsistency as items.json ("Ancient Stone" comes pre-rooted at
+// /assets/stones/..., "Cocoon Stone"/"Crystal Stone"/etc are bare
+// filenames). First pass here guessed the bare-filename fallback should be
+// /assets/stones/ (reasoning: most depot entries are evolution stones) —
+// wrong, confirmed live via a broken-icon report: those bare filenames
+// 404 under /assets/stones/. The actually-confirmed rule (verified with
+// curl HTTP-status probes when this was first fixed for items.json in
+// game-telemetry.js) is that EVERY bare filename resolves under
+// /assets/items/ regardless of category — /assets/stones/ is only ever
+// used when the source data already comes pre-rooted with that exact path.
 function fetchDepotScript() {
   return `(async () => {
     try {
@@ -498,7 +499,7 @@ function fetchDepotScript() {
         if (!p) return p;
         if (/^https?:\\/\\//.test(p)) return p;
         if (p.startsWith('/')) return location.origin + p;
-        return location.origin + '/assets/stones/' + p;
+        return location.origin + '/assets/items/' + p;
       };
       const fix = (list) => (Array.isArray(list) ? list : []).map((it) => ({ ...it, icon: absolutize(it.icon) }));
       return { ok: true, inventory: fix(data.inventory), depot: fix(data.depot), maxSlots: data.maxSlots ?? null };
@@ -525,7 +526,7 @@ function depotMoveItemScript(itemId, dir) {
         if (!p) return p;
         if (/^https?:\\/\\//.test(p)) return p;
         if (p.startsWith('/')) return location.origin + p;
-        return location.origin + '/assets/stones/' + p;
+        return location.origin + '/assets/items/' + p;
       };
       const fix = (list) => (Array.isArray(list) ? list : []).map((it) => ({ ...it, icon: absolutize(it.icon) }));
       return { ok: true, inventory: fix(payload && payload.inventory), depot: fix(payload && payload.depot), maxSlots: (payload && payload.maxSlots) ?? null };

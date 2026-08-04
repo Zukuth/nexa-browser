@@ -3987,6 +3987,69 @@ ipcMain.handle('depot:movePoke', async (_e, { id, pokeId, dir }) => {
   }
 });
 
+// Family depot — endpoints confirmed live (NEXA_DEBUG_NET capture, account
+// actually in a family this time): everything goes over the game's own
+// WebSocket, no REST. {"type":"family-get"} -> {type:"family", family:{...,
+// frozen, movesUsed, movesCap, members:[...]}, canCreate, invites, depot:
+// {items:[{itemId,quantity,name,icon}], pokes:[{id,speciesId,...}]}}.
+// Deposit/withdraw is {"type":"family-action","action":"item"|"poke",
+// "dir":"deposit"|"withdraw", itemId+quantity (items) or capturedId
+// (pokemon)}, which triggers the exact same `family` frame back — same
+// wait-for-the-real-frame pattern as pokemon sell/depot, reusing the now-
+// generic waitForFrame() instead of a fixed delay.
+ipcMain.handle('family:get', async (_e, { id }) => {
+  const wc = views.get(id);
+  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  try {
+    const waitPromise = gameTelemetry.waitForFrame(id, 'family');
+    const sent = await wc.executeJavaScript(sendGameSocketFrameScript({ type: 'family-get' }));
+    if (!sent) return { ok: false, error: 'No se pudo pedir los datos (socket del juego no disponible).' };
+    await waitPromise;
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+});
+
+ipcMain.handle('family:moveItem', async (_e, { id, itemId, quantity, dir }) => {
+  const wc = views.get(id);
+  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  if (!Number.isInteger(itemId) || !Number.isInteger(quantity) || quantity < 1 || (dir !== 'deposit' && dir !== 'withdraw')) {
+    return { ok: false, error: 'Datos inválidos' };
+  }
+  purchaseInFlight.add(id);
+  try {
+    const waitPromise = gameTelemetry.waitForFrame(id, 'family');
+    const sent = await wc.executeJavaScript(sendGameSocketFrameScript({ type: 'family-action', action: 'item', dir, itemId, quantity }));
+    if (!sent) return { ok: false, error: 'No se pudo enviar el movimiento (socket del juego no disponible).' };
+    await waitPromise;
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  } finally {
+    purchaseInFlight.delete(id);
+  }
+});
+
+ipcMain.handle('family:movePoke', async (_e, { id, pokeId, dir }) => {
+  const wc = views.get(id);
+  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  if (!pokeId || (dir !== 'deposit' && dir !== 'withdraw')) return { ok: false, error: 'Datos inválidos' };
+  purchaseInFlight.add(id);
+  try {
+    const waitFamily = gameTelemetry.waitForFrame(id, 'family');
+    const waitPokes = gameTelemetry.waitForFrame(id, 'pokes');
+    const sent = await wc.executeJavaScript(sendGameSocketFrameScript({ type: 'family-action', action: 'poke', dir, capturedId: String(pokeId) }));
+    if (!sent) return { ok: false, error: 'No se pudo enviar el movimiento (socket del juego no disponible).' };
+    await Promise.all([waitFamily, waitPokes]);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  } finally {
+    purchaseInFlight.delete(id);
+  }
+});
+
 ipcMain.handle('market:getAlertFeed', () => {
   pruneMarketAlertFeed();
   return marketAlertFeed.slice(0, MARKET_ALERT_FEED_CAP);
