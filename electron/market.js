@@ -383,13 +383,22 @@ function fetchShopScript() {
       const res = await fetch('/api/game/shop', { headers });
       if (!res.ok) return { ok: false, status: res.status };
       const data = await res.json();
-      // The catalog's icon/iconUrl are root-relative ("/assets/markitems/...").
-      // This script runs inside the game's own webview (poke.idleworld.online),
-      // but the result is displayed in nexa-browser's OWN page — a relative
-      // path there resolves against the wrong origin and 404s. Absolutize
-      // against location.origin (the game's real origin, since we're running
-      // inside its page right now) before handing the catalog back.
-      const absolutize = (p) => (p && !/^https?:\\/\\//.test(p)) ? location.origin + (p.startsWith('/') ? p : '/' + p) : p;
+      // The catalog's icon/iconUrl are root-relative ("/assets/markitems/...",
+      // confirmed live — every ball/item icon returned by this endpoint so
+      // far). This script runs inside the game's own webview
+      // (poke.idleworld.online), but the result is displayed in
+      // nexa-browser's OWN page — a relative path there resolves against
+      // the wrong origin and 404s. Absolutize against location.origin
+      // before handing the catalog back. Defensively also handles a bare
+      // filename with no leading slash the same way items.json's icon field
+      // does (confirmed live for THAT endpoint — see game-telemetry.js /
+      // market.js's fetchListingsScript) even though /api/game/shop hasn't
+      // been observed returning that shape, in case it ever does.
+      const absolutize = (p) => {
+        if (!p || /^https?:\\/\\//.test(p)) return p;
+        if (p.startsWith('/')) return location.origin + p;
+        return location.origin + '/assets/markitems/' + p;
+      };
       const balls = (Array.isArray(data.balls) ? data.balls : []).map((b) => ({ ...b, iconUrl: absolutize(b.iconUrl) }));
       const items = (Array.isArray(data.items) ? data.items : []).map((it) => ({ ...it, icon: absolutize(it.icon) }));
       return { ok: true, gold: data.gold ?? null, balls, items };
