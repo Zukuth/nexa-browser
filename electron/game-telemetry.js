@@ -532,6 +532,12 @@ function applyFrame(state, msg) {
         // counts as "captured" for the Pokédex filter. Derived from data we
         // already receive instead of a new API call.
         state.capturedSpeciesIds = new Set(msg.list.map((p) => p && p.speciesId).filter((id) => id != null));
+        // Full collection (team + box), kept as-is (same per-poke shape as
+        // poke-delta's `poke` object: id, name, speciesId, level, quality,
+        // ivTotal, sellValue, stats, team) — needed for the mass-sell panel
+        // (Etapa 6), which lists every owned pokemon, not just the active
+        // team.
+        state.collection = msg.list;
       }
       break;
     }
@@ -674,7 +680,8 @@ function computeRates(state) {
     huntKey: state.huntKey || null,
     previousHunt: state.previousHunt || null,
     huntHistory: state.huntHistory || [],
-    capturedSpeciesIds: state.capturedSpeciesIds ? Array.from(state.capturedSpeciesIds) : []
+    capturedSpeciesIds: state.capturedSpeciesIds ? Array.from(state.capturedSpeciesIds) : [],
+    collection: state.collection || []
   };
 }
 

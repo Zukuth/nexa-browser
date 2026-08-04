@@ -531,6 +531,7 @@
         <div class="poke-nav-item" data-poke-scroll="capturas"><span><svg><use href="#poke-icon-capture"></use></svg></span><b data-i18n="pokeIdle.tab.capturas">Capturas destacadas</b></div>
         <div class="poke-nav-item" data-poke-scroll="market"><span><svg><use href="#poke-icon-market"></use></svg></span><b data-i18n="pokeIdle.tab.market">Market</b></div>
         <div class="poke-nav-item" data-poke-scroll="shop"><span><svg><use href="#poke-icon-market"></use></svg></span><b data-i18n="pokeIdle.tab.shop">Tienda</b></div>
+        <div class="poke-nav-item" data-poke-scroll="sellhub"><span><svg><use href="#poke-icon-market"></use></svg></span><b data-i18n="pokeIdle.tab.sellhub">Venta masiva</b></div>
         <div class="poke-nav-item" data-poke-scroll="alertas"><span><svg><use href="#poke-icon-alert"></use></svg></span><b data-i18n="pokeIdle.tab.alertas">Alertas</b></div>
         <div class="poke-nav-item" data-poke-scroll="ajustes"><span><svg><use href="#poke-icon-settings"></use></svg></span><b data-i18n="pokeIdle.tab.ajustes">Ajustes</b></div>
       </div>
@@ -721,6 +722,42 @@
           <button type="button" id="shop-refresh" data-i18n="pokeIdle.shopRefresh">Actualizar</button>
         </div>
         <div id="shop-wrap"></div>
+      </section>
+
+      <section id="poke-section-sellhub" class="poke-section">
+        <div class="poke-section-heading">
+          <div><span class="poke-section-eyebrow" data-i18n="pokeIdle.sectionLive">En vivo</span><h3 data-i18n="pokeIdle.tab.sellhub">Venta masiva</h3></div>
+        </div>
+        <p class="settings-hint" data-i18n="pokeIdle.sellhubHint">
+          Vendé ítems y Pokémon en lote. Lo que bloqueaste con el candado en Mi Equipo o en Ajustes nunca se
+          vende, ni siquiera con "Marcar todo".
+        </p>
+        <div class="settings-row">
+          <span data-i18n="pokeIdle.account">Cuenta</span>
+          <select id="sellhub-account"></select>
+        </div>
+        <div class="poke-market-categories" id="sellhub-tabs">
+          <button type="button" class="poke-market-cat active" data-tab="items" data-i18n="pokeIdle.sellhubItems">Ítems</button>
+          <button type="button" class="poke-market-cat" data-tab="pokemon" data-i18n="pokeIdle.sellhubPokemon">Pokémon</button>
+        </div>
+        <div id="sellhub-items-panel">
+          <div class="settings-row">
+            <button type="button" id="sellhub-items-select-all" data-i18n="pokeIdle.sellhubSelectAll">Marcar todo</button>
+            <button type="button" class="primary" id="sellhub-items-sell" data-i18n="pokeIdle.sellhubSell">Vender seleccionados</button>
+          </div>
+          <div id="sellhub-items-wrap"></div>
+        </div>
+        <div id="sellhub-pokemon-panel" class="hidden">
+          <div class="settings-row">
+            <span data-i18n="pokeIdle.sellhubRarityProtect">Proteger Legendarios/Míticos/Ancestrales/Divinos de "Marcar todo"</span>
+            <label class="switch"><input type="checkbox" id="sellhub-rarity-protect" checked /><span class="slider"></span></label>
+          </div>
+          <div class="settings-row">
+            <button type="button" id="sellhub-pokemon-select-all" data-i18n="pokeIdle.sellhubSelectAll">Marcar todo</button>
+            <button type="button" class="primary" id="sellhub-pokemon-sell" data-i18n="pokeIdle.sellhubSell">Vender seleccionados</button>
+          </div>
+          <div id="sellhub-pokemon-wrap"></div>
+        </div>
       </section>
 
       <section id="poke-section-market" class="poke-section">
@@ -1074,6 +1111,23 @@
         <div class="modal-actions-right">
           <button id="shop-buy-confirm" class="primary" data-i18n="pokeIdle.shopBuyConfirm">Comprar</button>
           <button id="btn-close-shop-modal-2" data-i18n="action.close">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="sell-confirm-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="settings-header">
+        <div class="modal-title" data-i18n="pokeIdle.sellConfirmTitle">Confirmar venta</div>
+        <button id="btn-close-sell-modal" class="icon-close" data-i18n-title="action.close" title="Cerrar">✕</button>
+      </div>
+      <div id="sell-confirm-modal-body" class="market-detail-body"></div>
+      <div class="modal-actions">
+        <div class="settings-hint" id="sell-confirm-modal-status"></div>
+        <div class="modal-actions-right">
+          <button id="sell-confirm-btn" class="primary" data-i18n="pokeIdle.sellhubSell">Vender seleccionados</button>
+          <button id="btn-close-sell-modal-2" data-i18n="action.close">Cerrar</button>
         </div>
       </div>
     </div>

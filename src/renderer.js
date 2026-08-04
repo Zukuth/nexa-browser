@@ -100,6 +100,23 @@ const shopBuyModalStatusEl = document.getElementById('shop-buy-modal-status');
 const btnCloseShopModal = document.getElementById('btn-close-shop-modal');
 const btnCloseShopModal2 = document.getElementById('btn-close-shop-modal-2');
 const shopBuyConfirmBtn = document.getElementById('shop-buy-confirm');
+const sellhubAccountEl = document.getElementById('sellhub-account');
+const sellhubTabsEl = document.getElementById('sellhub-tabs');
+const sellhubItemsPanelEl = document.getElementById('sellhub-items-panel');
+const sellhubPokemonPanelEl = document.getElementById('sellhub-pokemon-panel');
+const sellhubItemsWrapEl = document.getElementById('sellhub-items-wrap');
+const sellhubPokemonWrapEl = document.getElementById('sellhub-pokemon-wrap');
+const sellhubItemsSelectAllBtn = document.getElementById('sellhub-items-select-all');
+const sellhubItemsSellBtn = document.getElementById('sellhub-items-sell');
+const sellhubPokemonSelectAllBtn = document.getElementById('sellhub-pokemon-select-all');
+const sellhubPokemonSellBtn = document.getElementById('sellhub-pokemon-sell');
+const sellhubRarityProtectEl = document.getElementById('sellhub-rarity-protect');
+const sellConfirmModal = document.getElementById('sell-confirm-modal');
+const sellConfirmModalBodyEl = document.getElementById('sell-confirm-modal-body');
+const sellConfirmModalStatusEl = document.getElementById('sell-confirm-modal-status');
+const btnCloseSellModal = document.getElementById('btn-close-sell-modal');
+const btnCloseSellModal2 = document.getElementById('btn-close-sell-modal-2');
+const sellConfirmBtn = document.getElementById('sell-confirm-btn');
 const pokeItemPediaSearchEl = document.getElementById('poke-item-pedia-search');
 const pokeItemPediaCategoryEl = document.getElementById('poke-item-pedia-category');
 const pokeItemPediaEl = document.getElementById('poke-item-pedia');
@@ -3240,6 +3257,252 @@ shopBuyConfirmBtn?.addEventListener('click', async () => {
   }
 });
 
+// ---- Venta masiva (Ítems + Pokémon) — Etapa 6 ----
+// Endpoints confirmed live (NEXA_DEBUG_NET capture): POST /api/game/shop/sell
+// {items:[{itemId,qty}]}; POST /api/game/pokemon/sell {pokeIds:[...]} (string
+// ids). Reuses the account's existing sellLockItemIds/sellLockPokeIds (the
+// candado already manageable from Mi Equipo/Ajustes, wired earlier this
+// session) as the single source of truth for "protected" — no separate lock
+// system invented here.
+const POKE_RARITY_PROTECT_MIN_RANK = POKE_RARITY_ORDER.indexOf('Lendária');
+let sellhubActiveTab = 'items';
+const sellhubSelectedItemIds = new Set();
+const sellhubSelectedPokeIds = new Set();
+let sellPending = null; // { kind: 'items'|'pokemon', accountId, payload, totalGold, count }
+
+function populateSellhubAccountDropdown() {
+  if (!sellhubAccountEl) return;
+  const spaceAccounts = currentSpaceAccounts();
+  const openAccounts = spaceAccounts.filter((a) => !a.closed);
+  const prev = sellhubAccountEl.value;
+  sellhubAccountEl.innerHTML = openAccounts
+    .map((a) => `<option value="${a.id}">${escapeHtmlClient(displayName(a, spaceAccounts.indexOf(a)))}</option>`)
+    .join('');
+  if (openAccounts.some((a) => a.id === prev)) sellhubAccountEl.value = prev;
+}
+
+sellhubTabsEl?.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-tab]');
+  if (!btn) return;
+  sellhubActiveTab = btn.dataset.tab;
+  sellhubTabsEl.querySelectorAll('button[data-tab]').forEach((b) => b.classList.toggle('active', b === btn));
+  sellhubItemsPanelEl.classList.toggle('hidden', sellhubActiveTab !== 'items');
+  sellhubPokemonPanelEl.classList.toggle('hidden', sellhubActiveTab !== 'pokemon');
+});
+
+sellhubAccountEl?.addEventListener('change', () => {
+  sellhubSelectedItemIds.clear();
+  sellhubSelectedPokeIds.clear();
+  renderSellhubItems();
+  renderSellhubPokemon();
+});
+
+function sellhubItemCardHtml(entry, locked) {
+  const checked = sellhubSelectedItemIds.has(entry.itemId);
+  return `
+    <label class="poke-sell-card${locked ? ' poke-sell-locked' : ''}">
+      <input type="checkbox" data-item-id="${entry.itemId}" ${checked ? 'checked' : ''} ${locked ? 'disabled' : ''} />
+      <img class="poke-sell-icon" loading="lazy" src="${escapeHtmlClient(entry.icon || '')}" onerror="this.style.visibility='hidden'" alt="" />
+      <div class="poke-sell-main">
+        <div class="poke-sell-name">${escapeHtmlClient(entry.name)}</div>
+        <div class="poke-sell-meta">×${formatCompactNumber(entry.quantity)} · $${formatCompactNumber(entry.npcPrice || 0)} ${t('pokeIdle.sellhubEach')}</div>
+      </div>
+      ${locked ? '<span class="poke-sell-lock" title="' + t('pokeIdle.sellLockedHint') + '">🔒</span>' : ''}
+    </label>
+  `;
+}
+
+async function renderSellhubItems() {
+  if (!sellhubItemsWrapEl) return;
+  const accountId = sellhubAccountEl.value;
+  const account = state.accounts.find((a) => a.id === accountId);
+  const gs = gameStats[accountId];
+  if (!account || !gs) {
+    sellhubItemsWrapEl.innerHTML = `<div class="settings-hint">${t('pokeIdle.noAccounts')}</div>`;
+    return;
+  }
+  const catalog = await ensureItemCatalogRenderer();
+  const byId = new Map((catalog || []).map((it) => [it.id, it]));
+  const lockedIds = new Set(account.sellLockItemIds || []);
+  const rows = (gs.inventoryItems || [])
+    .filter((it) => it.quantity > 0)
+    .map((it) => {
+      const meta = byId.get(it.itemId);
+      return {
+        itemId: it.itemId,
+        quantity: it.quantity,
+        name: (meta && meta.name) || `Item #${it.itemId}`,
+        icon: meta && meta.icon,
+        npcPrice: meta && meta.npcPrice
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+  if (!rows.length) {
+    sellhubItemsWrapEl.innerHTML = `<div class="settings-hint">${t('pokeIdle.sellhubItemsEmpty')}</div>`;
+    return;
+  }
+  sellhubItemsWrapEl.innerHTML = `<div class="poke-shop-grid">${rows.map((r) => sellhubItemCardHtml(r, lockedIds.has(r.itemId))).join('')}</div>`;
+}
+
+sellhubItemsWrapEl?.addEventListener('change', (e) => {
+  const cb = e.target.closest('input[data-item-id]');
+  if (!cb) return;
+  const itemId = Number(cb.dataset.itemId);
+  if (cb.checked) sellhubSelectedItemIds.add(itemId);
+  else sellhubSelectedItemIds.delete(itemId);
+});
+
+sellhubItemsSelectAllBtn?.addEventListener('click', () => {
+  sellhubItemsWrapEl.querySelectorAll('input[data-item-id]:not(:disabled)').forEach((cb) => {
+    cb.checked = true;
+    sellhubSelectedItemIds.add(Number(cb.dataset.itemId));
+  });
+});
+
+sellhubItemsSellBtn?.addEventListener('click', async () => {
+  const accountId = sellhubAccountEl.value;
+  const gs = gameStats[accountId];
+  if (!gs || !sellhubSelectedItemIds.size) return;
+  const catalog = await ensureItemCatalogRenderer();
+  const byId = new Map((catalog || []).map((it) => [it.id, it]));
+  const items = [];
+  let totalGold = 0;
+  for (const itemId of sellhubSelectedItemIds) {
+    const inv = (gs.inventoryItems || []).find((it) => it.itemId === itemId);
+    if (!inv || inv.quantity <= 0) continue;
+    items.push({ itemId, qty: inv.quantity });
+    const meta = byId.get(itemId);
+    totalGold += (meta && meta.npcPrice ? meta.npcPrice : 0) * inv.quantity;
+  }
+  if (!items.length) return;
+  sellPending = { kind: 'items', accountId, payload: items, totalGold, count: items.length };
+  openSellConfirmModal();
+});
+
+function pokeRarityOf(p) {
+  return (p && (p.rarity || rarityFromQualityClient(p.quality))) || null;
+}
+
+function sellhubPokeCardHtml(p, locked) {
+  const checked = sellhubSelectedPokeIds.has(String(p.id));
+  const rarity = pokeRarityOf(p);
+  return `
+    <label class="poke-sell-card${locked ? ' poke-sell-locked' : ''}">
+      <input type="checkbox" data-poke-id="${escapeHtmlClient(String(p.id))}" ${checked ? 'checked' : ''} ${locked ? 'disabled' : ''} />
+      <img class="poke-sell-icon" loading="lazy" src="${escapeHtmlClient(pokeSpriteUrl(p.speciesId, p.name) || '')}" onerror="window.pokeSpriteFallback(this,'')" alt="" />
+      <div class="poke-sell-main">
+        <div class="poke-sell-name">${escapeHtmlClient(p.name || '?')} ${p.team ? '<em>' + t('pokeIdle.sellhubOnTeam') + '</em>' : ''}</div>
+        <div class="poke-sell-meta">Lv.${p.level ?? '?'} ${rarity ? '· ' + escapeHtmlClient(rarity) : ''} ${p.sellValue != null ? '· $' + formatCompactNumber(p.sellValue) : ''}</div>
+      </div>
+      ${locked ? '<span class="poke-sell-lock" title="' + t('pokeIdle.sellLockedHint') + '">🔒</span>' : ''}
+    </label>
+  `;
+}
+
+function renderSellhubPokemon() {
+  if (!sellhubPokemonWrapEl) return;
+  const accountId = sellhubAccountEl.value;
+  const account = state.accounts.find((a) => a.id === accountId);
+  const gs = gameStats[accountId];
+  if (!account || !gs) {
+    sellhubPokemonWrapEl.innerHTML = `<div class="settings-hint">${t('pokeIdle.noAccounts')}</div>`;
+    return;
+  }
+  const lockedIds = new Set(account.sellLockPokeIds || []);
+  const collection = gs.collection || [];
+  if (!collection.length) {
+    sellhubPokemonWrapEl.innerHTML = `<div class="settings-hint">${t('pokeIdle.sellhubPokemonEmpty')}</div>`;
+    return;
+  }
+  sellhubPokemonWrapEl.innerHTML = `<div class="poke-shop-grid">${
+    collection.map((p) => sellhubPokeCardHtml(p, p.id != null && lockedIds.has(String(p.id)))).join('')
+  }</div>`;
+}
+
+sellhubPokemonWrapEl?.addEventListener('change', (e) => {
+  const cb = e.target.closest('input[data-poke-id]');
+  if (!cb) return;
+  if (cb.checked) sellhubSelectedPokeIds.add(cb.dataset.pokeId);
+  else sellhubSelectedPokeIds.delete(cb.dataset.pokeId);
+});
+
+sellhubPokemonSelectAllBtn?.addEventListener('click', () => {
+  const accountId = sellhubAccountEl.value;
+  const gs = gameStats[accountId];
+  const collection = (gs && gs.collection) || [];
+  const protectRarity = !!sellhubRarityProtectEl && sellhubRarityProtectEl.checked;
+  const byId = new Map(collection.map((p) => [String(p.id), p]));
+  sellhubPokemonWrapEl.querySelectorAll('input[data-poke-id]:not(:disabled)').forEach((cb) => {
+    const p = byId.get(cb.dataset.pokeId);
+    const rarity = p ? pokeRarityOf(p) : null;
+    const isProtectedRarity = protectRarity && rarity && POKE_RARITY_ORDER.indexOf(rarity) >= POKE_RARITY_PROTECT_MIN_RANK;
+    if (isProtectedRarity) {
+      cb.checked = false;
+      sellhubSelectedPokeIds.delete(cb.dataset.pokeId);
+      return;
+    }
+    cb.checked = true;
+    sellhubSelectedPokeIds.add(cb.dataset.pokeId);
+  });
+});
+
+sellhubPokemonSellBtn?.addEventListener('click', () => {
+  const accountId = sellhubAccountEl.value;
+  const gs = gameStats[accountId];
+  if (!gs || !sellhubSelectedPokeIds.size) return;
+  const collection = gs.collection || [];
+  const byId = new Map(collection.map((p) => [String(p.id), p]));
+  const pokeIds = [...sellhubSelectedPokeIds].filter((pid) => byId.has(pid));
+  if (!pokeIds.length) return;
+  const totalGold = pokeIds.reduce((sum, pid) => sum + ((byId.get(pid) && byId.get(pid).sellValue) || 0), 0);
+  sellPending = { kind: 'pokemon', accountId, payload: pokeIds, totalGold, count: pokeIds.length };
+  openSellConfirmModal();
+});
+
+function openSellConfirmModal() {
+  if (!sellPending) return;
+  const { kind, totalGold, count } = sellPending;
+  sellConfirmModalBodyEl.innerHTML = `
+    <div class="poke-shop-confirm-row"><span>${t('pokeIdle.sellhubCount')}</span><b>${formatCompactNumber(count)}</b></div>
+    <div class="poke-shop-confirm-row"><span>${t('pokeIdle.sellhubEstimatedTotal')}</span><b>$${formatCompactNumber(totalGold)}</b></div>
+  `;
+  sellConfirmModalStatusEl.textContent = kind === 'pokemon' ? t('pokeIdle.sellhubPokemonWarning') : '';
+  sellConfirmBtn.disabled = false;
+  sellConfirmModal.classList.remove('hidden');
+}
+
+function closeSellConfirmModal() {
+  sellConfirmModal.classList.add('hidden');
+  sellPending = null;
+  sellConfirmModalStatusEl.textContent = '';
+}
+
+btnCloseSellModal?.addEventListener('click', closeSellConfirmModal);
+btnCloseSellModal2?.addEventListener('click', closeSellConfirmModal);
+
+sellConfirmBtn?.addEventListener('click', async () => {
+  if (!sellPending) return;
+  const { kind, accountId, payload } = sellPending;
+  sellConfirmBtn.disabled = true;
+  sellConfirmBtn.textContent = t('pokeIdle.sellhubSelling');
+  try {
+    const result = kind === 'items'
+      ? await window.api.sellItems(accountId, payload)
+      : await window.api.sellPokemon(accountId, payload);
+    if (!result || !result.ok) {
+      sellConfirmModalStatusEl.textContent = t('pokeIdle.sellhubError', { message: (result && result.error) || '?' });
+      return;
+    }
+    if (kind === 'items') sellhubSelectedItemIds.clear(); else sellhubSelectedPokeIds.clear();
+    closeSellConfirmModal();
+    refreshGameStatsNow();
+    if (kind === 'items') renderSellhubItems(); else renderSellhubPokemon();
+  } finally {
+    sellConfirmBtn.disabled = false;
+    sellConfirmBtn.textContent = t('pokeIdle.sellhubSell');
+  }
+});
+
 function renderPokeIdleNotable() {
   const el = pokeIdleNotableEl;
   if (!el) return;
@@ -3571,6 +3834,9 @@ function openPokeIdlePanel() {
   renderMarket();
   populateShopAccountDropdown();
   renderShop();
+  populateSellhubAccountDropdown();
+  renderSellhubItems();
+  renderSellhubPokemon();
   populateCalcSourceDropdown();
   populateHuntAttackerDropdown();
   runHuntTable();
@@ -4527,6 +4793,7 @@ function renderPokeIdleLivePanels() {
   renderPokeIdleHuntCompare();
   populateTierCaptureAccountFilter();
   populateShopAccountDropdown();
+  populateSellhubAccountDropdown();
   renderMarketAlertFeed();
   renderMarketHealth();
 }

@@ -106,6 +106,8 @@ contextBridge.exposeInMainWorld('api', {
   teleportToHunt: (id, target) => ipcRenderer.invoke('accounts:teleportToHunt', { id, target }),
   getShop: (id) => ipcRenderer.invoke('shop:get', { id }),
   buyShopItem: (id, { ballId, itemId, qty }) => ipcRenderer.invoke('shop:buy', { id, ballId, itemId, qty }),
+  sellItems: (id, items) => ipcRenderer.invoke('items:sell', { id, items }),
+  sellPokemon: (id, pokeIds) => ipcRenderer.invoke('pokemon:sell', { id, pokeIds }),
   openExtensionPopup: (id) => ipcRenderer.invoke('extensions:openPopup', { id }),
   exportDiagnosticsReport: () => ipcRenderer.invoke('diagnostics:exportReport'),
   startNetLog: (id) => ipcRenderer.invoke('diagnostics:startNetLog', { id }),

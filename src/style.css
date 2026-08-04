@@ -3824,6 +3824,62 @@ html, body {
   border-bottom: none;
 }
 
+#sellhub-items-panel.hidden,
+#sellhub-pokemon-panel.hidden {
+  display: none;
+}
+
+.poke-sell-card {
+  display: grid;
+  grid-template-columns: auto 32px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 14px;
+  background: rgba(8, 12, 20, 0.72);
+  cursor: pointer;
+}
+
+.poke-sell-card.poke-sell-locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.poke-sell-icon {
+  width: 28px;
+  height: 28px;
+  image-rendering: pixelated;
+}
+
+.poke-sell-main {
+  min-width: 0;
+}
+
+.poke-sell-name {
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.poke-sell-name em {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--muted);
+  margin-left: 4px;
+}
+
+.poke-sell-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.poke-sell-lock {
+  font-size: 14px;
+}
+
 .poke-pedia-card {
   display: grid;
   grid-template-columns: 58px minmax(0, 1fr);

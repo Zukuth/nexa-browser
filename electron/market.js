@@ -427,4 +427,49 @@ function buyShopScript({ ballId, itemId, qty }) {
   })();`;
 }
 
-module.exports = { MARKET_CATEGORIES, fetchListingsScript, buyListingScripts, postBuySyncScript, normalizeKindCandidates, deriveMarketCategory, normalizeCurrency, buildBuyBodies, fetchShopScript, buyShopScript };
+// Mass sell (Etapa 6) — endpoints confirmed live (NEXA_DEBUG_NET capture):
+// selling from Mark's shop's own "Sell" tab hits POST /api/game/shop/sell
+// with {items:[{itemId,qty}]} (matches sellLockScript's regex in main.js,
+// which already documented this shape from observing the fetch call rather
+// than initiating it); selling a pokemon hits POST /api/game/pokemon/sell
+// with {pokeIds:[...]} — pokeIds are STRINGS (e.g.
+// "cmsexjcg57dzoen8bx784wz9i"), not numbers, confirmed live.
+function sellItemsScript(items) {
+  const body = { items };
+  return `(async () => {
+    try {
+      const res = await fetch('/api/game/shop/sell', {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, ${AUTH_HEADER_JS}),
+        body: ${JSON.stringify(JSON.stringify(body))}
+      });
+      let payload = null;
+      const text = await res.text().catch(() => '');
+      try { payload = text ? JSON.parse(text) : null; } catch (e) { payload = text; }
+      return { ok: res.ok, status: res.status, payload };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  })();`;
+}
+
+function sellPokemonScript(pokeIds) {
+  const body = { pokeIds: (pokeIds || []).map(String) };
+  return `(async () => {
+    try {
+      const res = await fetch('/api/game/pokemon/sell', {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, ${AUTH_HEADER_JS}),
+        body: ${JSON.stringify(JSON.stringify(body))}
+      });
+      let payload = null;
+      const text = await res.text().catch(() => '');
+      try { payload = text ? JSON.parse(text) : null; } catch (e) { payload = text; }
+      return { ok: res.ok, status: res.status, payload };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  })();`;
+}
+
+module.exports = { MARKET_CATEGORIES, fetchListingsScript, buyListingScripts, postBuySyncScript, normalizeKindCandidates, deriveMarketCategory, normalizeCurrency, buildBuyBodies, fetchShopScript, buyShopScript, sellItemsScript, sellPokemonScript };

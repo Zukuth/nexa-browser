@@ -3870,6 +3870,49 @@ ipcMain.handle('shop:buy', async (_e, { id, ballId, itemId, qty }) => {
   }
 });
 
+// Mass sell (Etapa 6) — endpoints confirmed live (NEXA_DEBUG_NET capture,
+// see market.js). `items` is [{itemId,qty}]; `pokeIds` are the game's own
+// string ids. Server-side re-filters against the account's own lock lists
+// as a second line of defense — the renderer already excludes locked
+// entries from its selection UI, but this endpoint could in principle be
+// called with a stale/tampered payload, and the lock's whole point is that
+// a locked item/pokemon must never sell even by mistake.
+ipcMain.handle('items:sell', async (_e, { id, items }) => {
+  const account = getAccount(id);
+  const wc = views.get(id);
+  if (!account || !wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  if (!Array.isArray(items) || !items.length) return { ok: false, error: 'Nada para vender' };
+  const lockedIds = new Set(account.sellLockItemIds || []);
+  const filtered = items.filter((it) => it && Number.isInteger(it.itemId) && !lockedIds.has(it.itemId) && Number.isInteger(it.qty) && it.qty > 0);
+  if (!filtered.length) return { ok: false, error: 'Todos los ítems seleccionados están protegidos.' };
+  purchaseInFlight.add(id);
+  try {
+    return await wc.executeJavaScript(market.sellItemsScript(filtered));
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  } finally {
+    purchaseInFlight.delete(id);
+  }
+});
+
+ipcMain.handle('pokemon:sell', async (_e, { id, pokeIds }) => {
+  const account = getAccount(id);
+  const wc = views.get(id);
+  if (!account || !wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  if (!Array.isArray(pokeIds) || !pokeIds.length) return { ok: false, error: 'Nada para vender' };
+  const lockedIds = new Set(account.sellLockPokeIds || []);
+  const filtered = pokeIds.map(String).filter((pid) => !lockedIds.has(pid));
+  if (!filtered.length) return { ok: false, error: 'Todos los Pokémon seleccionados están protegidos.' };
+  purchaseInFlight.add(id);
+  try {
+    return await wc.executeJavaScript(market.sellPokemonScript(filtered));
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  } finally {
+    purchaseInFlight.delete(id);
+  }
+});
+
 ipcMain.handle('market:getAlertFeed', () => {
   pruneMarketAlertFeed();
   return marketAlertFeed.slice(0, MARKET_ALERT_FEED_CAP);
