@@ -43,9 +43,6 @@ Instalá extensiones reales de la Chrome Web Store. Algunas, como las específic
 ### 🎬 Reproducción con DRM (Netflix, Spotify Web, etc.)
 Soporte para contenido protegido (Widevine), algo que las builds abiertas de Electron no traen de fábrica.
 
-### 🔄 Actualizaciones automáticas
-El navegador se actualiza solo — no tenés que estar pendiente de bajar la última versión a mano.
-
 ### 🖥️ Se instala como cualquier programa de Windows
 Instalador estándar (NSIS) que se integra en `C:\Program Files`, con su acceso directo en el Escritorio y entrada en "Aplicaciones instaladas" — igual que cualquier navegador conocido.
 

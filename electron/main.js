@@ -9,6 +9,12 @@ const { GAP, GRID_MAX_PANELS, MIN_SPLIT_FRAC, resolveFracs, cellsForMode, freeCe
 const gameTelemetry = require('./game-telemetry');
 const pokeFormulas = require('./poke-formulas');
 const market = require('./market');
+const networkHealth = require('./network-health');
+const powerManager = require('./power-manager');
+const gameConnectionManager = require('./game-connection-manager');
+const memoryOptimizer = require('./memory-optimizer');
+const { classifyCrash } = require('./crash-classifier');
+const diagnostics = require('./diagnostics');
 // Catálogo único de traducciones compartido con el renderer — ver el comentario
 // de cabecera en src/i18n-data.js. El proceso main no tiene sandbox, así que
 // requerir un archivo bajo src/ funciona igual que con game-telemetry.js.
@@ -82,7 +88,29 @@ const BLOCKLIST_CACHE_FILE = path.join(app.getPath('userData'), 'blocklist-cache
 const BLOCKLIST_URL = 'https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts';
 let blockedDomains = new Set(BUILTIN_BLOCKLIST);
 const blockedCounts = new Map();
+// Value shape: { count, lastAt }. A crash from long ago shouldn't count
+// against an account that's been stable since — without decay, a account
+// that crashed 3 times weeks ago and has run fine ever since immediately
+// hits the "giving up on auto-reload" ceiling on its very next crash,
+// indistinguishable from an account crash-looping right now.
 const crashCounts = new Map();
+const CRASH_DECAY_MS = 30 * 60 * 1000; // 30 stable minutes resets the count
+
+function getCrashCount(accountId) {
+  const entry = crashCounts.get(accountId);
+  if (!entry) return 0;
+  if (Date.now() - entry.lastAt > CRASH_DECAY_MS) {
+    crashCounts.delete(accountId);
+    return 0;
+  }
+  return entry.count;
+}
+
+function recordCrash(accountId) {
+  const count = getCrashCount(accountId) + 1;
+  crashCounts.set(accountId, { count, lastAt: Date.now() });
+  return count;
+}
 let lastFocusedAccountId = null;
 const ADBLOCK_ALLOWLIST = new Set([
   'poke.idleworld.online',
@@ -175,6 +203,22 @@ function isBlockedHost(hostname) {
   return false;
 }
 
+// Diagnostic ring buffer, per account — doesn't change any block/allow
+// decision, just makes what got blocked inspectable (diagnostics.js export,
+// Etapa 8) instead of only a running count. Capped so a chatty page can't
+// grow this unbounded over a multi-day session.
+const AD_BLOCK_LOG_CAP = 500;
+const adBlockLog = new Map(); // accountId -> array of {url, hostname, resourceType, initiator, accountId, timestamp}
+
+function recordAdBlockEntry(accountId, entry) {
+  let log = adBlockLog.get(accountId);
+  if (!log) {
+    log = [];
+    adBlockLog.set(accountId, log);
+  }
+  diagnostics.pushCapped(log, entry, AD_BLOCK_LOG_CAP);
+}
+
 function applyAdBlock(ses, accountId) {
   ses.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, callback) => {
     if (data.settings.adBlockEnabled === false || details.resourceType === 'mainFrame') {
@@ -190,6 +234,14 @@ function applyAdBlock(ses, accountId) {
     }
     if (isBlockedHost(hostname)) {
       blockedCounts.set(accountId, (blockedCounts.get(accountId) || 0) + 1);
+      recordAdBlockEntry(accountId, {
+        url: details.url,
+        hostname,
+        resourceType: details.resourceType,
+        initiator: details.initiator || null,
+        accountId,
+        timestamp: Date.now()
+      });
       callback({ cancel: true });
     } else {
       callback({});
@@ -334,6 +386,16 @@ if (forceSoftwareRendering || data.settings.hardwareAcceleration === false) {
 // diagnosis and the migration to <webview>); WebGL/WebGPU console noise on
 // this specific dev machine was a red herring, unaffected by any GPU flag
 // tried.
+//
+// Stability-overhaul audit (Etapa 7): re-examined against the "no
+// experimental Chromium flags without justification" rule. Conclusion: KEEP
+// — this isn't experimental, it's Chromium's own standard flag for a
+// documented, narrow purpose (an outdated static block-list vs. a driver the
+// GPU vendor itself supports), it doesn't disable or weaken any real
+// capability/security check, and removing it would silently regress the
+// original WebGL bug it fixed. Revert instruction if this is ever
+// reconsidered: delete the appendSwitch line below; no other state depends
+// on it.
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 
 // Vanilla Electron doesn't ship Widevine (it's Google-licensed DRM, not something
@@ -435,6 +497,10 @@ data.accounts.forEach((a) => {
 const views = new Map();
 const poppedOutIds = new Set();
 const poppedOutWindows = new Map();
+// One open popup window per extension at a time, keyed by extension id —
+// clicking its toolbar icon again while already open just closes it,
+// matching how a real browser's extension popup toggles.
+const extensionPopupWindows = new Map();
 
 // Debounced: SPA sites fire did-navigate-in-page (pushState/hash routing) and
 // page-title-updated many times a minute, and persist() used to do a synchronous
@@ -873,6 +939,33 @@ async function loadExtensionOnAllSessions(dir) {
   return result;
 }
 
+// Manifest V3 uses `action`, V2 used `browser_action`/`page_action` — real
+// installed extensions can be either depending on age, so all three are
+// checked in that priority order (matches Chrome's own resolution). Falls
+// back to the extension's top-level `icons` (present on essentially every
+// extension, action or not) if the action itself doesn't declare its own
+// icon — some extensions rely on that fallback rather than repeating it.
+function extractExtensionAction(manifest, dir) {
+  const action = manifest.action || manifest.browser_action || manifest.page_action || null;
+  const pickIconPath = (iconField) => {
+    if (!iconField) return null;
+    if (typeof iconField === 'string') return iconField;
+    if (typeof iconField === 'object') {
+      const sizes = Object.keys(iconField).map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+      if (!sizes.length) return null;
+      const preferred = sizes.find((s) => s >= 32) ?? sizes[sizes.length - 1];
+      return iconField[String(preferred)];
+    }
+    return null;
+  };
+  const iconRel = pickIconPath(action?.default_icon) || pickIconPath(manifest.icons);
+  return {
+    icon: iconRel ? path.join(dir, iconRel) : null,
+    popup: action?.default_popup || null,
+    title: action?.default_title || manifest.name || ''
+  };
+}
+
 function readManifest(dir) {
   try {
     const raw = fs.readFileSync(path.join(dir, 'manifest.json'), 'utf-8');
@@ -909,12 +1002,19 @@ async function finishInstall(id, dir) {
     name: loaded?.name || manifest.name || id,
     version: loaded?.version || manifest.version || '',
     description: manifest.description || '',
+    action: extractExtensionAction(manifest, dir),
     enabled: true
   };
   data.settings.extensions.push(entry);
   persist();
   broadcastState();
   return entry;
+}
+
+function closeExtensionPopup(id) {
+  const popup = extensionPopupWindows.get(id);
+  if (popup && !popup.isDestroyed()) popup.close();
+  extensionPopupWindows.delete(id);
 }
 
 function unloadExtensionFromAllSessions(id) {
@@ -951,7 +1051,9 @@ const SHORTCUTS = [
   { combo: 'Ctrl + Shift + T', key: 'shortcut.reopenClosed' },
   { combo: 'Ctrl + B', key: 'shortcut.toggleSidebar' },
   { combo: 'Ctrl + D', key: 'shortcut.bookmarkPage' },
-  { combo: 'Ctrl + Shift + Supr', key: 'shortcut.clearSessionData' }
+  { combo: 'Ctrl + Shift + Supr', key: 'shortcut.clearSessionData' },
+  { combo: 'Ctrl + C', key: 'shortcut.copy' },
+  { combo: 'Ctrl + V', key: 'shortcut.paste' }
 ];
 
 let lastClosedAccountId = null;
@@ -1173,6 +1275,37 @@ function handleAccountShortcut(input, account) {
   return false;
 }
 
+// Recomputed on every account open/close/navigate rather than polled — the
+// powerSaveBlocker only needs to run while at least one non-closed account
+// is actually sitting on the game (isGameUrl), gated behind the opt-in
+// settings.stability.backgroundKeepalive flag (default off).
+function refreshPowerBlockerNeed() {
+  if (!data.settings.stability || !data.settings.stability.backgroundKeepalive) {
+    powerManager.updateBlockerNeed(false);
+    return;
+  }
+  const hasActiveGameAccount = data.accounts.some((a) => {
+    if (a.closed) return false;
+    const wc = views.get(a.id);
+    return wc && !wc.isDestroyed() && gameTelemetry.isGameUrl(wc.getURL());
+  });
+  powerManager.updateBlockerNeed(hasActiveGameAccount);
+}
+
+// Only game pages need full-speed timers while hidden (the WS keepalive
+// relies on it — see the backgroundThrottling=no comment where the
+// <webview> is created in renderer.js). Everywhere else (an account sitting
+// on /login, an OAuth screen, or any non-game URL) gets normal Chromium
+// background throttling back, since a hidden panel with nothing time-
+// sensitive running doesn't need its timers at full speed — cuts idle
+// CPU/wake-ups proportional to how many open panels aren't actually
+// farming. setBackgroundThrottling() takes effect immediately, no reload
+// needed, unlike the webview's own initial `webpreferences` attribute.
+function syncBackgroundThrottling(wc, url) {
+  if (!wc || wc.isDestroyed()) return;
+  wc.setBackgroundThrottling(!gameTelemetry.isGameUrl(url));
+}
+
 // Wires up a specific account's guest <webview> webContents — called from a
 // 'did-attach-webview' handler once the renderer has actually created the
 // DOM element, instead of main constructing a native WebContentsView itself
@@ -1215,7 +1348,16 @@ function wireAccountWebContents(wc, account, hostWebContents) {
   // per account keeps the burst down without changing anything the user
   // sees — the account's own page load isn't gated on this loop finishing.
   (async () => {
-    for (const e of data.settings.extensions.filter((ext) => ext.enabled !== false)) {
+    // account.cleanGameProfile (opt-in, per account, default off): when on,
+    // only extensions explicitly marked vetted:true load into this specific
+    // account — every other account keeps loading the full enabled set
+    // exactly as before. Off by default, so behavior is byte-identical to
+    // pre-Etapa-8 for every account that never sets this flag.
+    const enabledExtensions = data.settings.extensions.filter((ext) => ext.enabled !== false);
+    const extensionsForAccount = account.cleanGameProfile
+      ? enabledExtensions.filter((ext) => ext.vetted === true)
+      : enabledExtensions;
+    for (const e of extensionsForAccount) {
       try {
         await wc.session.extensions.loadExtension(e.path, { allowFileAccess: true });
         console.log('[ext] loaded', e.name, 'into', account.id);
@@ -1235,18 +1377,19 @@ function wireAccountWebContents(wc, account, hostWebContents) {
   // feature's scoping rule (main.js never runs this for a random account
   // someone happens to point elsewhere).
   if (account.url && gameTelemetry.isGameUrl(account.url)) {
-    gameTelemetry.attachCapture(wc, account.id);
+    attachGameCaptureFor(wc, account.id);
   }
   wc.on('did-navigate', (_e, url) => notifyNav(account.id, url));
   wc.on('did-navigate-in-page', (_e, url) => {
     notifyNav(account.id, url);
+    syncBackgroundThrottling(wc, url);
     // Same /login → /play client-side transition: did-finish-load won't
     // fire again to trigger the telemetry attach below, so it has to be
     // done here too. isGameUrl() now excludes /login on purpose (see
     // game-telemetry.js) so this only actually attaches once the user is
     // past the Turnstile challenge.
     if (gameTelemetry.isGameUrl(url)) {
-      gameTelemetry.attachCapture(wc, account.id);
+      attachGameCaptureFor(wc, account.id);
       // /login → /play SPA transition: scrape wallet once the HUD has rendered.
       // Two attempts (3 s and 7 s) because the game's React tree may still be
       // mounting at 3 s on slow connections.
@@ -1265,14 +1408,28 @@ function wireAccountWebContents(wc, account, hostWebContents) {
   // only ever changes via the user picking a new one or closing the tab.
   wc.on('did-finish-load', () => {
     wc.setZoomFactor(account.zoom || data.settings.defaultZoom || 1);
+    syncBackgroundThrottling(wc, wc.getURL());
     if (account.ecoMode) enableEcoMode(wc);
     if (account.hideChat || account.hideGameBar) applyGameCssToggles(wc, account);
     if (account.sellLockOn) applySellLock(wc, account);
+    if (gameTelemetry.isGameUrl(wc.getURL())) enableGameSocketCapture(wc);
+    // A navigation could have crossed the /login → game boundary (or back
+    // out of it), which changes whether the powerSaveBlocker is needed.
+    refreshPowerBlockerNeed();
+    if (isGameLoginUrl(wc.getURL())) {
+      // No WS layer exists here and CDP must never attach — the state
+      // machine models this as IDLE, not a WS_* state.
+      feedConnectionEvent(account.id, { type: 'LOGIN_PAGE' });
+    }
     // Covers an account that started elsewhere and only just navigated to
     // the game — attachCapture() is idempotent (checks debugger.isAttached())
     // so this is a no-op for accounts that already attached before loadURL.
     if (gameTelemetry.isGameUrl(wc.getURL())) {
-      gameTelemetry.attachCapture(wc, account.id);
+      attachGameCaptureFor(wc, account.id);
+      // A full page load (e.g. after a crash-recovery reload) means any
+      // prior RECOVERY_FAILED/crash state should give the WS layer a fresh
+      // chance rather than staying stuck.
+      feedConnectionEvent(account.id, { type: 'RENDERER_RELOADED' });
       // Full page reload: scrape wallet once the HUD has settled.
       setTimeout(() => {
         if (wc.isDestroyed() || !gameTelemetry.isGameUrl(wc.getURL())) return;
@@ -1285,8 +1442,8 @@ function wireAccountWebContents(wc, account, hostWebContents) {
   wc.on('page-title-updated', (_e, title) => updateHistoryTitle(wc.getURL(), title));
   wc.on('render-process-gone', (_e, details) => {
     console.error('[crash] renderer gone for', account.id, details.reason);
-    const crashes = (crashCounts.get(account.id) || 0) + 1;
-    crashCounts.set(account.id, crashes);
+    feedConnectionEvent(account.id, { type: 'RENDERER_CRASHED', reason: details.reason });
+    const crashes = recordCrash(account.id);
     if (crashes <= 3 && !wc.isDestroyed()) {
       setTimeout(() => {
         if (!wc.isDestroyed()) wc.reload();
@@ -1295,6 +1452,8 @@ function wireAccountWebContents(wc, account, hostWebContents) {
       console.error('[crash]', account.id, 'crashed', crashes, 'times — giving up on auto-reload');
     }
   });
+  wc.on('unresponsive', () => feedConnectionEvent(account.id, { type: 'RENDERER_UNRESPONSIVE' }));
+  wc.on('responsive', () => feedConnectionEvent(account.id, { type: 'RENDERER_RESPONSIVE' }));
   wc.on('context-menu', (_e, params) => showPageContextMenu(wc, params));
   wc.on('focus', () => {
     lastFocusedAccountId = account.id;
@@ -1480,6 +1639,58 @@ function sellLockScript(pokeIds, itemIds) {
 
 function applySellLock(wc, account) {
   wc.executeJavaScript(sellLockScript(account.sellLockPokeIds, account.sellLockItemIds)).catch(() => {});
+}
+
+// Teleport (favoritos/última hunt): confirmed live (NEXA_DEBUG_NET capture,
+// see game-telemetry.js) that entering a hunt is NOT a REST call like
+// buy/sell — the game sends a WS frame {"type":"enter-hunt","slug":"<slug>"}
+// over its own already-open WebSocket. CDP's Network domain can only
+// *observe* WS traffic, not send on the page's behalf, so this patches
+// WebSocket.prototype.send (same monkey-patch style as sellLockScript) to
+// grab a live reference to the game's socket the next time IT calls .send —
+// which happens constantly on its own (boosts-refresh, badge-refresh, etc,
+// confirmed live), so the reference is populated almost immediately after
+// injection, with zero behavior change to the original send. Idempotent via
+// window.__nexaWsCapture, safe to re-run on every did-finish-load.
+function gameSocketCaptureScript() {
+  return `(function() {
+    if (window.__nexaWsCapture) return;
+    window.__nexaWsCapture = true;
+    const proto = WebSocket.prototype;
+    const originalSend = proto.send;
+    proto.send = function(data) {
+      window.__nexaGameSocket = this;
+      return originalSend.call(this, data);
+    };
+  })();`;
+}
+
+function enableGameSocketCapture(wc) {
+  wc.executeJavaScript(gameSocketCaptureScript()).catch(() => {});
+}
+
+// Polls briefly for window.__nexaGameSocket (populated by the capture patch
+// above, but only once the game itself calls .send() at least once — usually
+// near-instant, but not guaranteed to have happened yet right after a fresh
+// navigation) before giving up, rather than silently no-op-ing on a race.
+function enterHuntScript(slug) {
+  return `(function() {
+    return new Promise((resolve) => {
+      let tries = 0;
+      const trySend = () => {
+        const ws = window.__nexaGameSocket;
+        if (ws && ws.readyState === 1) {
+          ws.send(JSON.stringify({ type: 'enter-hunt', slug: ${JSON.stringify(slug)} }));
+          resolve(true);
+          return;
+        }
+        tries += 1;
+        if (tries > 20) { resolve(false); return; }
+        setTimeout(trySend, 150);
+      };
+      trySend();
+    });
+  })();`;
 }
 
 function showPageContextMenu(wc, params) {
@@ -1743,6 +1954,24 @@ function createWindow() {
     console.log(`[renderer] ${message} (${sourceId}:${line})`);
   });
 
+  // Right-click Cut/Copy/Paste/Select all for our own chrome's editable
+  // fields (address bar, command palette, settings inputs, etc). Electron
+  // doesn't provide this by default the way a real browser does — only the
+  // account webviews had it (see showPageContextMenu below), so typing a
+  // URL had no way to paste via the mouse, only via Ctrl+V.
+  mainWindow.webContents.on('context-menu', (_e, params) => {
+    if (!params.isEditable) return;
+    const lang = data.settings.language || 'es';
+    const wc = mainWindow.webContents;
+    Menu.buildFromTemplate([
+      { label: mt(lang, 'ctx.cut'), enabled: params.editFlags.canCut, click: () => wc.cut() },
+      { label: mt(lang, 'ctx.copy'), enabled: params.editFlags.canCopy, click: () => wc.copy() },
+      { label: mt(lang, 'ctx.paste'), enabled: params.editFlags.canPaste, click: () => wc.paste() },
+      { type: 'separator' },
+      { label: mt(lang, 'ctx.selectAll'), enabled: params.editFlags.canSelectAll, click: () => wc.selectAll() }
+    ]).popup({ window: mainWindow });
+  });
+
   // Throttled: OS resize events can fire dozens of times per second while the
   // user drags a window edge, and each renderLayout() tears down and re-adds
   // every open WebContentsView — unthrottled this visibly janks with more than
@@ -1852,11 +2081,14 @@ function removeAccountCompletely(id) {
   ses.clearStorageData().then(() => ses.clearCache()).catch((err) => console.error('[remove-account] failed to clear session for', id, err));
   blockedCounts.delete(id);
   crashCounts.delete(id);
+  adBlockLog.delete(id);
+  connectionManagers.delete(id);
   gameTelemetry.removeState(id);
   notifiedEventAt.delete(id);
   if (data.settings.activeAccountId === id) {
     data.settings.activeAccountId = accountsInCurrentSpace()[0]?.id || null;
   }
+  refreshPowerBlockerNeed();
   persist();
   renderLayout();
   broadcastState();
@@ -1984,7 +2216,7 @@ ipcMain.on('accounts:contextmenu', (_e, payload) => {
   menu.popup({ window: mainWindow });
 });
 
-ipcMain.handle('accounts:update', (_e, { id, name, color, url, proxy, ecoMode, hideChat, hideGameBar, sellLockOn }) => {
+ipcMain.handle('accounts:update', (_e, { id, name, color, url, proxy, ecoMode, hideChat, hideGameBar, sellLockOn, cleanGameProfile }) => {
   const account = getAccount(id);
   if (!account) return data;
   if (name !== undefined) account.name = name || null;
@@ -2023,6 +2255,14 @@ ipcMain.handle('accounts:update', (_e, { id, name, color, url, proxy, ecoMode, h
     // when turned back on matters here.
     if (wc && !wc.isDestroyed() && account.sellLockOn) applySellLock(wc, account);
   }
+  // Extensions only actually load once, at account-wiring time (see the
+  // extensionsForAccount filter in wireAccountWebContents) — this just
+  // persists the flag; it takes effect the next time this account's
+  // <webview> is (re)created (reopening a closed account, or on next app
+  // launch), same as ecoMode's did-finish-load re-application model but
+  // without a live extension unload/reload path (Electron has no supported
+  // "unload one extension from one session" API to hot-apply this).
+  if (cleanGameProfile !== undefined) account.cleanGameProfile = !!cleanGameProfile;
   persist();
   broadcastGeometryOnly();
   broadcastState();
@@ -2058,6 +2298,62 @@ ipcMain.handle('account:setSellLockItems', (_e, { id, itemIds }) => {
   persist();
   broadcastState();
   return data;
+});
+
+// Favorita = the account's own current huntKey (from live telemetry — the
+// real slug the server itself reported, not a guess) at the moment the user
+// clicks "favoritar". `huntSlug: null` clears it.
+ipcMain.handle('accounts:setFavoriteHunt', (_e, { id, huntSlug }) => {
+  const account = getAccount(id);
+  if (!account) return data;
+  account.favoriteHuntSlug = huntSlug || null;
+  persist();
+  broadcastState();
+  return data;
+});
+
+// `target: 'favorite' | 'last'` — resolves to account.favoriteHuntSlug or
+// the previous-hunt snapshot's huntKey (already tracked for the Hunt
+// Comparator, Etapa 1) and sends the real enter-hunt WS frame confirmed live
+// (see enterHuntScript above). Returns {ok:false} rather than throwing when
+// there's nothing to teleport to yet, or the socket capture hasn't caught a
+// live reference — both are normal transient states, not errors.
+// `huntKey` (as reported by the game's own field-init frame, and what we
+// store as favoriteHuntSlug/previousHunt.huntKey) is NOT the same string the
+// `enter-hunt` WS command expects — confirmed live: it's a composite
+// "<slug>:<instanceId>" (e.g. "abra:1785826367568", visible directly in the
+// Hunt Comparator's own account header), while the captured enter-hunt frame
+// from a real click used the bare species slug ("charizard", no suffix).
+// Teleporting with the raw huntKey silently no-ops against the server, which
+// is why favorite/last-hunt teleport did nothing — strip everything from the
+// first colon onward to recover the real slug.
+function huntSlugFromKey(huntKey) {
+  if (!huntKey) return null;
+  const idx = huntKey.indexOf(':');
+  return idx === -1 ? huntKey : huntKey.slice(0, idx);
+}
+
+ipcMain.handle('accounts:teleportToHunt', async (_e, { id, target }) => {
+  const account = getAccount(id);
+  const wc = views.get(id);
+  if (!account || !wc || wc.isDestroyed() || !gameTelemetry.isGameUrl(wc.getURL())) {
+    return { ok: false, error: 'Cuenta no disponible.' };
+  }
+  let huntKey = null;
+  if (target === 'favorite') {
+    huntKey = account.favoriteHuntSlug || null;
+  } else if (target === 'last') {
+    const stats = gameTelemetry.getStats(id);
+    huntKey = (stats && stats.previousHunt && stats.previousHunt.huntKey) || null;
+  }
+  const slug = huntSlugFromKey(huntKey);
+  if (!slug) return { ok: false, error: 'No hay hunt guardada todavía.' };
+  try {
+    const sent = await wc.executeJavaScript(enterHuntScript(slug));
+    return sent ? { ok: true } : { ok: false, error: 'No se pudo enviar el teleporte (socket del juego no disponible).' };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
 });
 
 // orderedIds must be an exact permutation of the current ids — checked via
@@ -2172,6 +2468,7 @@ function finalizeAccountClose(account, wc) {
     if (!win.isDestroyed()) win.close();
   }
   views.delete(account.id);
+  refreshPowerBlockerNeed();
 }
 
 // Resolves true if the account actually closed, false if the page's own
@@ -2591,6 +2888,58 @@ ipcMain.handle('extensions:loadUnpacked', async () => {
   }
 });
 
+// Opens (or, if already open, closes) an extension's toolbar popup —
+// chrome-extension://<id>/<popup> only resolves inside a session that
+// actually has that extension loaded, so this reuses the currently active
+// account's session (falling back to any open account) rather than a
+// dedicated session, matching where the extension is actually running.
+ipcMain.handle('extensions:openPopup', (_e, { id }) => {
+  const ext = data.settings.extensions.find((e) => e.id === id);
+  if (!ext) return { ok: false, error: 'Extensión no encontrada' };
+  if (!ext.action || !ext.action.popup) {
+    return { ok: false, error: 'Esta extensión no tiene una ventana propia — funciona en segundo plano.' };
+  }
+
+  const existing = extensionPopupWindows.get(id);
+  if (existing && !existing.isDestroyed()) {
+    existing.close();
+    extensionPopupWindows.delete(id);
+    return { ok: true, closed: true };
+  }
+
+  const activeId = data.settings.activeAccountId;
+  let wc = activeId ? views.get(activeId) : null;
+  if (!wc || wc.isDestroyed()) {
+    wc = [...views.values()].find((v) => !v.isDestroyed());
+  }
+  if (!wc) return { ok: false, error: 'Abrí al menos una cuenta primero.' };
+
+  const popup = new BrowserWindow({
+    width: 380,
+    height: 560,
+    resizable: false,
+    frame: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    backgroundColor: '#ffffff',
+    title: ext.action.title || ext.name,
+    webPreferences: { session: wc.session }
+  });
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const b = mainWindow.getBounds();
+    popup.setPosition(Math.round(b.x + b.width - 400), Math.round(b.y + 90));
+  }
+  extensionPopupWindows.set(id, popup);
+  popup.on('closed', () => extensionPopupWindows.delete(id));
+  // Auto-dismiss on blur, same as a real browser's extension popup —
+  // otherwise it'd be a floating window the user has to remember to close.
+  popup.on('blur', () => {
+    if (!popup.isDestroyed()) popup.close();
+  });
+  popup.loadURL(`chrome-extension://${id}/${ext.action.popup}`);
+  return { ok: true };
+});
+
 ipcMain.handle('extensions:toggle', (_e, { id, enabled }) => {
   const ext = data.settings.extensions.find((e) => e.id === id);
   if (!ext) return data;
@@ -2603,6 +2952,7 @@ ipcMain.handle('extensions:toggle', (_e, { id, enabled }) => {
     }
   } else {
     unloadExtensionFromAllSessions(id);
+    closeExtensionPopup(id);
   }
   persist();
   broadcastState();
@@ -2613,6 +2963,7 @@ ipcMain.handle('extensions:remove', (_e, { id }) => {
   const ext = data.settings.extensions.find((e) => e.id === id);
   if (!ext) return data;
   unloadExtensionFromAllSessions(id);
+  closeExtensionPopup(id);
   try {
     if (ext.path.startsWith(EXTENSIONS_DIR)) fs.rmSync(ext.path, { recursive: true, force: true });
   } catch {
@@ -2729,7 +3080,8 @@ const SETTINGS_UPDATE_WHITELIST = new Set([
   'defaultZoom',
   'newSpaceDefaultLayout',
   'askDownloadLocation',
-  'pokeIdleMarketPrefs'
+  'pokeIdleMarketPrefs',
+  'stability'
 ]);
 
 ipcMain.handle('settings:update', (_e, fields) => {
@@ -2756,6 +3108,7 @@ ipcMain.handle('settings:update', (_e, fields) => {
   if ('startWithWindows' in fields) {
     app.setLoginItemSettings({ openAtLogin: !!fields.startWithWindows });
   }
+  if ('stability' in fields) refreshPowerBlockerNeed();
   persist();
   broadcastState();
   return data;
@@ -3353,9 +3706,18 @@ ipcMain.handle('market:getListings', async (_e, { id, category }) => {
   }
 });
 
+// Tracked so the memory optimizer (Etapa 6) never clears a session's cache
+// mid-purchase — a purchase in flight makes several sequential
+// executeJavaScript/CDP round-trips against this exact account's webContents,
+// and a cache wipe landing in the middle of that is exactly the kind of
+// self-inflicted hiccup this whole stability effort exists to eliminate.
+const purchaseInFlight = new Set();
+
 ipcMain.handle('market:buy', async (_e, { id, listing }) => {
   const wc = views.get(id);
   if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  purchaseInFlight.add(id);
+  try {
   const normalizedListing = listing ? {
     ...listing,
     kind: listing.kind ?? listing.type ?? listing.category ?? listing.slot ?? null,
@@ -3472,6 +3834,40 @@ ipcMain.handle('market:buy', async (_e, { id, listing }) => {
     persist();
   }
   return result;
+  } finally {
+    purchaseInFlight.delete(id);
+  }
+});
+
+// NPC shop (Mark) — Etapa 5. Simpler than market:buy: no depot-sync dance
+// needed since shop purchases land straight in inventory (confirmed live,
+// no UI-click simulation required), so this is just fetch + POST, sharing
+// purchaseInFlight with the Global Market purchase-in-flight guard.
+ipcMain.handle('shop:get', async (_e, { id }) => {
+  const wc = views.get(id);
+  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  try {
+    return await wc.executeJavaScript(market.fetchShopScript());
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+});
+
+ipcMain.handle('shop:buy', async (_e, { id, ballId, itemId, qty }) => {
+  const wc = views.get(id);
+  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  const qtyNum = Number(qty);
+  if (!Number.isInteger(qtyNum) || qtyNum < 1) return { ok: false, error: 'Cantidad inválida' };
+  if (ballId == null && itemId == null) return { ok: false, error: 'Falta el ítem a comprar' };
+  purchaseInFlight.add(id);
+  try {
+    const result = await wc.executeJavaScript(market.buyShopScript({ ballId, itemId, qty: qtyNum }));
+    return result;
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  } finally {
+    purchaseInFlight.delete(id);
+  }
 });
 
 ipcMain.handle('market:getAlertFeed', () => {
@@ -3578,7 +3974,15 @@ ipcMain.handle('pokeFormulas:getHuntTable', async (_e, payload) => {
 // service-worker caches) — never touches cookies, localStorage, IndexedDB or
 // any other storage that keeps the user logged in. Inactive renderers also
 // get a CDP memory purge so their JS heaps can shrink without a reload.
-let lastOptimizeAt = 0;
+// Starts at launch time, not 0 — startAutoOptimizeLoop's first check (30 min
+// after launch) computed `elapsed = Date.now() - 0`, always past the 24h
+// threshold, so every fresh app start ran a forced CDP memory purge
+// (Memory.forciblyPurgeJavaScriptMemory) on inactive accounts ~30 minutes
+// in. That purge can disrupt an account's live JS/WS state mid-session —
+// exactly the kind of silent hiccup that can bounce the game's client back
+// to its spawn/depot screen without the page ever reloading or the user
+// noticing anything happened.
+let lastOptimizeAt = Date.now();
 let optimizeRunning = false;
 
 function broadcastOptimizeStatus() {
@@ -3590,23 +3994,50 @@ function broadcastOptimizeStatus() {
   });
 }
 
-async function optimizeMemory() {
+// Safe tier — gated per-account by memory-optimizer.js's shouldSkipOptimize:
+// skips accounts under the configured cache-growth threshold, mid-purchase,
+// mid-page-load, or currently RECOVERING (connection-manager state), instead
+// of the old behavior of always clearing every session's cache regardless
+// of whether there was anything worth clearing or whether now was a safe
+// moment to do it.
+async function optimizeMemorySafe() {
   if (optimizeRunning) return { ok: false, reason: 'already running' };
   optimizeRunning = true;
   broadcastOptimizeStatus();
-  const result = { sessionsCleaned: 0, viewsPurged: 0, cacheCleared: 0 };
+  const thresholdMb = (data.settings.stability && data.settings.stability.memoryGrowthThresholdMb) || memoryOptimizer.DEFAULT_MEMORY_GROWTH_THRESHOLD_MB;
+  const result = { sessionsCleaned: 0, sessionsSkipped: 0, viewsPurged: 0, cacheCleared: 0 };
   try {
-    // 1. Clear HTTP disk cache for every account session (safe — just cached
-    //    network responses, not auth state or game data).
     const clearedSessions = new Set();
     for (const account of data.accounts) {
-      const ses = views.has(account.id) && !views.get(account.id).isDestroyed()
-        ? views.get(account.id).session
-        : session.fromPartition(accountPartition(account.id));
+      const wc = views.get(account.id);
+      const ses = wc && !wc.isDestroyed() ? wc.session : session.fromPartition(accountPartition(account.id));
       const key = ses.storagePath || account.id;
       if (clearedSessions.has(key)) continue;
+
+      let cacheSizeMb = 0;
+      try {
+        const bytes = await ses.getCacheSize();
+        cacheSizeMb = bytes / (1024 * 1024);
+      } catch { /* getCacheSize unsupported/unavailable — treat as 0, safe-side skip below */ }
+
+      const accountState = connectionManagers.has(account.id) ? connectionManagers.get(account.id).getState().state : null;
+      const { skip, reason } = memoryOptimizer.shouldSkipOptimize({
+        cacheSizeMb,
+        thresholdMb,
+        accountState,
+        isLoading: !!(wc && !wc.isDestroyed() && typeof wc.isLoadingMainFrame === 'function' && wc.isLoadingMainFrame()),
+        purchaseInFlight: purchaseInFlight.has(account.id)
+      });
+      if (skip) {
+        result.sessionsSkipped++;
+        console.log('[optimize] skipping', account.id, '—', reason);
+        continue;
+      }
+
       clearedSessions.add(key);
       try {
+        // 1. HTTP disk cache — just cached network responses, not auth state
+        //    or game data.
         await ses.clearCache();
         // Cache Storage API (service-worker offline caches) — also safe.
         await ses.clearStorageData({ storages: ['cachestorage', 'serviceworkers'] });
@@ -3623,7 +4054,7 @@ async function optimizeMemory() {
     //    via CDP. The active account is left untouched so farming isn't broken.
     const activeId = data.settings.activeAccountId;
     for (const [accountId, wc] of views.entries()) {
-      if (accountId === activeId || wc.isDestroyed()) continue;
+      if (accountId === activeId || wc.isDestroyed() || purchaseInFlight.has(accountId)) continue;
       try {
         if (wc.debugger.isAttached()) {
           await wc.debugger.sendCommand('Memory.forciblyPurgeJavaScriptMemory').catch(() => {});
@@ -3642,61 +4073,313 @@ async function optimizeMemory() {
   return { ok: true, ...result };
 }
 
+// Deep-clean tier — manual only (never called from the auto-optimize loop),
+// more aggressive but still bound by the same hard rule as the safe tier:
+// never touches cookies/IndexedDB/localStorage/sessions. The only extra
+// thing this does beyond the safe tier is skip the per-account
+// growth-threshold gate — every session gets cleared regardless of size —
+// which is exactly what "deep clean" should mean versus a size-gated
+// routine sweep.
+async function optimizeMemoryDeepClean() {
+  if (optimizeRunning) return { ok: false, reason: 'already running' };
+  optimizeRunning = true;
+  broadcastOptimizeStatus();
+  const result = { sessionsCleaned: 0, viewsPurged: 0, cacheCleared: 0 };
+  try {
+    const clearedSessions = new Set();
+    for (const account of data.accounts) {
+      const wc = views.get(account.id);
+      if (purchaseInFlight.has(account.id)) continue; // never mid-purchase, even for a deep clean
+      const ses = wc && !wc.isDestroyed() ? wc.session : session.fromPartition(accountPartition(account.id));
+      const key = ses.storagePath || account.id;
+      if (clearedSessions.has(key)) continue;
+      clearedSessions.add(key);
+      try {
+        await ses.clearCache();
+        await ses.clearStorageData({ storages: ['cachestorage', 'serviceworkers'] });
+        result.sessionsCleaned++;
+      } catch {}
+    }
+    try {
+      await session.defaultSession.clearCache();
+      result.cacheCleared++;
+    } catch {}
+    const activeId = data.settings.activeAccountId;
+    for (const [accountId, wc] of views.entries()) {
+      if (accountId === activeId || wc.isDestroyed() || purchaseInFlight.has(accountId)) continue;
+      try {
+        if (wc.debugger.isAttached()) {
+          await wc.debugger.sendCommand('Memory.forciblyPurgeJavaScriptMemory').catch(() => {});
+        }
+        await wc.executeJavaScript('try{window.gc&&window.gc()}catch(e){}').catch(() => {});
+        result.viewsPurged++;
+      } catch {}
+    }
+    lastOptimizeAt = Date.now();
+  } finally {
+    optimizeRunning = false;
+    broadcastOptimizeStatus();
+  }
+  return { ok: true, ...result };
+}
+
+// Deprecated alias — kept for one release so nothing that still calls the
+// old name breaks; new code should call optimizeMemorySafe directly. Safe
+// to delete once nothing references optimizeMemory() anymore.
+async function optimizeMemory() {
+  return optimizeMemorySafe();
+}
+
 // Auto-optimize: check every 30 min, fire when 24 h have elapsed.
 function startAutoOptimizeLoop() {
   setInterval(async () => {
     if (optimizeRunning) return;
     const elapsed = Date.now() - lastOptimizeAt;
     if (elapsed >= 24 * 60 * 60 * 1000) {
-      console.log('[optimize] 24 h threshold reached — running auto-optimization');
-      await optimizeMemory();
+      console.log('[optimize] 24 h threshold reached — running auto-optimization (safe tier)');
+      await optimizeMemorySafe();
     }
   }, 30 * 60 * 1000);
 }
 
-// ── Freeze / stuck-character detector ───────────────────────────────────────
-// When the game's WebSocket drops, the character stops moving and kills/XP
-// drop to 0 even though the account looks "connected". We track the last
-// non-zero activity timestamp per account and pulse the WS when it's been
-// silent for too long while the page is still on the game URL.
-const lastActivityAt = new Map(); // accountId → timestamp of last kill/frame
-const FREEZE_THRESHOLD_MS = 4 * 60 * 1000; // 4 min of 0 activity = probably frozen
-const frozenNotifiedAt = new Map(); // prevent repeated notifications per account
+// ── Connection manager wiring ────────────────────────────────────────────────
+// Feeds real account lifecycle events into game-connection-manager.js's pure
+// state machine and executes its recovery levels. Entirely gated behind
+// settings.stability.enabled (default false) — everything below is inert
+// until a user opts in from Configuración → Poke Idle World → Estabilidad.
+// This AUGMENTS the existing freeze-detector/render-process-gone handling,
+// it does not replace or remove either — when disabled, both keep behaving
+// exactly as before this stage.
+const connectionManagers = new Map(); // accountId -> manager instance
+const RECOVERY_MAX_ATTEMPTS = 8;
 
-function startFreezeDetectorLoop() {
-  setInterval(async () => {
-    const stats = gameTelemetry.getAllStats();
+function stabilityEnabled() {
+  return !!(data.settings.stability && data.settings.stability.enabled);
+}
+
+function isGameLoginUrl(url) {
+  try {
+    const u = new URL(url);
+    return u.hostname === 'poke.idleworld.online' && u.pathname.startsWith('/login');
+  } catch {
+    return false;
+  }
+}
+
+function getOrCreateConnectionManager(accountId) {
+  let manager = connectionManagers.get(accountId);
+  if (!manager) {
+    manager = gameConnectionManager.createAccountConnectionManager(accountId, {
+      getWc: () => views.get(accountId),
+      onStateChange: (change) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('stability:update', change);
+        }
+      },
+      onRecoveryLevel: (info) => runRecoveryLevel(info).catch((err) => console.error('[stability] recovery level failed', err))
+    });
+    connectionManagers.set(accountId, manager);
+  }
+  return manager;
+}
+
+function feedConnectionEvent(accountId, event) {
+  if (!stabilityEnabled()) return;
+  getOrCreateConnectionManager(accountId).handleEvent(event, Date.now());
+}
+
+// Thin wrapper around gameTelemetry.attachCapture — when stability is
+// enabled, wires its onDetach/onFrame callbacks into the connection
+// manager; when disabled, calls it exactly as every version before this
+// stage did (no options, no behavior change).
+function attachGameCaptureFor(wc, accountId) {
+  if (!stabilityEnabled()) {
+    gameTelemetry.attachCapture(wc, accountId);
+    return;
+  }
+  gameTelemetry.attachCapture(wc, accountId, {
+    onDetach: (reason) => feedConnectionEvent(accountId, { type: 'WS_DETACHED', reason }),
+    onFrame: () => feedConnectionEvent(accountId, { type: 'FRAME_RECEIVED' })
+  });
+}
+
+async function runRecoveryLevel({ accountId, level, wc, reason }) {
+  if (!stabilityEnabled()) return;
+  const account = data.accounts.find((a) => a.id === accountId);
+  if (!account || account.closed || !wc || wc.isDestroyed()) return;
+
+  const manager = getOrCreateConnectionManager(accountId);
+  const stop = gameConnectionManager.shouldStopRetrying({
+    closed: !!account.closed,
+    quitting: appQuitting,
+    isLoginPage: isGameLoginUrl(wc.getURL()),
+    noInternet: false,
+    userDisabled: !data.settings.stability.autoRecovery,
+    attemptCount: manager.getState().attemptCount,
+    maxAttempts: RECOVERY_MAX_ATTEMPTS
+  });
+  if (stop.stop) {
+    if (stop.reason === 'max-attempts-reached') feedConnectionEvent(accountId, { type: 'RECOVERY_EXHAUSTED' });
+    return;
+  }
+
+  console.log('[stability] account', accountId, 'recovery level', level, '—', reason);
+
+  if (level === 1) {
+    const result = await networkHealth.checkAccountNetwork(accountId, { hostname: 'poke.idleworld.online' });
+    feedConnectionEvent(accountId, { type: 'NETWORK_CHECK', result });
+  } else if (level === 2) {
+    // Reused unchanged — also called directly from the market auto-buy flow
+    // (see market listing purchase handler), so its signature/behavior must
+    // not change here.
+    await pulseGameRealtimeConnection(wc).catch(() => {});
+    try {
+      if (typeof wc.setBackgroundThrottling === 'function') wc.setBackgroundThrottling(false);
+    } catch { /* not exposed on this Electron/webview combination — best effort only */ }
+    feedConnectionEvent(accountId, { type: 'RECOVERY_LEVEL_2_DONE' });
+  } else if (level === 3) {
+    gameTelemetry.attachCapture(wc, accountId, {
+      onDetach: (detachReason) => feedConnectionEvent(accountId, { type: 'WS_DETACHED', reason: detachReason }),
+      onFrame: () => feedConnectionEvent(accountId, { type: 'FRAME_RECEIVED' })
+    });
+    feedConnectionEvent(accountId, { type: 'WS_REATTACHED' });
+  } else if (level === 4) {
+    if (data.settings.stability.disconnectNotifications) {
+      try {
+        new Notification({
+          title: 'Nexa Browser',
+          body: `${account.name || 'Cuenta'}: parece desconectada del juego. Revisala cuando puedas.`
+        }).show();
+      } catch { /* Notification unsupported/unavailable — non-fatal */ }
+    }
+    // Last-resort auto-reload: opt-in, default OFF, and still bounded by the
+    // existing crashCounts ceiling (main.js's render-process-gone handler),
+    // so this can never reload more times than a real crash would allow.
+    if (data.settings.stability.lastResortAutoReload) {
+      if (getCrashCount(accountId) < 3) {
+        recordCrash(accountId);
+        setTimeout(() => { if (!wc.isDestroyed()) wc.reload(); }, 1000);
+      }
+    }
+  }
+}
+
+ipcMain.handle('stability:getAccountState', (_e, { id }) => {
+  if (!connectionManagers.has(id)) return null;
+  return connectionManagers.get(id).getState();
+});
+
+ipcMain.handle('stability:manualReconnect', (_e, { id }) => {
+  const wc = views.get(id);
+  if (!wc || wc.isDestroyed()) return { ok: false, error: 'cuenta no disponible' };
+  // Manual override: bypasses the current backoff timer, but still respects
+  // shouldStopRetrying's other conditions (closed/quitting/login-page).
+  runRecoveryLevel({ accountId: id, level: 3, wc, reason: 'manual-reconnect' })
+    .catch((err) => console.error('[stability] manual reconnect failed', err));
+  return { ok: true };
+});
+
+// ── Global crash/GPU/Network-Service differentiation ─────────────────────────
+// app-level render-process-gone/child-process-gone additionally cover
+// non-account renderers and GPU/Network Service/Utility/Audio processes —
+// AUGMENTS the existing per-account wc.on('render-process-gone', ...) handler
+// in wireAccountWebContents (which still runs exactly as before), doesn't
+// replace it.
+let consecutiveGpuCrashes = 0;
+let lastGpuCrashAt = 0;
+const GPU_CRASH_LOOP_WINDOW_MS = 5 * 60 * 1000;
+
+app.on('render-process-gone', (_event, _wc, details) => {
+  const info = classifyCrash({ reason: details.reason });
+  console.error('[crash-global] render-process-gone —', info.severity, info.reason);
+});
+
+app.on('child-process-gone', (_event, details) => {
+  const info = classifyCrash({ reason: details.reason, type: details.type });
+  console.error('[crash-global] child-process-gone —', info.category, info.severity, info.reason);
+
+  if (info.category === 'Network Service' && info.severity !== 'info') {
+    // A Network Service crash affects every session at once, not just one
+    // account — re-validate every open game account's WS layer rather than
+    // waiting for each one's own heartbeat to notice independently.
+    console.warn('[crash-global] Network Service crashed — re-validating all open game accounts');
     for (const account of data.accounts) {
       if (account.closed) continue;
       const wc = views.get(account.id);
       if (!wc || wc.isDestroyed() || !gameTelemetry.isGameUrl(wc.getURL())) continue;
-      const s = stats[account.id];
-      if (!s) continue;
-      // If kills > 0 recently, mark activity.
-      if (s.killsPerHour > 0 || (s.lastEvent && s.lastEvent.at > (lastActivityAt.get(account.id) || 0))) {
-        lastActivityAt.set(account.id, Date.now());
+      feedConnectionEvent(account.id, { type: 'WS_DETACHED', reason: 'network-service-crashed' });
+    }
+  }
+
+  if (info.shouldDisableGpu) {
+    const now = Date.now();
+    consecutiveGpuCrashes = (now - lastGpuCrashAt < GPU_CRASH_LOOP_WINDOW_MS) ? consecutiveGpuCrashes + 1 : 1;
+    lastGpuCrashAt = now;
+    // Never disable permanently off a single crash — only after a real
+    // crash-loop (3+ in a 5 min window), and reuses the existing
+    // hardwareAcceleration setting (already has a UI toggle) rather than
+    // adding a new one, so the user can self-revert from Configuración.
+    if (consecutiveGpuCrashes >= 3 && data.settings.hardwareAcceleration !== false) {
+      console.error('[crash-global] GPU crashed', consecutiveGpuCrashes, 'times in', GPU_CRASH_LOOP_WINDOW_MS / 1000, 's — disabling hardware acceleration for the next launch');
+      data.settings.hardwareAcceleration = false;
+      persist();
+      try {
+        new Notification({
+          title: 'Nexa Browser',
+          body: 'La GPU falló varias veces seguidas — se desactivó la aceleración por hardware para el próximo inicio. Podés reactivarla en Configuración.'
+        }).show();
+      } catch { /* Notification unsupported/unavailable — non-fatal */ }
+    }
+  }
+});
+
+// ── Freeze / stuck-character detector ───────────────────────────────────────
+// When the game's WebSocket drops, the character stops moving and kills/XP
+// drop to 0 even though the account looks "connected". Liveness is read
+// straight from gameTelemetry's per-account deltas (isLikelyFrozen) — NOT
+// from killsPerHour, a cumulative rate that stays positive for hours after
+// a single early kill and so never actually catches a real freeze (found
+// live, this was the bug). No local activity bookkeeping needed here
+// anymore: game-telemetry already persists lastAnyFrameAt/lastKillAt/etc.
+// per account for as long as the account exists.
+const FREEZE_THRESHOLD_MS = 4 * 60 * 1000; // 4 min of staleness = probably frozen
+const frozenNotifiedAt = new Map(); // prevent repeated notifications per account
+
+function startFreezeDetectorLoop() {
+  setInterval(async () => {
+    for (const account of data.accounts) {
+      if (account.closed) continue;
+      const wc = views.get(account.id);
+      if (!wc || wc.isDestroyed() || !gameTelemetry.isGameUrl(wc.getURL())) continue;
+      const deltas = gameTelemetry.getDeltas(account.id);
+      if (!deltas) continue;
+      const frozen = gameTelemetry.isLikelyFrozen({ deltas }, FREEZE_THRESHOLD_MS);
+
+      if (stabilityEnabled()) {
+        // Hand off to the connection-manager pipeline instead of pulsing
+        // directly — its own Level 2 recovery step is what actually calls
+        // pulseGameRealtimeConnection, after Level 1 (network revalidation)
+        // has had a chance to run first.
+        feedConnectionEvent(account.id, frozen ? { type: 'FROZEN_DETECTED' } : { type: 'FRAME_RECEIVED' });
+        continue;
+      }
+
+      if (!frozen) {
         frozenNotifiedAt.delete(account.id); // reset freeze notice for this account
         continue;
       }
-      const lastActive = lastActivityAt.get(account.id);
-      if (!lastActive) {
-        // No baseline yet — set now so the detector has a reference point.
-        lastActivityAt.set(account.id, Date.now());
-        continue;
-      }
-      const silent = Date.now() - lastActive;
-      if (silent < FREEZE_THRESHOLD_MS) continue;
       // Looks frozen — pulse the WS quietly to unstick it.
       const lastNotified = frozenNotifiedAt.get(account.id) || 0;
       if (Date.now() - lastNotified < 5 * 60 * 1000) continue; // max once per 5 min
       frozenNotifiedAt.set(account.id, Date.now());
-      console.log('[freeze-detector] account', account.id, 'silent for', Math.round(silent / 1000), 's — nudging WS');
+      console.log('[freeze-detector] account', account.id, 'looks frozen — nudging WS');
       pulseGameRealtimeConnection(wc).catch(() => {});
     }
   }, 60 * 1000); // check every minute
 }
 
-ipcMain.handle('memory:optimize', async () => optimizeMemory());
+ipcMain.handle('memory:optimize', async () => optimizeMemorySafe());
+ipcMain.handle('memory:deepClean', async () => optimizeMemoryDeepClean());
 ipcMain.handle('memory:getOptimizeStatus', () => ({
   lastOptimizeAt,
   running: optimizeRunning,
@@ -3720,6 +4403,103 @@ ipcMain.handle('metrics:get', () => {
   }
   return result;
 });
+
+// Exposes the adBlockLog ring buffer (already collected for diagnostics.js's
+// export report, Etapa 8) directly to the toolbar shield icon's dropdown —
+// so "N blocked" isn't just a number, the user can see exactly which
+// hostnames were blocked for the account they're looking at right now.
+ipcMain.handle('adblock:getLog', (_e, { id }) => {
+  const log = adBlockLog.get(id) || [];
+  return log.slice(-30).reverse();
+});
+
+ipcMain.handle('diagnostics:exportReport', async () => {
+  const appMetrics = app.getAppMetrics();
+  const byPid = new Map(appMetrics.map((m) => [m.pid, m]));
+  const memoryStats = [];
+  const accountConnectionStates = [];
+  const networkSnapshots = [];
+  const adBlockLogFlat = [];
+
+  for (const account of data.accounts) {
+    if (account.closed) continue;
+    const wc = views.get(account.id);
+    if (!wc || wc.isDestroyed()) continue;
+    const pid = wc.getOSProcessId();
+    const m = byPid.get(pid);
+    memoryStats.push({
+      accountId: account.id,
+      cpu: m ? m.cpu.percentCPUUsage : 0,
+      memoryMB: m ? Math.round((m.memory?.workingSetSize || 0) / 1024) : 0
+    });
+    if (connectionManagers.has(account.id)) {
+      accountConnectionStates.push({ accountId: account.id, ...connectionManagers.get(account.id).getState() });
+    }
+    if (gameTelemetry.isGameUrl(wc.getURL())) {
+      const snapshot = await networkHealth.checkAccountNetwork(account.id, { hostname: 'poke.idleworld.online' });
+      networkSnapshots.push({ accountId: account.id, ...snapshot });
+    }
+    const log = adBlockLog.get(account.id);
+    if (log) adBlockLogFlat.push(...log);
+  }
+
+  return diagnostics.buildReport({ accountConnectionStates, networkSnapshots, adBlockLog: adBlockLogFlat, memoryStats });
+});
+
+let activeNetLogSession = null; // { accountId, path } | null — one capture at a time, kept simple on purpose
+
+ipcMain.handle('diagnostics:startNetLog', async (_e, { id }) => {
+  const wc = views.get(id);
+  if (!wc || wc.isDestroyed()) return { ok: false, error: 'cuenta no disponible' };
+  if (activeNetLogSession) return { ok: false, error: `ya hay una captura en curso (${activeNetLogSession.accountId})` };
+  const logPath = path.join(app.getPath('userData'), `netlog-${id}-${Date.now()}.json`);
+  const result = await networkHealth.startNetLogCapture(wc.session, { path: logPath, maxSizeMb: 20 });
+  if (result.ok) activeNetLogSession = { accountId: id, path: logPath };
+  return result;
+});
+
+ipcMain.handle('diagnostics:stopNetLog', async () => {
+  if (!activeNetLogSession) return { ok: false, error: 'no hay una captura en curso' };
+  const wc = views.get(activeNetLogSession.accountId);
+  const ses = wc && !wc.isDestroyed() ? wc.session : null;
+  const result = ses ? await networkHealth.stopNetLogCapture(ses) : { ok: false, error: 'sesión ya no disponible' };
+  activeNetLogSession = null;
+  return result;
+});
+
+// Session partitions (accountPartition's persist:account-<id>) live on disk
+// as <userData>/Partitions/account-<id>/ for as long as Chromium/Electron
+// keeps them, independent of whether the account is still tracked in
+// data.accounts. removeAccountCompletely's ses.clearStorageData() empties a
+// partition's storage but doesn't delete the directory itself, and any
+// account removed before that cleanup call existed (or by an older app
+// version) left its partition behind forever with no code path that ever
+// revisits it. Confirmed live on this machine: 5 partition folders on disk
+// against 2 tracked accounts — 3 fully orphaned. Best-effort and
+// deliberately narrow: only ever deletes a folder named exactly
+// "account-<id>" whose <id> isn't in the CURRENT data.accounts list, never
+// touches anything else under userData.
+function cleanupOrphanedPartitions() {
+  const partitionsDir = path.join(app.getPath('userData'), 'Partitions');
+  let entries;
+  try {
+    entries = fs.readdirSync(partitionsDir, { withFileTypes: true });
+  } catch {
+    return; // no Partitions dir yet — nothing to clean
+  }
+  const liveIds = new Set(data.accounts.map((a) => a.id));
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('account-')) continue;
+    const id = entry.name.slice('account-'.length);
+    if (liveIds.has(id)) continue;
+    try {
+      fs.rmSync(path.join(partitionsDir, entry.name), { recursive: true, force: true });
+      console.log('[startup] removed orphaned partition', entry.name);
+    } catch (err) {
+      console.error('[startup] failed to remove orphaned partition', entry.name, err);
+    }
+  }
+}
 
 // Prevent two instances from ever running at once — they'd share the same
 // userData folder (data.json, extension sessions) and silently corrupt each
@@ -3753,6 +4533,18 @@ app.whenReady().then(() => {
     return meta;
   });
   Menu.setApplicationMenu(null);
+  cleanupOrphanedPartitions();
+  // Backfills `.action` (toolbar icon + popup path) for extensions installed
+  // before that field existed — without this, every extension installed
+  // pre-upgrade would never get a toolbar button until reinstalled.
+  for (const ext of data.settings.extensions) {
+    if (ext.action) continue;
+    try {
+      ext.action = extractExtensionAction(readManifest(ext.path), ext.path);
+    } catch {
+      ext.action = null;
+    }
+  }
   store.watchDataFile(() => {
     console.warn('[main] data file externally modified; a restart is recommended to avoid state divergence');
   });
@@ -3762,6 +4554,23 @@ app.whenReady().then(() => {
   startMarketAlertLoop();
   startAutoOptimizeLoop();
   startFreezeDetectorLoop();
+  // Wired unconditionally (cheap, idempotent) — refreshPowerBlockerNeed()
+  // itself no-ops unless settings.stability.backgroundKeepalive is on, so
+  // this stays fully inert for every existing install until a user opts in.
+  powerManager.initPowerManager({
+    onResume: () => {
+      console.log('[power-manager] system resumed — re-checking network for open game accounts');
+      for (const account of data.accounts) {
+        if (account.closed) continue;
+        const wc = views.get(account.id);
+        if (!wc || wc.isDestroyed() || !gameTelemetry.isGameUrl(wc.getURL())) continue;
+        networkHealth.checkAccountNetwork(account.id, { hostname: 'poke.idleworld.online' })
+          .then((r) => console.log('[power-manager] post-resume network check', account.id, r))
+          .catch((err) => console.error('[power-manager] post-resume network check failed', account.id, err));
+      }
+    },
+    onUnlockScreen: () => refreshPowerBlockerNeed()
+  });
   app.setLoginItemSettings({ openAtLogin: !!data.settings.startWithWindows });
   createWindow();
   mainWindow.webContents.once('did-finish-load', () => {
@@ -3789,5 +4598,6 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   appQuitting = true;
+  powerManager.shutdownPowerManager();
   flushPersist();
 });

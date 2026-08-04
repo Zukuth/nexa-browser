@@ -42,14 +42,22 @@
     </button>
 
     <div id="toolbar">
+      <!-- One button per enabled extension with a declared action/icon —
+           populated by renderExtensionToolbar() in renderer.js, empty (and
+           takes no visible space) when there are no extensions installed. -->
+      <div id="ext-toolbar" class="ext-toolbar"></div>
+
       <button id="tb-reload-2" title="Recargar" data-i18n-title="topbar.reload">⟳</button>
       <button id="tb-mute" title="Silenciar panel" data-i18n-title="topbar.mute">🔊</button>
       <button id="tb-mute-all" title="Silenciar todo" data-i18n-title="topbar.muteAll">🔇</button>
 
-      <button id="tb-shield" class="shield-btn" title="Bloqueador de anuncios" data-i18n-title="topbar.adblock">
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/></svg>
-        <span id="tb-shield-count" class="shield-count"></span>
-      </button>
+      <div class="menu-wrap">
+        <button id="tb-shield" class="shield-btn" title="Bloqueador de anuncios (clic derecho: ver detalle)" data-i18n-title="topbar.adblock">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/></svg>
+          <span id="tb-shield-count" class="shield-count" title="Ver qué se bloqueó" data-i18n-title="topbar.adblockViewLog"></span>
+        </button>
+        <div id="shield-menu" class="dropdown-menu hidden"></div>
+      </div>
 
       <div class="menu-wrap">
         <button id="btn-zoom-menu" class="menu-btn" title="Zoom" data-i18n-title="topbar.zoom">
@@ -518,9 +526,11 @@
         <div class="poke-nav-item" data-poke-scroll="caza"><span><svg><use href="#poke-icon-hunt"></use></svg></span><b data-i18n="pokeIdle.tab.caza">Caza &amp; XP</b></div>
         <div class="poke-nav-item" data-poke-scroll="tierlist"><span><svg><use href="#poke-icon-tier"></use></svg></span><b data-i18n="pokeIdle.tab.tierlist">Tier List</b></div>
         <div class="poke-nav-item" data-poke-scroll="drops"><span><svg><use href="#poke-icon-drops"></use></svg></span><b data-i18n="pokeIdle.tab.drops">Drops en vivo</b></div>
+        <div class="poke-nav-item" data-poke-scroll="huntcompare"><span><svg><use href="#poke-icon-hunt"></use></svg></span><b data-i18n="pokeIdle.tab.huntCompare">Comparador de hunts</b></div>
         <div class="poke-nav-item" data-poke-scroll="pokedexitems"><span><svg><use href="#poke-icon-book"></use></svg></span><b data-i18n="pokeIdle.tab.pokedexItems">Poképedia drops</b></div>
         <div class="poke-nav-item" data-poke-scroll="capturas"><span><svg><use href="#poke-icon-capture"></use></svg></span><b data-i18n="pokeIdle.tab.capturas">Capturas destacadas</b></div>
         <div class="poke-nav-item" data-poke-scroll="market"><span><svg><use href="#poke-icon-market"></use></svg></span><b data-i18n="pokeIdle.tab.market">Market</b></div>
+        <div class="poke-nav-item" data-poke-scroll="shop"><span><svg><use href="#poke-icon-market"></use></svg></span><b data-i18n="pokeIdle.tab.shop">Tienda</b></div>
         <div class="poke-nav-item" data-poke-scroll="alertas"><span><svg><use href="#poke-icon-alert"></use></svg></span><b data-i18n="pokeIdle.tab.alertas">Alertas</b></div>
         <div class="poke-nav-item" data-poke-scroll="ajustes"><span><svg><use href="#poke-icon-settings"></use></svg></span><b data-i18n="pokeIdle.tab.ajustes">Ajustes</b></div>
       </div>
@@ -636,6 +646,18 @@
           <select id="tier-type"><option value="" data-i18n="pokeIdle.typeAll">Todos</option></select>
         </div>
         <div class="settings-row">
+          <span data-i18n="pokeIdle.filterByCapture">Filtrar por captura</span>
+          <select id="tier-capture-filter">
+            <option value="" data-i18n="pokeIdle.captureAll">Todos</option>
+            <option value="captured" data-i18n="pokeIdle.captureCaught">Capturados</option>
+            <option value="uncaptured" data-i18n="pokeIdle.captureNotCaught">No capturados</option>
+          </select>
+        </div>
+        <div class="settings-row hidden" id="tier-capture-account-row">
+          <span data-i18n="pokeIdle.captureAccount">Según la Pokédex de</span>
+          <select id="tier-capture-account"></select>
+        </div>
+        <div class="settings-row">
           <span id="tier-meta" class="settings-hint" data-i18n="pokeIdle.tierMetaLoading">Catálogo pendiente de cargar.</span>
           <button id="tier-refresh" type="button" data-i18n="pokeIdle.refreshCatalog">Actualizar catálogo</button>
         </div>
@@ -651,6 +673,17 @@
           propio Hunt Analyzer del juego).
         </p>
         <div id="poke-drops-wrap"></div>
+      </section>
+
+      <section id="poke-section-huntcompare" class="poke-section">
+        <div class="poke-section-heading">
+          <div><span class="poke-section-eyebrow" data-i18n="pokeIdle.sectionLive">En vivo</span><h3 data-i18n="pokeIdle.tab.huntCompare">Comparador de hunts</h3></div>
+        </div>
+        <p class="settings-hint" data-i18n="pokeIdle.huntCompareHint">
+          Compara la hunt actual contra la anterior (oro, oro/hora, XP, XP/hora, derrotas/hora y duración) apenas
+          cambiás de zona de caza, e incluye tus últimas sesiones registradas por cuenta.
+        </p>
+        <div id="poke-hunt-compare-wrap"></div>
       </section>
 
       <section id="poke-section-pokedexitems" class="poke-section">
@@ -669,6 +702,25 @@
         <h3 data-i18n="pokeIdle.tab.capturas">Capturas destacadas</h3>
         <p class="settings-hint" data-i18n="pokeIdle.capturasHint">Todo lo capturado en esta sesión, en tiempo real (últimas 30 destacadas guardadas).</p>
         <div id="poke-idle-notable" class="poke-notable-list"></div>
+      </section>
+
+      <section id="poke-section-shop" class="poke-section">
+        <div class="poke-section-heading">
+          <div><span class="poke-section-eyebrow" data-i18n="pokeIdle.sectionLive">En vivo</span><h3 data-i18n="pokeIdle.tab.shop">Tienda</h3></div>
+        </div>
+        <p class="settings-hint" data-i18n="pokeIdle.shopHint">
+          Comprá Poké Balls, pociones y revives directo de la tienda de Mark — misma sesión y saldo de la cuenta
+          elegida, sin moverte del panel.
+        </p>
+        <div class="settings-row">
+          <span data-i18n="pokeIdle.account">Cuenta</span>
+          <select id="shop-account"></select>
+        </div>
+        <div class="settings-row">
+          <span id="shop-gold" class="settings-hint"></span>
+          <button type="button" id="shop-refresh" data-i18n="pokeIdle.shopRefresh">Actualizar</button>
+        </div>
+        <div id="shop-wrap"></div>
       </section>
 
       <section id="poke-section-market" class="poke-section">
@@ -865,6 +917,7 @@
           <button type="button" class="poke-settings-tab active" data-poke-settings-tab="performance" data-i18n="pokeIdle.settingsTabPerformance">Rendimiento</button>
           <button type="button" class="poke-settings-tab" data-poke-settings-tab="interface" data-i18n="pokeIdle.settingsTabInterface">Interfaz del juego</button>
           <button type="button" class="poke-settings-tab" data-poke-settings-tab="protection" data-i18n="pokeIdle.settingsTabProtection">Protección</button>
+          <button type="button" class="poke-settings-tab" data-poke-settings-tab="stability" data-i18n="pokeIdle.settingsTabStability">Estabilidad</button>
         </div>
         <div id="poke-settings-empty" class="market-empty-state hidden" data-i18n="pokeIdle.settingsNoAccount">No hay cuentas disponibles.</div>
         <div class="poke-settings-panels">
@@ -918,6 +971,67 @@
               <button id="poke-settings-selllock-item-add" type="button" data-i18n="action.add">Agregar</button>
             </div>
           </div>
+          <div class="poke-settings-panel" data-poke-settings-panel="stability">
+            <p class="settings-hint" data-i18n="stability.intro">Recuperación de conexión, suspensión de Windows y diagnóstico. Todo apagado por defecto — no cambia nada hasta que actives la opción principal.</p>
+            <div class="settings-row">
+              <div>
+                <div data-i18n="stability.enabled">Activar recuperación de conexión</div>
+                <div class="settings-hint" data-i18n="stability.enabledHint">Detecta desconexiones reales del juego y las repara en pasos, sin recargar la página como primer recurso.</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="stability-enabled" /><span class="slider"></span></label>
+            </div>
+            <div class="settings-row">
+              <div>
+                <div data-i18n="stability.backgroundKeepalive">Mantener activo en segundo plano</div>
+                <div class="settings-hint" data-i18n="stability.backgroundKeepaliveHint">Evita que Windows suspenda la app mientras haya una cuenta en el juego (la pantalla igual se puede apagar). Puede aumentar el consumo de batería.</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="stability-keepalive" /><span class="slider"></span></label>
+            </div>
+            <div class="settings-row">
+              <div>
+                <div data-i18n="stability.autoRecovery">Recuperación automática</div>
+                <div class="settings-hint" data-i18n="stability.autoRecoveryHint">Reintenta reconectar solo, con espera creciente entre intentos. Apagalo si preferís reconectar manualmente.</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="stability-auto-recovery" /><span class="slider"></span></label>
+            </div>
+            <div class="settings-row">
+              <div>
+                <div data-i18n="stability.lastResortReload">Recarga como último recurso</div>
+                <div class="settings-hint" data-i18n="stability.lastResortReloadHint">⚠️ Apagado por defecto. Si todo lo demás falla, recarga la página — puede hacerte perder la posición en el mapa.</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="stability-last-resort-reload" /><span class="slider"></span></label>
+            </div>
+            <div class="settings-row">
+              <div>
+                <div data-i18n="stability.disconnectNotifications">Avisar desconexiones</div>
+                <div class="settings-hint" data-i18n="stability.disconnectNotificationsHint">Notificación de Windows cuando una cuenta parece desconectada.</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="stability-notify" /><span class="slider"></span></label>
+            </div>
+            <div class="settings-row">
+              <div>
+                <div data-i18n="field.cleanGameProfile">Perfil limpio de extensiones (esta cuenta)</div>
+                <div class="settings-hint" data-i18n="field.cleanGameProfileHint">Solo cargan extensiones marcadas como confiables en esta cuenta. El resto de tus cuentas no cambia.</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="poke-settings-clean-profile" /><span class="slider"></span></label>
+            </div>
+            <div class="poke-eco-benchmark-card">
+              <div>
+                <strong data-i18n="stability.accountStatusTitle">Estado de conexión (cuenta seleccionada)</strong>
+                <p id="stability-account-status" data-i18n="stability.accountStatusEmpty">Sin datos todavía — activá la recuperación de conexión arriba.</p>
+              </div>
+              <button type="button" id="stability-manual-reconnect" data-i18n="stability.manualReconnect">Reconectar cuenta</button>
+            </div>
+            <div class="poke-eco-benchmark-card">
+              <div>
+                <strong data-i18n="stability.diagnosticsTitle">Diagnóstico avanzado</strong>
+                <p data-i18n="stability.diagnosticsHint">Copia un reporte técnico (sin contraseñas ni datos personales) al portapapeles, o graba un registro de red detallado para depurar un problema puntual.</p>
+              </div>
+              <button type="button" id="stability-export-report" data-i18n="stability.exportReport">Copiar diagnóstico</button>
+              <button type="button" id="stability-start-netlog" data-i18n="stability.startNetlog">Iniciar registro de red</button>
+              <button type="button" id="stability-stop-netlog" data-i18n="stability.stopNetlog">Detener registro de red</button>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -943,6 +1057,23 @@
         <div class="modal-actions-right">
           <button id="market-detail-buy" class="primary" data-i18n="pokeIdle.marketBuy">Comprar</button>
           <button id="btn-close-market-modal-2" data-i18n="action.close">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="shop-buy-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="settings-header">
+        <div class="modal-title" data-i18n="pokeIdle.shopConfirmTitle">Confirmar compra</div>
+        <button id="btn-close-shop-modal" class="icon-close" data-i18n-title="action.close" title="Cerrar">✕</button>
+      </div>
+      <div id="shop-buy-modal-body" class="market-detail-body"></div>
+      <div class="modal-actions">
+        <div class="settings-hint" id="shop-buy-modal-status"></div>
+        <div class="modal-actions-right">
+          <button id="shop-buy-confirm" class="primary" data-i18n="pokeIdle.shopBuyConfirm">Comprar</button>
+          <button id="btn-close-shop-modal-2" data-i18n="action.close">Cerrar</button>
         </div>
       </div>
     </div>

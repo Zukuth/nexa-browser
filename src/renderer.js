@@ -85,7 +85,21 @@ const tierRefreshBtn = document.getElementById('tier-refresh');
 const tierMetaEl = document.getElementById('tier-meta');
 const tierListWrapEl = document.getElementById('tier-list-wrap');
 const tierDetailEl = document.getElementById('tier-detail');
+const tierCaptureFilterEl = document.getElementById('tier-capture-filter');
+const tierCaptureAccountEl = document.getElementById('tier-capture-account');
+const tierCaptureAccountRowEl = document.getElementById('tier-capture-account-row');
 const pokeDropsWrapEl = document.getElementById('poke-drops-wrap');
+const pokeHuntCompareWrapEl = document.getElementById('poke-hunt-compare-wrap');
+const shopAccountEl = document.getElementById('shop-account');
+const shopGoldEl = document.getElementById('shop-gold');
+const shopRefreshBtn = document.getElementById('shop-refresh');
+const shopWrapEl = document.getElementById('shop-wrap');
+const shopBuyModal = document.getElementById('shop-buy-modal');
+const shopBuyModalBodyEl = document.getElementById('shop-buy-modal-body');
+const shopBuyModalStatusEl = document.getElementById('shop-buy-modal-status');
+const btnCloseShopModal = document.getElementById('btn-close-shop-modal');
+const btnCloseShopModal2 = document.getElementById('btn-close-shop-modal-2');
+const shopBuyConfirmBtn = document.getElementById('shop-buy-confirm');
 const pokeItemPediaSearchEl = document.getElementById('poke-item-pedia-search');
 const pokeItemPediaCategoryEl = document.getElementById('poke-item-pedia-category');
 const pokeItemPediaEl = document.getElementById('poke-item-pedia');
@@ -102,6 +116,17 @@ const pokeSettingsSellLockEl = document.getElementById('poke-settings-selllock')
 const pokeSettingsSellLockItemsEl = document.getElementById('poke-settings-selllock-items');
 const pokeSettingsSellLockItemPickerEl = document.getElementById('poke-settings-selllock-item-picker');
 const pokeSettingsSellLockItemAddEl = document.getElementById('poke-settings-selllock-item-add');
+const pokeSettingsCleanProfileEl = document.getElementById('poke-settings-clean-profile');
+const stabilityEnabledEl = document.getElementById('stability-enabled');
+const stabilityKeepaliveEl = document.getElementById('stability-keepalive');
+const stabilityAutoRecoveryEl = document.getElementById('stability-auto-recovery');
+const stabilityLastResortReloadEl = document.getElementById('stability-last-resort-reload');
+const stabilityNotifyEl = document.getElementById('stability-notify');
+const stabilityAccountStatusEl = document.getElementById('stability-account-status');
+const stabilityManualReconnectBtn = document.getElementById('stability-manual-reconnect');
+const stabilityExportReportBtn = document.getElementById('stability-export-report');
+const stabilityStartNetlogBtn = document.getElementById('stability-start-netlog');
+const stabilityStopNetlogBtn = document.getElementById('stability-stop-netlog');
 const calcStatInputs = {
   hp: document.getElementById('calc-stat-hp'),
   atk: document.getElementById('calc-stat-atk'),
@@ -324,6 +349,41 @@ const SPACE_ICON_SVGS = {
 let state = { spaces: [], accounts: [], bookmarks: [], passwords: [], history: [], downloads: [], settings: {} };
 let metrics = {};
 let gameStats = {}; // Fase B: {[accountId]: {killsPerHour, xpPerHour, goldPerHour, captures, ...} | null}
+
+const POKE_GAME_HOSTNAME = 'poke.idleworld.online';
+// An account can point at the game (URL matches, not on /login) for a while
+// before game-telemetry.js has a stats entry for it — the debugger attaches
+// on navigation, but the state only gets created once the first WS frame
+// arrives. Every poke-* live panel used to lump that "still connecting"
+// window in with "no account points to the game at all", which showed the
+// wrong hint (implying the user needs to open an account, when one is
+// already open and just hasn't sent data yet). This distinguishes the two.
+function isPokeGameAccount(account) {
+  if (!account || account.closed || !account.url) return false;
+  try {
+    const u = new URL(account.url);
+    return u.hostname === POKE_GAME_HOSTNAME && !u.pathname.startsWith('/login');
+  } catch {
+    return false;
+  }
+}
+
+// Shared loading/empty resolver for the poke-* live panels: returns
+// `{ gameAccounts, tracked }` where `gameAccounts` is every open account
+// pointing at the game and `tracked` is the subset game-telemetry has
+// produced stats for yet. Callers render three distinct states from this —
+// no account at all, account(s) open but still connecting, and real data —
+// instead of collapsing the first two into one misleading message.
+function pokeLiveAccountsStatus() {
+  const gameAccounts = state.accounts.filter(isPokeGameAccount);
+  const tracked = gameAccounts.filter((a) => gameStats[a.id]);
+  return { gameAccounts, tracked };
+}
+
+function pokeLoadingOrEmptyHtml(gameAccounts) {
+  if (gameAccounts.length === 0) return `<div class="settings-hint">${t('pokeIdle.noAccounts')}</div>`;
+  return `<div class="settings-hint poke-skeleton-hint">${t('pokeIdle.statsLoading')}</div>`;
+}
 let panelsGeometry = [];
 // While a drag (divider or free-mode move/resize) is in progress, the panel
 // headers being dragged are live DOM elements this code updates directly on
@@ -520,6 +580,7 @@ function render() {
   // change (a resize, a layout switch, ...).
   positionWebviews();
   if (!listDragInProgress) renderRail();
+  renderExtensionToolbar();
 
   const collapsed = !!state.settings.sidebarCollapsed;
   const sidebarWidth = collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED;
@@ -943,7 +1004,12 @@ function reconcileWebviews() {
     // "frozen" next time that panel is viewed. poke-idle-launcher (the
     // reference project cited in game-telemetry.js) hits the same problem
     // and fixes it the same way: keep the renderer's timers running at full
-    // speed regardless of paint visibility.
+    // speed regardless of paint visibility. Just the safe starting default
+    // for the initial about:blank load — main.js's syncBackgroundThrottling()
+    // (wireAccountWebContents) takes over dynamically once the account's
+    // real URL is known, re-enabling normal throttling for non-game pages
+    // (e.g. sitting on /login) since those don't need full-speed hidden
+    // timers and idle CPU adds up across several open accounts.
     wv.setAttribute('webpreferences', 'contextIsolation=yes,sandbox=yes,backgroundThrottling=no');
     // <webview> blocks window.open()/new-window entirely by default, no
     // matter what setWindowOpenHandler on the main-process side returns —
@@ -1445,7 +1511,7 @@ async function renderPokeAccountSettings() {
   const account = selectedPokeSettingsAccount();
   const hasAccount = !!account;
   pokeSettingsEmptyEl?.classList.toggle('hidden', hasAccount);
-  [pokeSettingsEcoEl, pokeSettingsEcoBenchmarkBtn, pokeSettingsHideChatEl, pokeSettingsHideGameBarEl, pokeSettingsSellLockEl, pokeSettingsSellLockItemPickerEl, pokeSettingsSellLockItemAddEl]
+  [pokeSettingsEcoEl, pokeSettingsEcoBenchmarkBtn, pokeSettingsHideChatEl, pokeSettingsHideGameBarEl, pokeSettingsSellLockEl, pokeSettingsSellLockItemPickerEl, pokeSettingsSellLockItemAddEl, pokeSettingsCleanProfileEl]
     .forEach((el) => { if (el) el.disabled = !hasAccount; });
   if (!account) {
     renderPokeSettingsLockItems(null);
@@ -1455,8 +1521,54 @@ async function renderPokeAccountSettings() {
   pokeSettingsHideChatEl.checked = !!account.hideChat;
   pokeSettingsHideGameBarEl.checked = !!account.hideGameBar;
   pokeSettingsSellLockEl.checked = !!account.sellLockOn;
+  if (pokeSettingsCleanProfileEl) pokeSettingsCleanProfileEl.checked = !!account.cleanGameProfile;
   await populatePokeSettingsItemPicker();
   renderPokeSettingsLockItems(account);
+  refreshStabilityAccountStatus();
+}
+
+const STABILITY_STATE_CHIP = {
+  HEALTHY: '🟢', IDLE: '🟡', WS_CONNECTING: '🔵', RECOVERING: '🔵',
+  NETWORK_OFFLINE: '🔴', DNS_FAILURE: '🔴', SERVER_UNREACHABLE: '🔴',
+  WS_STALE: '🟠', WS_CLOSED: '🟠', RENDERER_UNRESPONSIVE: '🟠',
+  RENDERER_CRASHED: '⚫', RECOVERY_FAILED: '⚫', INITIALIZING: '🟡'
+};
+
+function renderStabilityGlobalSettings() {
+  const s = (state.settings && state.settings.stability) || {};
+  if (stabilityEnabledEl) stabilityEnabledEl.checked = !!s.enabled;
+  if (stabilityKeepaliveEl) stabilityKeepaliveEl.checked = !!s.backgroundKeepalive;
+  if (stabilityAutoRecoveryEl) stabilityAutoRecoveryEl.checked = s.autoRecovery !== false;
+  if (stabilityLastResortReloadEl) stabilityLastResortReloadEl.checked = !!s.lastResortAutoReload;
+  if (stabilityNotifyEl) stabilityNotifyEl.checked = s.disconnectNotifications !== false;
+}
+
+async function updateStabilitySettings(fields) {
+  const current = (state.settings && state.settings.stability) || {};
+  const next = { ...current, ...fields };
+  state.settings.stability = next;
+  await window.api.updateSettings({ stability: next });
+}
+
+async function refreshStabilityAccountStatus() {
+  if (!stabilityAccountStatusEl) return;
+  const account = selectedPokeSettingsAccount();
+  if (!account || !state.settings?.stability?.enabled) {
+    stabilityAccountStatusEl.textContent = t('stability.accountStatusEmpty');
+    return;
+  }
+  try {
+    const s = await window.api.getStabilityAccountState(account.id);
+    if (!s) {
+      stabilityAccountStatusEl.textContent = t('stability.accountStatusEmpty');
+      return;
+    }
+    const chip = STABILITY_STATE_CHIP[s.state] || '⚪';
+    const lastHealthy = s.lastHealthyAt ? new Date(s.lastHealthyAt).toLocaleTimeString() : '—';
+    stabilityAccountStatusEl.textContent = `${chip} ${s.state} · intentos: ${s.attemptCount} · última vez sana: ${lastHealthy}`;
+  } catch {
+    stabilityAccountStatusEl.textContent = t('stability.accountStatusEmpty');
+  }
 }
 
 async function updatePokeSettingsAccount(fields) {
@@ -1609,6 +1721,44 @@ pokeSettingsEcoBenchmarkBtn?.addEventListener('click', runEcoBenchmark);
 pokeSettingsHideChatEl?.addEventListener('change', () => updatePokeSettingsAccount({ hideChat: pokeSettingsHideChatEl.checked }));
 pokeSettingsHideGameBarEl?.addEventListener('change', () => updatePokeSettingsAccount({ hideGameBar: pokeSettingsHideGameBarEl.checked }));
 pokeSettingsSellLockEl?.addEventListener('change', () => updatePokeSettingsAccount({ sellLockOn: pokeSettingsSellLockEl.checked }));
+pokeSettingsCleanProfileEl?.addEventListener('change', () => updatePokeSettingsAccount({ cleanGameProfile: pokeSettingsCleanProfileEl.checked }));
+stabilityEnabledEl?.addEventListener('change', () => updateStabilitySettings({ enabled: stabilityEnabledEl.checked }).then(refreshStabilityAccountStatus));
+stabilityKeepaliveEl?.addEventListener('change', () => updateStabilitySettings({ backgroundKeepalive: stabilityKeepaliveEl.checked }));
+stabilityAutoRecoveryEl?.addEventListener('change', () => updateStabilitySettings({ autoRecovery: stabilityAutoRecoveryEl.checked }));
+stabilityLastResortReloadEl?.addEventListener('change', () => updateStabilitySettings({ lastResortAutoReload: stabilityLastResortReloadEl.checked }));
+stabilityNotifyEl?.addEventListener('change', () => updateStabilitySettings({ disconnectNotifications: stabilityNotifyEl.checked }));
+stabilityManualReconnectBtn?.addEventListener('click', async () => {
+  const account = selectedPokeSettingsAccount();
+  if (!account) return;
+  stabilityManualReconnectBtn.disabled = true;
+  try {
+    await window.api.manualReconnectAccount(account.id);
+    setTimeout(refreshStabilityAccountStatus, 1500);
+  } finally {
+    stabilityManualReconnectBtn.disabled = false;
+  }
+});
+stabilityExportReportBtn?.addEventListener('click', async () => {
+  try {
+    const report = await window.api.exportDiagnosticsReport();
+    await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
+    stabilityExportReportBtn.textContent = t('stability.exportReportDone');
+    setTimeout(() => { stabilityExportReportBtn.textContent = t('stability.exportReport'); }, 2000);
+  } catch (err) {
+    console.error('[stability] failed to export diagnostics report', err);
+  }
+});
+stabilityStartNetlogBtn?.addEventListener('click', async () => {
+  const account = selectedPokeSettingsAccount();
+  if (!account) return;
+  const result = await window.api.startNetLog(account.id);
+  if (!result.ok) console.error('[stability] startNetLog failed', result.error);
+});
+stabilityStopNetlogBtn?.addEventListener('click', async () => {
+  const result = await window.api.stopNetLog();
+  if (!result.ok) console.error('[stability] stopNetLog failed', result.error);
+});
+window.api.onStabilityUpdate?.(() => refreshStabilityAccountStatus());
 pokeSettingsSellLockItemAddEl?.addEventListener('click', async () => {
   const account = selectedPokeSettingsAccount();
   if (!account) return;
@@ -1767,6 +1917,50 @@ document.addEventListener('click', () => {
   const wasOpen = !layoutMenu.classList.contains('hidden') || !zoomMenu.classList.contains('hidden');
   closeAllMenus({});
   if (wasOpen) window.api.showViews();
+  if (shieldMenu && !shieldMenu.classList.contains('hidden')) {
+    shieldMenu.classList.add('hidden');
+    window.api.showViews();
+  }
+});
+
+// ---- Shield "what got blocked" dropdown ----
+// The count badge alone ("N blocked") never said WHAT — this fetches the
+// account's adBlockLog ring buffer (already collected for the diagnostics
+// export, Etapa 8) on demand, only while the panel is actually open.
+const shieldMenu = document.getElementById('shield-menu');
+
+async function renderShieldMenu() {
+  const active = activeAccount();
+  shieldMenu.innerHTML = '';
+  if (!active) {
+    shieldMenu.innerHTML = `<div class="settings-hint" style="padding:8px;">${t('js.adblockNoActiveAccount')}</div>`;
+    return;
+  }
+  const log = await window.api.getAdBlockLog(active.id);
+  if (!log || log.length === 0) {
+    shieldMenu.innerHTML = `<div class="settings-hint" style="padding:8px;">${t('js.adblockNothingBlockedYet')}</div>`;
+    return;
+  }
+  log.forEach((entry) => {
+    const row = document.createElement('div');
+    row.className = 'shield-log-row';
+    const time = new Date(entry.timestamp).toLocaleTimeString();
+    row.innerHTML = `<span class="shield-log-host">${escapeHtmlClient(entry.hostname)}</span><span class="shield-log-time">${time}</span>`;
+    shieldMenu.appendChild(row);
+  });
+}
+
+tbShieldCount.addEventListener('click', (e) => {
+  e.stopPropagation();
+  closeAllMenus({});
+  const opening = shieldMenu.classList.contains('hidden');
+  shieldMenu.classList.toggle('hidden', !opening);
+  if (opening) {
+    window.api.hideViews();
+    renderShieldMenu();
+  } else {
+    window.api.showViews();
+  }
 });
 
 // ---- Toolbar ----
@@ -2343,6 +2537,42 @@ function closeSettingsModal() {
   popModal();
 }
 
+// Persistent toolbar icon per enabled extension — the settings-modal list
+// (renderExtensions below) already lets the user install/toggle/remove, but
+// had no way to actually USE an extension without leaving the app's own
+// browsing chrome, unlike every real browser. Clicking an icon opens (or,
+// if already open, closes) the extension's real chrome-extension://
+// popup.html in a small floating window (see extensions:openPopup, main.js)
+// — extensions with no popup (background-only, e.g. some ad blockers) get a
+// disabled-looking icon instead of silently doing nothing on click.
+const extToolbarEl = document.getElementById('ext-toolbar');
+function renderExtensionToolbar() {
+  const list = (state.settings.extensions || []).filter((e) => e.enabled !== false);
+  extToolbarEl.innerHTML = '';
+  list.forEach((ext) => {
+    const btn = document.createElement('button');
+    const hasPopup = !!(ext.action && ext.action.popup);
+    btn.className = 'ext-toolbar-btn' + (hasPopup ? '' : ' no-popup');
+    btn.title = (ext.action && ext.action.title) || ext.name;
+    if (ext.action && ext.action.icon) {
+      const img = document.createElement('img');
+      img.src = `file://${ext.action.icon.replace(/\\/g, '/')}`;
+      img.onerror = () => {
+        img.remove();
+        btn.textContent = '🧩';
+      };
+      btn.appendChild(img);
+    } else {
+      btn.textContent = '🧩';
+    }
+    btn.onclick = () => {
+      if (!hasPopup) return; // nothing to open — this extension runs in the background only
+      window.api.openExtensionPopup(ext.id);
+    };
+    extToolbarEl.appendChild(btn);
+  });
+}
+
 function renderExtensions() {
   const list = state.settings.extensions || [];
   extListEl.innerHTML = '';
@@ -2759,9 +2989,9 @@ function dropsTableHtml(lootBreakdown) {
 
 function renderPokeIdleDrops() {
   if (!pokeDropsWrapEl) return;
-  const tracked = state.accounts.filter((a) => !a.closed && gameStats[a.id]);
+  const { gameAccounts, tracked } = pokeLiveAccountsStatus();
   if (tracked.length === 0) {
-    pokeDropsWrapEl.innerHTML = `<div class="settings-hint">${t('pokeIdle.noAccounts')}</div>`;
+    pokeDropsWrapEl.innerHTML = pokeLoadingOrEmptyHtml(gameAccounts);
     return;
   }
   if (tracked.length === 1) {
@@ -2773,10 +3003,247 @@ function renderPokeIdleDrops() {
   ).join('');
 }
 
+function huntCompareCellClass(curr, prev) {
+  if (prev == null || curr == null) return '';
+  if (curr > prev) return 'poke-compare-up';
+  if (curr < prev) return 'poke-compare-down';
+  return '';
+}
+
+function huntTeleportControlsHtml(account, gs) {
+  const isFavorite = !!(account.favoriteHuntSlug && gs.huntKey && gs.huntKey === account.favoriteHuntSlug);
+  const hasCurrent = !!gs.huntKey;
+  const hasFavorite = !!account.favoriteHuntSlug;
+  const hasLast = !!(gs.previousHunt && gs.previousHunt.huntKey);
+  return `
+    <div class="poke-hunt-teleport-row" data-account-id="${escapeHtmlClient(account.id)}">
+      <span class="poke-hunt-current-slug">${hasCurrent ? escapeHtmlClient(gs.huntKey) : t('pokeIdle.huntNone')}</span>
+      <button type="button" class="poke-hunt-fav-btn${isFavorite ? ' active' : ''}" data-action="toggle-favorite" ${hasCurrent ? '' : 'disabled'} title="${t('pokeIdle.favoriteHuntToggle')}">${isFavorite ? '★' : '☆'}</button>
+      <button type="button" data-action="go-favorite" ${hasFavorite ? '' : 'disabled'}>⭐ ${t('pokeIdle.goFavoriteHunt')}</button>
+      <button type="button" data-action="go-last" ${hasLast ? '' : 'disabled'}>↻ ${t('pokeIdle.goLastHunt')}</button>
+    </div>
+  `;
+}
+
+function huntCompareCardHtml(account, gs) {
+  const controls = huntTeleportControlsHtml(account, gs);
+  const prevHunt = gs.previousHunt;
+  if (!prevHunt) {
+    return `${controls}<div class="settings-hint">${t('pokeIdle.huntCompareEmpty')}</div>`;
+  }
+  const rows = [
+    [t('pokeIdle.col.gold'), gs.netGold, prevHunt.netGold, (v) => `$${formatCompactNumber(v)}`],
+    [t('pokeIdle.col.goldPerHour'), gs.goldPerHour, prevHunt.goldPerHour, (v) => `$${formatCompactNumber(v)}`],
+    [t('pokeIdle.col.xp'), gs.xp, prevHunt.xp, (v) => formatCompactNumber(v)],
+    [t('pokeIdle.col.xpPerHour'), gs.xpPerHour, prevHunt.xpPerHour, (v) => formatCompactNumber(v)],
+    [t('pokeIdle.col.killsPerHour'), gs.killsPerHour, prevHunt.killsPerHour, (v) => formatCompactNumber(v)],
+    [t('pokeIdle.col.duration'), gs.durationMs, prevHunt.durationMs, (v) => formatDuration(v)]
+  ];
+  const body = rows.map(([label, curr, prev, fmt]) => `
+    <tr>
+      <td>${escapeHtmlClient(label)}</td>
+      <td>${fmt(curr)}</td>
+      <td class="${huntCompareCellClass(curr, prev)}">${fmt(prev)}</td>
+    </tr>
+  `).join('');
+  const history = (gs.huntHistory || []).slice(0, 10).map((h) => `
+    <div class="poke-hunt-history-row">
+      <span>${escapeHtmlClient(h.huntKey || '?')}</span>
+      <span>$${formatCompactNumber(h.netGold)} (${formatCompactNumber(h.goldPerHour)}/h)</span>
+      <span>${formatDuration(h.durationMs)}</span>
+    </div>
+  `).join('');
+  return `
+    ${controls}
+    <table class="poke-calc-table poke-hunt-compare-table">
+      <thead><tr><th></th><th>${t('pokeIdle.huntCompareCurrent')}</th><th>${t('pokeIdle.huntComparePrevious')}</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+    ${history ? `<div class="settings-subheading">${t('pokeIdle.huntCompareHistory')}</div><div class="poke-hunt-history">${history}</div>` : ''}
+  `;
+}
+
+pokeHuntCompareWrapEl?.addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-action]');
+  if (!btn) return;
+  const row = btn.closest('.poke-hunt-teleport-row');
+  const accountId = row && row.dataset.accountId;
+  if (!accountId) return;
+  const action = btn.dataset.action;
+  if (action === 'toggle-favorite') {
+    const gs = gameStats[accountId];
+    const account = state.accounts.find((a) => a.id === accountId);
+    if (!gs || !gs.huntKey || !account) return;
+    const next = account.favoriteHuntSlug === gs.huntKey ? null : gs.huntKey;
+    await window.api.setFavoriteHunt(accountId, next);
+    account.favoriteHuntSlug = next;
+    renderPokeIdleHuntCompare();
+  } else if (action === 'go-favorite' || action === 'go-last') {
+    btn.disabled = true;
+    const result = await window.api.teleportToHunt(accountId, action === 'go-favorite' ? 'favorite' : 'last');
+    btn.disabled = false;
+    if (!result || !result.ok) alert(t('pokeIdle.teleportError', { message: (result && result.error) || '?' }));
+  }
+});
+
+function renderPokeIdleHuntCompare() {
+  if (!pokeHuntCompareWrapEl) return;
+  const { gameAccounts, tracked } = pokeLiveAccountsStatus();
+  if (tracked.length === 0) {
+    pokeHuntCompareWrapEl.innerHTML = pokeLoadingOrEmptyHtml(gameAccounts);
+    return;
+  }
+  if (tracked.length === 1) {
+    pokeHuntCompareWrapEl.innerHTML = huntCompareCardHtml(tracked[0], gameStats[tracked[0].id]);
+    return;
+  }
+  pokeHuntCompareWrapEl.innerHTML = tracked.map((a, ai) =>
+    `<div class="settings-subheading">${escapeHtmlClient(displayName(a, ai))}</div>${huntCompareCardHtml(a, gameStats[a.id])}`
+  ).join('');
+}
+
+// ---- Tienda NPC (Mark, Cerulean) — Etapa 5 ----
+// Endpoint shapes confirmed live against the real game (NEXA_DEBUG_NET
+// capture in electron/game-telemetry.js) before writing any of this:
+// GET /api/game/shop -> {gold, balls:[{id,name,priceGold,iconUrl,catchRate}],
+// items:[{id,name,priceGold,icon,category,description}]}; POST
+// /api/game/shop/buy -> {ballId,qty} or {itemId,qty}.
+let shopCatalogCache = null; // { gold, balls, items }
+let shopPendingBuy = null; // { kind: 'ball'|'item', id, name, priceGold, qty }
+
+function populateShopAccountDropdown() {
+  if (!shopAccountEl) return;
+  const spaceAccounts = currentSpaceAccounts();
+  const openAccounts = spaceAccounts.filter((a) => !a.closed);
+  const prev = shopAccountEl.value;
+  shopAccountEl.innerHTML = openAccounts
+    .map((a) => `<option value="${a.id}">${escapeHtmlClient(displayName(a, spaceAccounts.indexOf(a)))}</option>`)
+    .join('');
+  if (openAccounts.some((a) => a.id === prev)) shopAccountEl.value = prev;
+}
+
+function shopItemCardHtml(kind, item) {
+  const icon = item.iconUrl || item.icon;
+  return `
+    <div class="poke-shop-card" data-kind="${kind}" data-id="${item.id}" data-name="${escapeHtmlClient(item.name)}" data-price="${item.priceGold}">
+      <img class="poke-shop-icon" loading="lazy" src="${escapeHtmlClient(icon || '')}" onerror="this.style.visibility='hidden'" alt="" />
+      <div class="poke-shop-main">
+        <div class="poke-shop-name">${escapeHtmlClient(item.name)}</div>
+        <div class="poke-shop-price">$${formatCompactNumber(item.priceGold)}</div>
+      </div>
+      <input type="number" class="poke-shop-qty" min="1" value="1" />
+      <div class="poke-shop-qty-quick">
+        <button type="button" data-qty="1">+1</button>
+        <button type="button" data-qty="10">+10</button>
+        <button type="button" data-qty="100">+100</button>
+        <button type="button" data-qty="1000">+1.000</button>
+        <button type="button" data-qty="10000">+10.000</button>
+      </div>
+      <button type="button" class="primary poke-shop-buy-btn" data-action="buy">${t('pokeIdle.shopBuyConfirm')}</button>
+    </div>
+  `;
+}
+
+async function renderShop({ forceRefresh } = {}) {
+  if (!shopWrapEl) return;
+  const accountId = shopAccountEl.value;
+  if (!accountId) {
+    shopWrapEl.innerHTML = `<div class="settings-hint">${t('pokeIdle.noAccounts')}</div>`;
+    shopGoldEl.textContent = '';
+    return;
+  }
+  if (!shopCatalogCache || forceRefresh) {
+    shopWrapEl.innerHTML = `<div class="settings-hint poke-skeleton-hint">${t('pokeIdle.shopLoading')}</div>`;
+    const result = await window.api.getShop(accountId);
+    if (!result || !result.ok) {
+      shopWrapEl.innerHTML = `<div class="settings-hint">${t('pokeIdle.shopLoadError', { message: (result && (result.error || result.status)) || '?' })}</div>`;
+      return;
+    }
+    shopCatalogCache = result;
+  }
+  const { gold, balls, items } = shopCatalogCache;
+  shopGoldEl.textContent = gold != null ? t('pokeIdle.shopGold', { amount: formatCompactNumber(gold) }) : '';
+  shopWrapEl.innerHTML = `
+    <div class="settings-subheading">${t('pokeIdle.shopBalls')}</div>
+    <div class="poke-shop-grid">${balls.map((b) => shopItemCardHtml('ball', b)).join('')}</div>
+    <div class="settings-subheading">${t('pokeIdle.shopItems')}</div>
+    <div class="poke-shop-grid">${items.map((it) => shopItemCardHtml('item', it)).join('')}</div>
+  `;
+}
+
+shopAccountEl?.addEventListener('change', () => renderShop());
+shopRefreshBtn?.addEventListener('click', () => renderShop({ forceRefresh: true }));
+
+shopWrapEl?.addEventListener('click', (e) => {
+  const card = e.target.closest('.poke-shop-card');
+  if (!card) return;
+  const qtyInput = card.querySelector('.poke-shop-qty');
+  const quickBtn = e.target.closest('button[data-qty]');
+  if (quickBtn) {
+    qtyInput.value = quickBtn.dataset.qty;
+    return;
+  }
+  const buyBtn = e.target.closest('button[data-action="buy"]');
+  if (!buyBtn) return;
+  const qty = Math.max(1, Math.floor(Number(qtyInput.value) || 1));
+  const kind = card.dataset.kind;
+  const id = Number(card.dataset.id);
+  const name = card.dataset.name;
+  const priceGold = Number(card.dataset.price);
+  openShopBuyModal({ kind, id, name, priceGold, qty });
+});
+
+function openShopBuyModal({ kind, id, name, priceGold, qty }) {
+  shopPendingBuy = { kind, id, name, priceGold, qty };
+  const total = priceGold * qty;
+  const gold = shopCatalogCache ? shopCatalogCache.gold : null;
+  const canAfford = gold == null || gold >= total;
+  shopBuyModalBodyEl.innerHTML = `
+    <div class="poke-shop-confirm-row"><span>${t('pokeIdle.shopItem')}</span><b>${escapeHtmlClient(name)}</b></div>
+    <div class="poke-shop-confirm-row"><span>${t('pokeIdle.shopQty')}</span><b>${formatCompactNumber(qty)}</b></div>
+    <div class="poke-shop-confirm-row"><span>${t('pokeIdle.shopUnitPrice')}</span><b>$${formatCompactNumber(priceGold)}</b></div>
+    <div class="poke-shop-confirm-row"><span>${t('pokeIdle.shopTotal')}</span><b>$${formatCompactNumber(total)}</b></div>
+    ${gold != null ? `<div class="poke-shop-confirm-row"><span>${t('pokeIdle.shopGoldAvailable')}</span><b class="${canAfford ? '' : 'poke-compare-down'}">$${formatCompactNumber(gold)}</b></div>` : ''}
+  `;
+  shopBuyModalStatusEl.textContent = canAfford ? '' : t('pokeIdle.shopNotEnoughGold');
+  shopBuyConfirmBtn.disabled = !canAfford;
+  shopBuyModal.classList.remove('hidden');
+}
+
+function closeShopBuyModal() {
+  shopBuyModal.classList.add('hidden');
+  shopPendingBuy = null;
+  shopBuyModalStatusEl.textContent = '';
+}
+
+btnCloseShopModal?.addEventListener('click', closeShopBuyModal);
+btnCloseShopModal2?.addEventListener('click', closeShopBuyModal);
+
+shopBuyConfirmBtn?.addEventListener('click', async () => {
+  if (!shopPendingBuy) return;
+  const accountId = shopAccountEl.value;
+  const { kind, id, qty } = shopPendingBuy;
+  shopBuyConfirmBtn.disabled = true;
+  shopBuyConfirmBtn.textContent = t('pokeIdle.shopBuying');
+  try {
+    const result = await window.api.buyShopItem(accountId, kind === 'ball' ? { ballId: id, qty } : { itemId: id, qty });
+    if (!result || !result.ok) {
+      shopBuyModalStatusEl.textContent = t('pokeIdle.shopBuyError', { message: (result && result.error) || '?' });
+      return;
+    }
+    closeShopBuyModal();
+    refreshGameStatsNow();
+    renderShop({ forceRefresh: true });
+  } finally {
+    shopBuyConfirmBtn.disabled = false;
+    shopBuyConfirmBtn.textContent = t('pokeIdle.shopBuyConfirm');
+  }
+});
+
 function renderPokeIdleNotable() {
   const el = pokeIdleNotableEl;
   if (!el) return;
-  const tracked = state.accounts.filter((a) => !a.closed && gameStats[a.id]);
+  const { tracked } = pokeLiveAccountsStatus();
   const fresh = [];
   tracked.forEach((account, i) => {
     const gs = gameStats[account.id];
@@ -2970,11 +3437,11 @@ function drawPokeSummaryChart(value) {
 
 function renderPokeIdle() {
   if (!pokeIdleSummaryEl || !pokeIdleAccountsEl) return;
-  const tracked = state.accounts.filter((a) => !a.closed && gameStats[a.id]);
+  const { gameAccounts, tracked } = pokeLiveAccountsStatus();
 
   if (tracked.length === 0) {
     pokeIdleSummaryEl.innerHTML = '';
-    pokeIdleAccountsEl.innerHTML = `<div class="settings-hint">${t('pokeIdle.noAccounts')}</div>`;
+    pokeIdleAccountsEl.innerHTML = pokeLoadingOrEmptyHtml(gameAccounts);
     return;
   }
 
@@ -3099,11 +3566,15 @@ function openPokeIdlePanel() {
   renderPokeIdleDrops();
   renderPokeItemPedia();
   renderPokeAccountSettings();
+  renderStabilityGlobalSettings();
   loadPokeIdleAlertFields();
   renderMarket();
+  populateShopAccountDropdown();
+  renderShop();
   populateCalcSourceDropdown();
   populateHuntAttackerDropdown();
   runHuntTable();
+  populateTierCaptureAccountFilter();
   populateTierFilters().then(renderTierList);
 }
 
@@ -3119,7 +3590,12 @@ btnClosePokeIdle.addEventListener('click', closePokeIdlePanel);
 
 function renderPokeIdleTeam() {
   if (!pokeIdleTeamEl) return;
-  const tracked = state.accounts.filter((a) => !a.closed && gameStats[a.id] && (gameStats[a.id].team || []).length);
+  const { gameAccounts, tracked: statsTracked } = pokeLiveAccountsStatus();
+  if (statsTracked.length === 0) {
+    pokeIdleTeamEl.innerHTML = pokeLoadingOrEmptyHtml(gameAccounts);
+    return;
+  }
+  const tracked = statsTracked.filter((a) => (gameStats[a.id].team || []).length);
 
   if (tracked.length === 0) {
     pokeIdleTeamEl.innerHTML = `<div class="settings-hint">${t('pokeIdle.equipoEmpty')}</div>`;
@@ -4048,6 +4524,9 @@ function renderPokeIdleLivePanels() {
   renderPokeIdleNotable();
   renderPokeIdleTeam();
   renderPokeIdleDrops();
+  renderPokeIdleHuntCompare();
+  populateTierCaptureAccountFilter();
+  populateShopAccountDropdown();
   renderMarketAlertFeed();
   renderMarketHealth();
 }
@@ -4705,14 +5184,44 @@ function computeTierList(clanId) {
   return withScore;
 }
 
+function populateTierCaptureAccountFilter() {
+  if (!tierCaptureAccountEl || !tierCaptureAccountRowEl || !tierCaptureFilterEl) return;
+  const { tracked } = pokeLiveAccountsStatus();
+  const current = tierCaptureAccountEl.value;
+  tierCaptureAccountEl.innerHTML = tracked.map((a, ai) =>
+    `<option value="${escapeHtmlClient(a.id)}">${escapeHtmlClient(displayName(a, ai))}</option>`
+  ).join('');
+  if (tracked.some((a) => a.id === current)) {
+    tierCaptureAccountEl.value = current;
+  } else if (tracked.length) {
+    tierCaptureAccountEl.value = tracked[0].id;
+  }
+  // Only worth asking "which account's Pokédex" when there's more than one
+  // tracked account AND the user actually picked a captured/uncaptured
+  // filter — with a single account it's unambiguous, and with "Todos" the
+  // account choice doesn't affect anything shown.
+  const showAccountPicker = tierCaptureFilterEl.value !== '' && tracked.length > 1;
+  tierCaptureAccountRowEl.classList.toggle('hidden', !showAccountPicker);
+}
+
 function renderTierList() {
   if (!tierListWrapEl || !creatureCatalogCache) return;
   const clanId = tierClanEl.value;
   const typeFilter = tierTypeEl.value;
   const fullList = computeTierList(clanId);
-  const filtered = typeFilter
+  let filtered = typeFilter
     ? fullList.filter((r) => r.creature.type1 === typeFilter || r.creature.type2 === typeFilter)
     : fullList;
+
+  const captureFilter = tierCaptureFilterEl ? tierCaptureFilterEl.value : '';
+  if (captureFilter) {
+    const { tracked } = pokeLiveAccountsStatus();
+    const accountId = (tierCaptureAccountEl && tierCaptureAccountEl.value) || (tracked[0] && tracked[0].id);
+    const capturedSet = new Set((accountId && gameStats[accountId] && gameStats[accountId].capturedSpeciesIds) || []);
+    filtered = filtered.filter((r) =>
+      captureFilter === 'captured' ? capturedSet.has(r.creature.pokeId) : !capturedSet.has(r.creature.pokeId)
+    );
+  }
 
   const rows = filtered.map((r) => {
     const c = r.creature;
@@ -4738,6 +5247,8 @@ function renderTierList() {
 
 tierClanEl.addEventListener('change', renderTierList);
 tierTypeEl.addEventListener('change', renderTierList);
+tierCaptureFilterEl?.addEventListener('change', () => { populateTierCaptureAccountFilter(); renderTierList(); });
+tierCaptureAccountEl?.addEventListener('change', renderTierList);
 tierRefreshBtn?.addEventListener('click', async () => {
   tierRefreshBtn.disabled = true;
   tierRefreshBtn.textContent = t('pokeIdle.refreshingCatalog');

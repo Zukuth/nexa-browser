@@ -151,6 +151,48 @@ html, body {
   display: none;
 }
 
+.shield-count {
+  cursor: pointer;
+}
+
+.ext-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.ext-toolbar:empty {
+  display: none;
+}
+
+.ext-toolbar-btn {
+  background: transparent;
+  border: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+}
+
+.ext-toolbar-btn:hover {
+  background: rgba(255,255,255,0.06);
+}
+
+.ext-toolbar-btn img {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+
+.ext-toolbar-btn.no-popup {
+  cursor: default;
+  opacity: 0.55;
+}
+
 .menu-wrap {
   position: relative;
 }
@@ -347,6 +389,39 @@ html, body {
 .zoom-option.active {
   color: var(--accent);
   background: rgba(79,140,255,0.12);
+}
+
+#shield-menu {
+  width: 260px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.shield-log-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.shield-log-row:hover {
+  background: rgba(255,255,255,0.05);
+}
+
+.shield-log-host {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shield-log-time {
+  color: var(--text-dim, #8b90a0);
+  flex-shrink: 0;
+  font-size: 11px;
 }
 
 .zoom-menu-sep {
@@ -1867,6 +1942,10 @@ html, body {
   display: none;
 }
 
+#tier-capture-account-row.hidden {
+  display: none;
+}
+
 .poke-calc-stat-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -1935,6 +2014,82 @@ html, body {
 .poke-calc-summary b {
   font-size: 15px;
   display: block;
+}
+
+.poke-skeleton-hint {
+  animation: poke-skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes poke-skeleton-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+.poke-hunt-teleport-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.poke-hunt-current-slug {
+  font-size: 12px;
+  color: var(--muted);
+  margin-right: 4px;
+}
+
+.poke-hunt-fav-btn {
+  font-size: 16px;
+  line-height: 1;
+  padding: 4px 8px;
+  color: var(--muted);
+}
+
+.poke-hunt-fav-btn.active {
+  color: #f1c644;
+}
+
+.poke-hunt-teleport-row button:not(.poke-hunt-fav-btn) {
+  font-size: 12px;
+  padding: 5px 10px;
+}
+
+.poke-hunt-compare-table td.poke-compare-up {
+  color: #6ee787;
+  font-weight: 600;
+}
+
+.poke-hunt-compare-table td.poke-compare-down {
+  color: #ff8a8a;
+  font-weight: 600;
+}
+
+.poke-hunt-history {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.poke-hunt-history-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.poke-hunt-history-row span:first-child {
+  color: var(--text-dim, #8b90a0);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .poke-hunt-table-wrap {
@@ -3581,6 +3736,92 @@ html, body {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 12px;
+}
+
+.poke-shop-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin: 8px 0 16px;
+}
+
+.poke-shop-card {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  grid-template-rows: auto auto auto;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(79, 140, 255, 0.1), transparent 36%),
+    rgba(8, 12, 20, 0.72);
+}
+
+.poke-shop-icon {
+  grid-row: span 1;
+  width: 40px;
+  height: 40px;
+  image-rendering: pixelated;
+}
+
+.poke-shop-main {
+  min-width: 0;
+}
+
+.poke-shop-name {
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.poke-shop-price {
+  font-size: 12px;
+  color: #fde68a;
+}
+
+.poke-shop-qty {
+  grid-column: 1 / -1;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: inherit;
+}
+
+.poke-shop-qty-quick {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.poke-shop-qty-quick button {
+  flex: 1;
+  min-width: 44px;
+  font-size: 11px;
+  padding: 4px 6px;
+}
+
+.poke-shop-buy-btn {
+  grid-column: 1 / -1;
+}
+
+.poke-shop-confirm-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.poke-shop-confirm-row:last-child {
+  border-bottom: none;
 }
 
 .poke-pedia-card {

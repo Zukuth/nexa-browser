@@ -359,4 +359,53 @@ function postBuySyncScript(listing) {
   })();`;
 }
 
-module.exports = { MARKET_CATEGORIES, fetchListingsScript, buyListingScripts, postBuySyncScript, normalizeKindCandidates, deriveMarketCategory, normalizeCurrency, buildBuyBodies };
+// NPC shop (Mark, Cerulean) — a different system from the player-to-player
+// Global Market above, but same auth pattern. Endpoint shape confirmed live
+// (NEXA_DEBUG_NET capture): GET /api/game/shop returns
+// {gold, balls:[{id,name,priceGold,iconUrl,catchRate}], items:[{id,name,
+// priceGold,icon,category,description}]}; POST /api/game/shop/buy takes
+// {ballId,qty} for balls or {itemId,qty} for items (confirmed both shapes
+// live, one buy call each).
+function fetchShopScript() {
+  return `(async () => {
+    try {
+      const headers = ${AUTH_HEADER_JS};
+      const res = await fetch('/api/game/shop', { headers });
+      if (!res.ok) return { ok: false, status: res.status };
+      const data = await res.json();
+      // The catalog's icon/iconUrl are root-relative ("/assets/markitems/...").
+      // This script runs inside the game's own webview (poke.idleworld.online),
+      // but the result is displayed in nexa-browser's OWN page — a relative
+      // path there resolves against the wrong origin and 404s. Absolutize
+      // against location.origin (the game's real origin, since we're running
+      // inside its page right now) before handing the catalog back.
+      const absolutize = (p) => (p && !/^https?:\\/\\//.test(p)) ? location.origin + (p.startsWith('/') ? p : '/' + p) : p;
+      const balls = (Array.isArray(data.balls) ? data.balls : []).map((b) => ({ ...b, iconUrl: absolutize(b.iconUrl) }));
+      const items = (Array.isArray(data.items) ? data.items : []).map((it) => ({ ...it, icon: absolutize(it.icon) }));
+      return { ok: true, gold: data.gold ?? null, balls, items };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  })();`;
+}
+
+function buyShopScript({ ballId, itemId, qty }) {
+  const body = ballId != null ? { ballId, qty } : { itemId, qty };
+  return `(async () => {
+    try {
+      const res = await fetch('/api/game/shop/buy', {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, ${AUTH_HEADER_JS}),
+        body: ${JSON.stringify(JSON.stringify(body))}
+      });
+      let payload = null;
+      const text = await res.text().catch(() => '');
+      try { payload = text ? JSON.parse(text) : null; } catch (e) { payload = text; }
+      return { ok: res.ok, status: res.status, payload };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  })();`;
+}
+
+module.exports = { MARKET_CATEGORIES, fetchListingsScript, buyListingScripts, postBuySyncScript, normalizeKindCandidates, deriveMarketCategory, normalizeCurrency, buildBuyBodies, fetchShopScript, buyShopScript };

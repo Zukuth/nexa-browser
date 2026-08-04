@@ -100,6 +100,19 @@ const DEFAULT_DATA = {
       refreshSeconds: 15,
       dealMaxPrice: 0,
       dealNotify: true
+    },
+    // Stability/connection-manager overhaul — everything here defaults to
+    // off/safe so existing installs behave exactly as before until a user
+    // opts in from Configuración → Poke Idle World → Estabilidad.
+    stability: {
+      enabled: false, // master toggle for the connection-manager recovery pipeline
+      backgroundKeepalive: false, // powerSaveBlocker('prevent-app-suspension') while >=1 game account is open
+      autoRecovery: true, // recovery levels 1-3 run automatically once `enabled` is true
+      lastResortAutoReload: false, // level 4+ automatic full page reload — opt-in, default OFF
+      ecoForHiddenPanels: false,
+      disconnectNotifications: true,
+      advancedDiagnostics: false,
+      memoryGrowthThresholdMb: 200
     }
   }
 };
@@ -120,6 +133,11 @@ function load() {
       settings: { ...DEFAULT_DATA.settings, ...(parsed.settings || {}) }
     };
     if (!merged.settings.supportPaypalUrl) merged.settings.supportPaypalUrl = DEFAULT_DATA.settings.supportPaypalUrl;
+    // Shallow settings spread above replaces settings.stability wholesale if
+    // an older save file has a partial object — merge its sub-fields
+    // explicitly so a save written before a new stability field existed
+    // doesn't end up with that field as `undefined`.
+    merged.settings.stability = { ...DEFAULT_DATA.settings.stability, ...((parsed.settings && parsed.settings.stability) || {}) };
     // Passwords are decrypted later via decryptStoredPasswords(), once
     // app.whenReady() has resolved — see the comment on that function.
     return merged;

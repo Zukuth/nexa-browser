@@ -90,6 +90,7 @@ function emptyLive() {
 }
 
 const NOTABLE_CAPTURE_CAP = 30;
+const HUNT_HISTORY_CAP = 20;
 const NOTABLE_RARITIES = new Set(['Lendária', 'Mythic', 'Ancient', 'Divine']);
 
 // One of these per account id that's ever matched isGameUrl().
@@ -98,10 +99,29 @@ function newState() {
     startTs: Date.now(),
     live: emptyLive(),
     huntKey: null,
+    // Snapshot of computeRates() for the hunt that just ended, captured right
+    // before the reset below wipes `live`/`startTs` — lets the "Comparador
+    // de hunts" panel show current vs. previous without needing its own
+    // separate tracking. `huntHistory` keeps the last HUNT_HISTORY_CAP of
+    // these (most-recent-first) for the same panel's session list.
+    previousHunt: null,
+    huntHistory: [],
     team: [],
     wallet: { gold: null, goldSource: null, diamonds: null, diamondsSource: null, updatedAt: null },
     lastFrameTs: null,
-    lastEvent: null // {type, at, payload} — most recent alert-worthy thing, for Fase C
+    lastEvent: null, // {type, at, payload} — most recent alert-worthy thing, for Fase C
+    // Instant liveness signals, separate from the cumulative `live` counters
+    // above. `live.kills / sessionHours` (killsPerHour) stays positive for
+    // hours after a single early kill, so it's useless as a "is this
+    // account frozen right now" check — isLikelyFrozen() below reads these
+    // deltas instead. All null until the first matching frame arrives.
+    deltas: {
+      lastAnyFrameAt: null,
+      lastKillAt: null,
+      lastCaptureAt: null,
+      lastXpGainAt: null,
+      lastHuntResetAt: null
+    }
   };
 }
 
@@ -154,12 +174,27 @@ function ensureItemPriceCatalog() {
           let iconUrl = null;
           byId.set(item.id, item.npcPrice);
           if (item.name) { byName.set(item.name, item.npcPrice); nameById.set(item.id, item.name); }
-          // The game's own items.json serves icon as either a full external
-          // URL (pokexguides.com) or a path relative to its own origin
-          // (/assets/stones/...) — resolve the relative case here so the
-          // renderer always gets a ready-to-use absolute URL.
+          // The game's own items.json serves icon in three different shapes:
+          // a full external URL (pokexguides.com), a path already rooted at
+          // the game's own origin (/assets/stones/...), or — the common
+          // case, confirmed against a live fetch: 294 of 295 items — a bare
+          // filename with no leading slash at all (e.g. "dragon_tooth.png").
+          // Naively concatenating GAME_HOSTNAME + item.icon for that last
+          // case produced "https://poke.idleworld.onlinedragon_tooth.png"
+          // (no separating slash) — a malformed URL that silently 404s,
+          // which is why every non-stone item's icon showed as broken in
+          // the "Drops en vivo" panel. The bare-filename case isn't actually
+          // served at the origin root either — verified live: the game
+          // serves those specifically under /assets/items/ (HTTP 200 for
+          // /assets/items/dragon_tooth.png, 404 at the bare root path).
           if (item.icon) {
-            iconUrl = /^https?:\/\//.test(item.icon) ? item.icon : `https://${GAME_HOSTNAME}${item.icon}`;
+            if (/^https?:\/\//.test(item.icon)) {
+              iconUrl = item.icon;
+            } else if (item.icon.startsWith('/')) {
+              iconUrl = `https://${GAME_HOSTNAME}${item.icon}`;
+            } else {
+              iconUrl = `https://${GAME_HOSTNAME}/assets/items/${item.icon}`;
+            }
             iconById.set(item.id, iconUrl);
             if (item.name) iconByName.set(item.name, iconUrl);
           }
@@ -341,6 +376,8 @@ const WALLET_FRAME_TYPES = new Set(['player', 'balance', 'wallet', 'trainer', 'a
 function applyFrame(state, msg) {
   if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') return;
   const L = state.live;
+  if (!state.deltas) state.deltas = newState().deltas; // guard for states created before this field existed
+  state.deltas.lastAnyFrameAt = Date.now();
   const walletExtract = extractWalletFromObject(msg);
   if (walletExtract && WALLET_FRAME_TYPES.has(msg.type)) {
     // Mark as trusted so the renderer shows it instead of hiding it as a
@@ -355,10 +392,33 @@ function applyFrame(state, msg) {
     case 'field-init': {
       const huntKey = msg.huntKey ?? msg.hunt ?? null;
       if (huntKey !== state.huntKey) {
+        // Only snapshot if there was an actual previous hunt (not the very
+        // first field-init of a fresh session, where there's nothing yet to
+        // compare against).
+        if (state.huntKey != null) {
+          const prev = computeRates(state);
+          const snapshot = {
+            huntKey: state.huntKey,
+            endedAt: Date.now(),
+            durationMs: prev.durationMs,
+            netGold: prev.netGold,
+            goldPerHour: prev.goldPerHour,
+            xp: prev.xp,
+            xpPerHour: prev.xpPerHour,
+            kills: prev.kills,
+            killsPerHour: prev.killsPerHour,
+            captures: prev.captures
+          };
+          state.previousHunt = snapshot;
+          state.huntHistory = state.huntHistory || [];
+          state.huntHistory.unshift(snapshot);
+          if (state.huntHistory.length > HUNT_HISTORY_CAP) state.huntHistory.length = HUNT_HISTORY_CAP;
+        }
         state.huntKey = huntKey;
         state.startTs = Date.now();
         state.live = emptyLive();
         state.lastEvent = { type: 'hunt-reset', at: Date.now() };
+        state.deltas.lastHuntResetAt = Date.now();
       }
       break;
     }
@@ -386,6 +446,7 @@ function applyFrame(state, msg) {
       if (alreadyKnown) break; // update to an existing poke, not a new capture
 
       L.captures += 1;
+      state.deltas.lastCaptureAt = Date.now();
       if (typeof poke.sellValue === 'number') L.captureGold += poke.sellValue;
       const rarity = rarityFromQuality(poke.quality) || poke.rarity;
       if (rarity) L.byRarity[rarity] = (L.byRarity[rarity] || 0) + 1;
@@ -414,6 +475,7 @@ function applyFrame(state, msg) {
     }
     case 'field-kill': {
       L.kills += 1;
+      state.deltas.lastKillAt = Date.now();
       // Confirmed against real frames (Fase A live testing): xpGained is the
       // actual per-kill delta; totalXp is the character's lifetime XP
       // counter (hundreds of millions at high level) and would silently
@@ -422,6 +484,7 @@ function applyFrame(state, msg) {
       // (add 0) than to add a multi-hundred-million-XP number by mistake.
       const xpGained = typeof msg.xpGained === 'number' ? msg.xpGained : 0;
       L.xp += xpGained;
+      if (xpGained > 0) state.deltas.lastXpGainAt = Date.now();
       if (msg.leveledUp) L.levelUps += 1;
       if (Array.isArray(msg.loot)) {
         // Confirmed against real frames: loot is an array of {itemId,name,qty},
@@ -464,6 +527,11 @@ function applyFrame(state, msg) {
         }
         state.team = activeTeam;
         state.collectionSize = msg.list.length;
+        // Species the player has ever owned (team or box) — the whole list,
+        // not just activeTeam, since a captured-but-boxed pokemon still
+        // counts as "captured" for the Pokédex filter. Derived from data we
+        // already receive instead of a new API call.
+        state.capturedSpeciesIds = new Set(msg.list.map((p) => p && p.speciesId).filter((id) => id != null));
       }
       break;
     }
@@ -504,12 +572,29 @@ function applyFrame(state, msg) {
       break;
     }
     case 'profession-photo': {
-      // Confirmed against a real frame: gives an itemName (e.g. "Rare
-      // Pokémon Picture"), not an itemId — a separate income source from
-      // field-kill loot (the game's own Hunt Analyzer includes it in
-      // "Loot"), so it needs its own name-keyed bucket.
-      if (msg.ok && msg.itemName) {
-        L.namedLoot[msg.itemName] = (L.namedLoot[msg.itemName] || 0) + 1;
+      // Confirmed against a real frame (at the time): gives an itemName
+      // (e.g. "Rare Pokémon Picture"), not an itemId — a separate income
+      // source from field-kill loot (the game's own Hunt Analyzer includes
+      // it in "Loot"), so it needs its own name-keyed bucket.
+      //
+      // Widened defensively: a user reported "Rare Pokémon Picture" (a real,
+      // catalog-confirmed item — id 59195, $5000 NPC price) showing up in
+      // the game's own Hunt Analyzer but never in ours, on an account that
+      // was actively getting them. The strict `msg.ok && msg.itemName` check
+      // requiring that exact field pairing is the prime suspect — the
+      // game's own protocol isn't versioned/documented, so a field rename
+      // (itemName -> name/item/label, or ok being dropped/renamed) would
+      // silently zero out this entire counter with no error anywhere. Now
+      // accepts common name-field variants and only treats an *explicit*
+      // false success flag as a real failure (msg.ok/success/successful
+      // being simply absent no longer discards the event) — the win from
+      // being lenient (matching the item the user actually confirmed
+      // dropping) outweighs the small risk of over-counting a field that
+      // isn't actually there.
+      const photoName = msg.itemName ?? msg.name ?? msg.item ?? msg.label ?? msg.itemLabel;
+      const explicitFailure = msg.ok === false || msg.success === false || msg.successful === false;
+      if (photoName && !explicitFailure) {
+        L.namedLoot[photoName] = (L.namedLoot[photoName] || 0) + 1;
       }
       break;
     }
@@ -584,7 +669,12 @@ function computeRates(state) {
     ballCatalog: state.ballCatalog || [],
     wallet: state.wallet || { gold: null, goldSource: null, diamonds: null, diamondsSource: null, updatedAt: null },
     lastEvent: state.lastEvent,
-    connected: state.lastFrameTs != null && Date.now() - state.lastFrameTs < HEARTBEAT_STALE_MS
+    connected: state.lastFrameTs != null && Date.now() - state.lastFrameTs < HEARTBEAT_STALE_MS,
+    durationMs: Date.now() - state.startTs,
+    huntKey: state.huntKey || null,
+    previousHunt: state.previousHunt || null,
+    huntHistory: state.huntHistory || [],
+    capturedSpeciesIds: state.capturedSpeciesIds ? Array.from(state.capturedSpeciesIds) : []
   };
 }
 
@@ -612,7 +702,7 @@ function adjustWallet(accountId, { currency, delta }) {
 // actually on the game's domain, per the port plan's scoping rule. Takes the
 // webContents directly (not a WebContentsView wrapper — accounts are real
 // <webview> elements now, see wireAccountWebContents in main.js).
-function attachCapture(wc, accountId) {
+function attachCapture(wc, accountId, { onDetach, onFrame } = {}) {
   if (wc.debugger.isAttached()) return;
 
   try {
@@ -632,6 +722,37 @@ function attachCapture(wc, accountId) {
   ensureCreatureCatalog();
 
   wc.debugger.on('message', (_event, method, params) => {
+    // Debug instrumentation (NEXA_DEBUG_NET=1, off by default, zero cost
+    // when off) — logs outgoing REST calls, WS frames, and GET response
+    // bodies for the game's own account/inventory-management endpoints, so
+    // real endpoints (teleport, shop, depot, family) get confirmed live
+    // instead of guessed. Kept around (not deleted after Etapa 4/5) since
+    // Etapa 7 (Depot) needs the exact same technique.
+    if (process.env.NEXA_DEBUG_NET === '1') {
+      // Writes synchronously straight to disk instead of console.log — a
+      // redirected stdout pipe for a GUI (non-TTY) Electron process buffers
+      // heavily and doesn't flush until a clean process exit, which force-
+      // killing (needed to close the app between test runs) never triggers.
+      // Confirmed live: an entire capture session produced zero visible
+      // output via `> out.txt` redirection for exactly this reason.
+      let line = null;
+      if (method === 'Network.requestWillBeSent' && params.request && /idleworld\.online/.test(params.request.url || '')) {
+        line = `[REQUEST] ${params.request.method} ${params.request.url} ${params.request.postData || ''}`;
+      } else if (method === 'Network.webSocketFrameSent') {
+        line = `[WS-SENT] ${(params.response && params.response.payloadData) || ''}`;
+      } else if (method === 'Network.responseReceived' && params.response && /\/api\/game\/(shop|depot|family)(\?|\/|$)/.test(params.response.url || '')) {
+        const logPath = require('path').join(__dirname, '..', 'netdebug.log');
+        wc.debugger.sendCommand('Network.getResponseBody', { requestId: params.requestId })
+          .then((body) => {
+            try { require('fs').appendFileSync(logPath, `[BODY ${params.response.url}] ${body.body}\n`); } catch {}
+          }).catch((err) => {
+            try { require('fs').appendFileSync(logPath, `[BODY-ERROR ${params.response.url}] ${err.message}\n`); } catch {}
+          });
+      }
+      if (line) {
+        try { require('fs').appendFileSync(require('path').join(__dirname, '..', 'netdebug.log'), line + '\n'); } catch {}
+      }
+    }
     if (method !== 'Network.webSocketFrameReceived') return;
     const payload = params.response && params.response.payloadData;
     if (!payload) return;
@@ -643,11 +764,24 @@ function attachCapture(wc, accountId) {
       return; // not JSON — not one of the game's own protocol frames
     }
     applyFrame(state, msg);
+    if (typeof onFrame === 'function') {
+      try { onFrame(msg); } catch (err) { console.error('[game-telemetry] onFrame handler failed for', accountId, err); }
+    }
   });
 
   wc.debugger.on('detach', (_event, reason) => {
     console.log('[game-telemetry] debugger detached for', accountId, reason);
     attachedAccounts.delete(accountId);
+    // Previously this only logged — nothing ever re-attached automatically,
+    // so a detach (confirmed live: opening regular DevTools on an account
+    // triggers one, since Chromium only allows one CDP client per target;
+    // there may be other silent causes too) permanently froze this
+    // account's telemetry until a full page reload happened to come along.
+    // onDetach lets the connection-manager wiring (main.js, gated behind
+    // settings.stability.enabled) drive an actual re-attach attempt instead.
+    if (typeof onDetach === 'function') {
+      try { onDetach(reason); } catch (err) { console.error('[game-telemetry] onDetach handler failed for', accountId, err); }
+    }
   });
 
   wc.once('destroyed', () => {
@@ -688,6 +822,40 @@ function startHeartbeat() {
   }, HEARTBEAT_CHECK_MS);
 }
 
+// Instant liveness check for the freeze detector — replaces the old
+// `killsPerHour > 0` check (a cumulative rate that stays positive for hours
+// after a single early kill, so it never actually detects a freeze). Pure
+// function: takes deltas + a threshold, no Electron/Date.now() side effects
+// beyond the injectable `now`, so it's fully unit-testable.
+//
+// Two independent staleness checks, not one:
+//   1. lastAnyFrameAt stale → the WS itself has gone silent (or our CDP
+//      capture detached) regardless of what the account was doing. Strong
+//      signal on its own.
+//   2. lastAnyFrameAt fresh (frames still arriving) but every gameplay
+//      delta (kill/capture/xp/hunt-reset) is stale → this is the exact bug
+//      case: non-gameplay frames (inventory syncs, etc.) kept the old
+//      killsPerHour-based check fooled into reporting "alive".
+//
+// An account that has NEVER had a gameplay frame (fresh state, or
+// legitimately idle in shop/depot/pokedex since it was opened) is never
+// flagged by check #2 — only check #1 (WS truly silent) can catch it, which
+// is correct: browsing the shop isn't a freeze, a dead WS is.
+function isLikelyFrozen(state, thresholdMs, now = Date.now()) {
+  if (!state || !state.deltas) return false;
+  const d = state.deltas;
+  if (!d.lastAnyFrameAt) return false; // no frame ever received yet — not enough info
+  if (now - d.lastAnyFrameAt > thresholdMs) return true;
+  const lastGameplayAt = Math.max(
+    d.lastKillAt || 0,
+    d.lastCaptureAt || 0,
+    d.lastXpGainAt || 0,
+    d.lastHuntResetAt || 0
+  );
+  if (lastGameplayAt > 0 && now - lastGameplayAt > thresholdMs) return true;
+  return false;
+}
+
 module.exports = {
   isGameUrl,
   attachCapture,
@@ -696,6 +864,8 @@ module.exports = {
   removeState,
   startHeartbeat,
   setBallsLowThreshold,
+  isLikelyFrozen,
+  getDeltas: (accountId) => stateByAccount.get(accountId)?.deltas || null,
   updateWallet,
   adjustWallet,
   ensureCreatureCatalog,
