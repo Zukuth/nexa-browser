@@ -43,8 +43,18 @@ function fetchListingsScript(category) {
       const byName = new Map();
       for (const item of items) {
         if (!item || item.id == null) continue;
+        // Same three-shape icon resolution already fixed in game-telemetry.js
+        // for the Drops en vivo panel (confirmed live back then: 294/295
+        // items.json entries are a bare filename needing an /assets/items/
+        // prefix, not just location.origin + filename with no separating
+        // slash — that produced a malformed, silently-404ing URL). This copy
+        // never got the same fix, which is why Market global icons broke too.
         const icon = item.icon
-          ? (/^https?:\\/\\//.test(item.icon) ? item.icon : location.origin + item.icon)
+          ? (/^https?:\\/\\//.test(item.icon)
+              ? item.icon
+              : item.icon.startsWith('/')
+                ? location.origin + item.icon
+                : location.origin + '/assets/items/' + item.icon)
           : null;
         const normalized = { ...item, icon, iconUrl: icon, image: icon };
         byId.set(Number(item.id), normalized);
