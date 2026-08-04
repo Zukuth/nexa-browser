@@ -3838,12 +3838,33 @@ html, body {
   border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 14px;
   background: rgba(8, 12, 20, 0.72);
-  cursor: pointer;
 }
 
 .poke-sell-card.poke-sell-locked {
-  opacity: 0.55;
-  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.poke-sell-lock-btn {
+  font-size: 15px;
+  line-height: 1;
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+}
+
+.poke-sell-lock-btn.active {
+  border-color: #f1c644;
+}
+
+#sellhub-items-search,
+#sellhub-pokemon-search {
+  display: block;
+  width: 100%;
+  margin: 10px 0;
+}
+
+#sellhub-rarity-filter {
+  margin-bottom: 10px;
 }
 
 .poke-sell-icon {
@@ -3874,10 +3895,6 @@ html, body {
 .poke-sell-meta {
   font-size: 11px;
   color: var(--muted);
-}
-
-.poke-sell-lock {
-  font-size: 14px;
 }
 
 .poke-pedia-card {

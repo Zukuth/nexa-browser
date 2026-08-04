@@ -741,6 +741,7 @@
           <button type="button" class="poke-market-cat" data-tab="pokemon" data-i18n="pokeIdle.sellhubPokemon">Pokémon</button>
         </div>
         <div id="sellhub-items-panel">
+          <input id="sellhub-items-search" type="search" placeholder="Buscar ítem..." data-i18n-placeholder="pokeIdle.sellhubSearchItems" />
           <div class="settings-row">
             <button type="button" id="sellhub-items-select-all" data-i18n="pokeIdle.sellhubSelectAll">Marcar todo</button>
             <button type="button" class="primary" id="sellhub-items-sell" data-i18n="pokeIdle.sellhubSell">Vender seleccionados</button>
@@ -748,6 +749,10 @@
           <div id="sellhub-items-wrap"></div>
         </div>
         <div id="sellhub-pokemon-panel" class="hidden">
+          <input id="sellhub-pokemon-search" type="search" placeholder="Buscar Pokémon..." data-i18n-placeholder="pokeIdle.sellhubSearchPokemon" />
+          <div class="poke-market-categories" id="sellhub-rarity-filter">
+            <button type="button" class="poke-market-cat active" data-rarity="" data-i18n="pokeIdle.captureAll">Todos</button>
+          </div>
           <div class="settings-row">
             <span data-i18n="pokeIdle.sellhubRarityProtect">Proteger Legendarios/Míticos/Ancestrales/Divinos de "Marcar todo"</span>
             <label class="switch"><input type="checkbox" id="sellhub-rarity-protect" checked /><span class="slider"></span></label>
