@@ -128,6 +128,39 @@ function newState() {
 const stateByAccount = new Map();
 const attachedAccounts = new Set();
 
+// Lets a caller (main.js, after a pokemon:sell) await the ACTUAL server
+// response instead of guessing a delay. Confirmed live: selling never gets
+// an unprompted `pokes` push from the server — the client has to explicitly
+// send {"type":"pokes-get"} first (see main.js's sendGameSocketFrameScript),
+// and only THEN does a fresh `pokes` frame arrive, asynchronously, at
+// whatever the real round-trip time turns out to be. Racing that with a
+// fixed setTimeout was unreliable (confirmed live: still showed stale,
+// already-sold pokemon) — this resolves exactly when the real frame lands,
+// with a bounded timeout as a fallback so a caller never hangs forever if
+// the frame never arrives for some other reason.
+const pendingPokesWaiters = new Map(); // accountId -> Set<() => void>
+
+function resolvePokesWaiters(accountId) {
+  const waiters = pendingPokesWaiters.get(accountId);
+  if (!waiters) return;
+  pendingPokesWaiters.delete(accountId);
+  for (const done of waiters) done();
+}
+
+function waitForNextPokes(accountId, timeoutMs = 4000) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    if (!pendingPokesWaiters.has(accountId)) pendingPokesWaiters.set(accountId, new Set());
+    pendingPokesWaiters.get(accountId).add(done);
+    setTimeout(done, timeoutMs);
+  });
+}
+
 function getOrCreateState(accountId) {
   let s = stateByAccount.get(accountId);
   if (!s) {
@@ -778,6 +811,7 @@ function attachCapture(wc, accountId, { onDetach, onFrame } = {}) {
       return; // not JSON — not one of the game's own protocol frames
     }
     applyFrame(state, msg);
+    if (msg && msg.type === 'pokes') resolvePokesWaiters(accountId);
     if (typeof onFrame === 'function') {
       try { onFrame(msg); } catch (err) { console.error('[game-telemetry] onFrame handler failed for', accountId, err); }
     }
@@ -891,6 +925,7 @@ module.exports = {
   ensureItemPriceCatalog,
   getItemPriceByNameMap,
   getItemCatalogArray,
+  waitForNextPokes,
   // exported for unit testing
   rarityFromQuality,
   parseWalletAmount,

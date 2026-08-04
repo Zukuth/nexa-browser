@@ -3923,9 +3923,15 @@ ipcMain.handle('pokemon:sell', async (_e, { id, pokeIds }) => {
     if (result && result.ok) {
       // See sendGameSocketFrameScript's comment: the server never pushes an
       // updated `pokes` frame on its own after a sell, only in response to
-      // this explicit request — without it the mass-sell panel kept
-      // showing already-sold pokemon until a full page reload.
-      wc.executeJavaScript(sendGameSocketFrameScript({ type: 'pokes-get' })).catch(() => {});
+      // this explicit request. Actually AWAITING the real response (instead
+      // of firing pokes-get and returning immediately) matters — confirmed
+      // live that racing a fixed delay against the real round-trip still
+      // showed stale, already-sold pokemon in the panel; only resolving once
+      // game-telemetry actually processes the fresh `pokes` frame guarantees
+      // the caller's refresh (right after this IPC call returns) sees it.
+      const waitPromise = gameTelemetry.waitForNextPokes(id);
+      await wc.executeJavaScript(sendGameSocketFrameScript({ type: 'pokes-get' })).catch(() => {});
+      await waitPromise;
     }
     return result;
   } catch (e) {
