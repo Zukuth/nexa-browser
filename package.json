@@ -10,7 +10,7 @@
     "start": "node scripts/start.js",
     "start:electron": "electron .",
     "dist": "electron-builder",
-    "test": "node --test test/unit/*.test.js",
+    "test": "node --experimental-test-module-mocks --test test/unit/*.test.js",
     "test:e2e": "playwright test",
     "test:smoke": "playwright test test/e2e/live-health.spec.js",
     "test:soak": "node scripts/soak.js"
