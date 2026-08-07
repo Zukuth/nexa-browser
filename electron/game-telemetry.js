@@ -862,6 +862,19 @@ function attachCapture(wc, accountId, { onDetach, onFrame } = {}) {
     }
     applyFrame(state, msg);
     if (msg && msg.type) resolveFrameWaiters(accountId, msg.type);
+    // Etapa A (shadow mode) of the CDP -> passive-JS migration — see the
+    // plan. Logs what CDP captures next to what the new passive patch
+    // captures (main.js's startFrameCaptureShadowPoll, same file, same
+    // format) so the two streams can be compared by eye after a real play
+    // session. Off by default, zero effect unless explicitly opted into.
+    if (process.env.NEXA_JS_CAPTURE_SHADOW === '1') {
+      try {
+        require('fs').appendFileSync(
+          require('path').join(__dirname, '..', 'shadow-capture.log'),
+          `[CDP] ${accountId} ${Date.now()} ${msg.type}\n`
+        );
+      } catch { /* best-effort debug tool, never let a log failure affect the app */ }
+    }
     if (typeof onFrame === 'function') {
       try { onFrame(msg); } catch (err) { console.error('[game-telemetry] onFrame handler failed for', accountId, err); }
     }

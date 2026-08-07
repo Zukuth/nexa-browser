@@ -7,6 +7,7 @@ const extractZip = require('extract-zip');
 const store = require('./store');
 const { GAP, GRID_MAX_PANELS, MIN_SPLIT_FRAC, resolveFracs, cellsForMode, freeCells, normalizeFracsWithMin } = require('./layout-utils');
 const gameTelemetry = require('./game-telemetry');
+const frameCaptureShadow = require('./game-socket-capture');
 const pokeFormulas = require('./poke-formulas');
 const market = require('./market');
 const networkHealth = require('./network-health');
@@ -1413,6 +1414,9 @@ function wireAccountWebContents(wc, account, hostWebContents) {
     if (account.hideChat || account.hideGameBar) applyGameCssToggles(wc, account);
     if (account.sellLockOn) applySellLock(wc, account);
     if (gameTelemetry.isGameUrl(wc.getURL())) enableGameSocketCapture(wc);
+    if (process.env.NEXA_JS_CAPTURE_SHADOW === '1' && gameTelemetry.isGameUrl(wc.getURL())) {
+      startFrameCaptureShadowPoll(wc, account.id);
+    }
     // A navigation could have crossed the /login → game boundary (or back
     // out of it), which changes whether the powerSaveBlocker is needed.
     refreshPowerBlockerNeed();
@@ -1484,6 +1488,7 @@ function wireAccountWebContents(wc, account, hostWebContents) {
   // guard makes this safe to also fire when the app itself initiated the
   // close (closeAccountView already handles that path).
   wc.once('destroyed', () => {
+    stopFrameCaptureShadowPoll(account.id);
     // If `views.get(id)` no longer points at THIS wc, a newer one has
     // already replaced it (e.g. openAccountInNewWindow closing this
     // window's copy right before the popped-out window's replacement
@@ -1667,6 +1672,48 @@ function gameSocketCaptureScript() {
 
 function enableGameSocketCapture(wc) {
   wc.executeJavaScript(gameSocketCaptureScript()).catch(() => {});
+}
+
+// Etapa A (shadow mode) of the CDP -> passive-JS migration — see the plan.
+// Gated behind NEXA_JS_CAPTURE_SHADOW=1, off by default: zero effect on the
+// real app unless explicitly opted into for a validation session. Logs both
+// what CDP already captures (see the matching NEXA_JS_CAPTURE_SHADOW branch
+// in game-telemetry.js's debugger message handler) and what this passive
+// patch captures to the same file, so the two streams can be compared by
+// eye after a real play session — no automated diffing, this is a temporary
+// validation tool, not a permanent feature.
+const frameShadowPollers = new Map(); // accountId -> intervalId
+
+function shadowLog(line) {
+  try {
+    fs.appendFileSync(path.join(__dirname, '..', 'shadow-capture.log'), line + '\n');
+  } catch { /* best-effort debug tool, never let a log failure affect the app */ }
+}
+
+function startFrameCaptureShadowPoll(wc, accountId) {
+  if (frameShadowPollers.has(accountId)) return;
+  wc.executeJavaScript(frameCaptureShadow.frameCaptureShadowScript()).catch(() => {});
+  const intervalId = setInterval(async () => {
+    if (wc.isDestroyed()) { stopFrameCaptureShadowPoll(accountId); return; }
+    let frames;
+    try {
+      frames = await wc.executeJavaScript(frameCaptureShadow.drainFrameQueueScript());
+    } catch {
+      return;
+    }
+    for (const frame of frames || []) {
+      let type = '?';
+      try { type = JSON.parse(frame.data).type || '?'; } catch { /* not JSON, leave as '?' */ }
+      shadowLog(`[JS] ${accountId} ${frame.t} ${type}`);
+    }
+  }, 250);
+  frameShadowPollers.set(accountId, intervalId);
+}
+
+function stopFrameCaptureShadowPoll(accountId) {
+  const intervalId = frameShadowPollers.get(accountId);
+  if (intervalId) clearInterval(intervalId);
+  frameShadowPollers.delete(accountId);
 }
 
 // Polls briefly for window.__nexaGameSocket (populated by the capture patch
