@@ -53,9 +53,11 @@ process.on('unhandledRejection', (err) => {
 const APP_ICON_PATH = path.join(__dirname, 'assets', 'icon.png');
 const GAME_STATE_RELOAD_TIMEOUT_MS = 12000;
 
-// app.getPath('userData') is derived from package.json's "name" field — keep that
-// field as "chilean-browser" even after rebranding, or existing spaces/accounts/
-// passwords/extensions become invisible to the app (new empty folder, old one orphaned).
+// app.getPath('userData') is derived from package.json's "name" field
+// ("nexa-browser" since the rebrand) — do not change that field again without
+// a migration step, or existing spaces/accounts/passwords/extensions become
+// invisible to the app (new empty folder, old one orphaned). The data file
+// itself went through exactly this migration — see LEGACY_DATA_FILE in store.js.
 const EXTENSIONS_DIR = path.join(app.getPath('userData'), 'extensions');
 if (!fs.existsSync(EXTENSIONS_DIR)) fs.mkdirSync(EXTENSIONS_DIR, { recursive: true });
 

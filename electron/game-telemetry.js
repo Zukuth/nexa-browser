@@ -826,6 +826,18 @@ function attachCaptureViaJs(wc, accountId, { onFrame } = {}) {
       if (typeof onFrame === 'function') {
         try { onFrame(msg); } catch (err) { console.error('[game-telemetry] onFrame handler failed for', accountId, err); }
       }
+      // Temporary verification aid for the Etapa C real-use test — same
+      // opt-in flag and file as the Etapa A shadow log, prefixed [JS-REAL]
+      // so it's obvious this is the real telemetry path, not a comparison.
+      // Safe to remove once Etapa C is confirmed and D begins.
+      if (process.env.NEXA_DEBUG_NET === '1') {
+        try {
+          require('fs').appendFileSync(
+            require('path').join(__dirname, '..', 'shadow-capture.log'),
+            `[JS-REAL] ${accountId} ${Date.now()} ${msg && msg.type}\n`
+          );
+        } catch { /* best-effort debug tool, never let a log failure affect the app */ }
+      }
     }
   }, 250);
   jsCaptureIntervals.set(accountId, intervalId);

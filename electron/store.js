@@ -2,8 +2,26 @@ const fs = require('fs');
 const path = require('path');
 const { app, safeStorage } = require('electron');
 
-const DATA_FILE = path.join(app.getPath('userData'), 'chilean-browser-data.json');
+const DATA_FILE = path.join(app.getPath('userData'), 'nexa-browser-data.json');
+// Pre-rebrand filename — the project was called "chilean-browser" before it
+// became Nexa Browser. Kept only so load() can migrate existing installs
+// that still have data under the old name (see migrateLegacyDataFile below).
+const LEGACY_DATA_FILE = path.join(app.getPath('userData'), 'chilean-browser-data.json');
 const TMP_FILE = DATA_FILE + '.tmp';
+
+// One-time migration: if this install still only has data under the old
+// pre-rebrand filename, copy it to the new name before load() reads it — so
+// renaming the file doesn't make an existing user's accounts/spaces/passwords
+// silently disappear. Never deletes the legacy file, just in case.
+function migrateLegacyDataFile() {
+  try {
+    if (!fs.existsSync(DATA_FILE) && fs.existsSync(LEGACY_DATA_FILE)) {
+      fs.copyFileSync(LEGACY_DATA_FILE, DATA_FILE);
+    }
+  } catch (err) {
+    console.error('[store] failed to migrate legacy chilean-browser-data.json', err);
+  }
+}
 
 // Encrypts saved passwords at rest using the OS keychain (DPAPI on Windows,
 // Keychain on macOS, libsecret/kwallet on Linux) via Electron's safeStorage —
@@ -123,6 +141,7 @@ const DEFAULT_DATA = {
 };
 
 function load() {
+  migrateLegacyDataFile();
   let raw;
   try {
     raw = fs.readFileSync(DATA_FILE, 'utf-8');

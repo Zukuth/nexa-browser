@@ -19,7 +19,7 @@ const test = base.extend({
   },
 
   electronApp: async ({ userDataDir }, use) => {
-    const dataFile = path.join(userDataDir, 'chilean-browser-data.json');
+    const dataFile = path.join(userDataDir, 'nexa-browser-data.json');
     fs.writeFileSync(
       dataFile,
       JSON.stringify({ settings: { hardwareAcceleration: false } }, null, 2),
