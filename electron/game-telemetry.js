@@ -786,13 +786,68 @@ function adjustWallet(accountId, { currency, delta }) {
   state.wallet.updatedAt = Date.now();
 }
 
+// Etapa C of the CDP -> passive-JS migration: the JS-based capture (built
+// and validated in shadow mode in Etapas A/B — confirmed live, 136/136
+// frames matched CDP exactly, including field-init right at a hunt
+// teleport, the highest-risk moment for this approach's known race
+// condition) can now actually feed applyFrame() for real, gated behind
+// settings.stability.useJsFrameCapture so it's instantly reversible if
+// anything looks wrong in real use. accountId -> intervalId, mirrors the
+// shadow poller's map in main.js but this one is the real telemetry path.
+const jsCaptureIntervals = new Map();
+
+function attachCaptureViaJs(wc, accountId, { onFrame } = {}) {
+  if (jsCaptureIntervals.has(accountId)) return;
+  const frameCaptureShadow = require('./game-socket-capture');
+  const state = getOrCreateState(accountId);
+  attachedAccounts.add(accountId);
+  ensureItemPriceCatalog();
+  ensureCreatureCatalog();
+
+  wc.executeJavaScript(frameCaptureShadow.frameCaptureShadowScript()).catch(() => {});
+  const intervalId = setInterval(async () => {
+    if (wc.isDestroyed()) { detachCaptureViaJs(accountId); return; }
+    let frames;
+    try {
+      frames = await wc.executeJavaScript(frameCaptureShadow.drainFrameQueueScript());
+    } catch {
+      return;
+    }
+    for (const frame of frames || []) {
+      state.lastFrameTs = Date.now();
+      let msg;
+      try {
+        msg = JSON.parse(frame.data);
+      } catch {
+        continue; // not JSON — not one of the game's own protocol frames
+      }
+      applyFrame(state, msg);
+      if (msg && msg.type) resolveFrameWaiters(accountId, msg.type);
+      if (typeof onFrame === 'function') {
+        try { onFrame(msg); } catch (err) { console.error('[game-telemetry] onFrame handler failed for', accountId, err); }
+      }
+    }
+  }, 250);
+  jsCaptureIntervals.set(accountId, intervalId);
+
+  wc.once('destroyed', () => detachCaptureViaJs(accountId));
+}
+
+function detachCaptureViaJs(accountId) {
+  const intervalId = jsCaptureIntervals.get(accountId);
+  if (intervalId) clearInterval(intervalId);
+  jsCaptureIntervals.delete(accountId);
+  attachedAccounts.delete(accountId);
+}
+
 // Attaches once per account webContents' lifetime — idempotent, safe to call
 // again on every navigation (mirrors how injectGameOverlayButtons is already
 // called repeatedly and no-ops harmlessly). Only ever attaches for accounts
 // actually on the game's domain, per the port plan's scoping rule. Takes the
 // webContents directly (not a WebContentsView wrapper — accounts are real
 // <webview> elements now, see wireAccountWebContents in main.js).
-function attachCapture(wc, accountId, { onDetach, onFrame } = {}) {
+function attachCapture(wc, accountId, { onDetach, onFrame, useJsCapture } = {}) {
+  if (useJsCapture) return attachCaptureViaJs(wc, accountId, { onFrame });
   if (wc.debugger.isAttached()) return;
 
   try {

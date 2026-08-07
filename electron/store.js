@@ -112,7 +112,12 @@ const DEFAULT_DATA = {
       ecoForHiddenPanels: false,
       disconnectNotifications: true,
       advancedDiagnostics: false,
-      memoryGrowthThresholdMb: 200
+      memoryGrowthThresholdMb: 200,
+      // Etapa C of the CDP -> passive-JS telemetry migration — off by
+      // default so nothing changes until explicitly opted into. Validated
+      // in shadow mode first (136/136 frames matched CDP exactly in a real
+      // play session, including a hunt teleport) before this flag existed.
+      useJsFrameCapture: false
     }
   }
 };

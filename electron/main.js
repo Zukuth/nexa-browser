@@ -4420,13 +4420,17 @@ function feedConnectionEvent(accountId, event) {
 // manager; when disabled, calls it exactly as every version before this
 // stage did (no options, no behavior change).
 function attachGameCaptureFor(wc, accountId) {
+  // Etapa C of the CDP -> passive-JS migration: reversible via a settings
+  // flag, default off, so nothing changes until explicitly opted into.
+  const useJsCapture = !!(data.settings.stability && data.settings.stability.useJsFrameCapture);
   if (!stabilityEnabled()) {
-    gameTelemetry.attachCapture(wc, accountId);
+    gameTelemetry.attachCapture(wc, accountId, { useJsCapture });
     return;
   }
   gameTelemetry.attachCapture(wc, accountId, {
     onDetach: (reason) => feedConnectionEvent(accountId, { type: 'WS_DETACHED', reason }),
-    onFrame: () => feedConnectionEvent(accountId, { type: 'FRAME_RECEIVED' })
+    onFrame: () => feedConnectionEvent(accountId, { type: 'FRAME_RECEIVED' }),
+    useJsCapture
   });
 }
 
