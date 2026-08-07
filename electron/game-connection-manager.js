@@ -5,11 +5,11 @@
 // invoking recovery levels) lives in main.js/game-telemetry.js, not here.
 //
 // Two-layer design: a network/renderer layer (works identically whether or
-// not CDP is attached, including on /login, where CDP must never attach —
-// see isGameUrl()'s login exclusion in game-telemetry.js) and a WS layer
-// that only means anything once game-telemetry.attachCapture() has actually
-// attached. States like WS_CONNECTING/WS_STALE/WS_CLOSED are simply never
-// reached pre-login; LOGIN_PAGE always resolves to IDLE instead.
+// not the JS frame capture is attached, including on /login, where it must
+// never attach — see isGameUrl()'s login exclusion in game-telemetry.js)
+// and a WS layer that only means anything once game-telemetry.attachCapture()
+// has actually attached. States like WS_CONNECTING/WS_STALE/WS_CLOSED are
+// simply never reached pre-login; LOGIN_PAGE always resolves to IDLE instead.
 
 const STATES = Object.freeze({
   INITIALIZING: 'INITIALIZING',
@@ -29,9 +29,9 @@ const STATES = Object.freeze({
 
 // Recovery levels: 0 observe (no-op) · 1 revalidate (network-health) ·
 // 2 non-destructive wake (pulseGameRealtimeConnection, unchanged) ·
-// 3 CDP re-attach (gameTelemetry.attachCapture) · 4 visible alert / manual
-// reconnect / last-resort reload (default OFF). `null` means "no recovery
-// action needed for this transition".
+// 3 force a clean re-poll of the JS frame capture (gameTelemetry.reattachCapture)
+// · 4 visible alert / manual reconnect / last-resort reload (default OFF).
+// `null` means "no recovery action needed for this transition".
 
 // Pure reducer — the testable heart of this module. Never reads Date.now()
 // itself for decisions (the caller passes `now`), never touches any
@@ -49,8 +49,8 @@ function reduce(currentState, event, now = Date.now()) {
       return { nextState: state, recoveryLevel: null, reason: 'account-closed-no-transition' };
 
     case 'LOGIN_PAGE':
-      // No WS layer exists pre-login and CDP must never attach here — model
-      // this as IDLE, not any WS_* state.
+      // No WS layer exists pre-login and the capture script must never
+      // attach here — model this as IDLE, not any WS_* state.
       return { nextState: STATES.IDLE, recoveryLevel: null, reason: 'on-login-page' };
 
     case 'FRAME_RECEIVED':
@@ -90,12 +90,17 @@ function reduce(currentState, event, now = Date.now()) {
     }
 
     case 'WS_DETACHED':
-      // The confirmed, previously-unfixed bug: CDP debugger session died and
-      // nothing ever re-attached it. Now drives straight to Level 3.
-      return { nextState: STATES.WS_CLOSED, recoveryLevel: 3, reason: 'cdp-debugger-detached' };
+      // Originally modeled a CDP debugger session dying with nothing ever
+      // re-attaching it — the confirmed, previously-unfixed bug. CDP capture
+      // is gone now (see game-telemetry.js), but the same event/level still
+      // fires for other capture-layer disruptions (e.g. a Network Service
+      // process crash — main.js's app.on('child-process-gone')), where
+      // Level 3 now means "force a clean re-poll of the JS capture" instead
+      // of "re-attach the debugger".
+      return { nextState: STATES.WS_CLOSED, recoveryLevel: 3, reason: 'capture-layer-disrupted' };
 
     case 'WS_REATTACHED':
-      return { nextState: STATES.WS_CONNECTING, recoveryLevel: null, reason: 'cdp-reattached-awaiting-frames' };
+      return { nextState: STATES.WS_CONNECTING, recoveryLevel: null, reason: 'capture-reattached-awaiting-frames' };
 
     case 'RECOVERY_LEVEL_2_DONE':
       // A non-destructive wake was sent — do NOT assume it worked. Stay in

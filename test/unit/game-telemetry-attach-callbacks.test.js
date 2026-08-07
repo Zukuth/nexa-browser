@@ -3,57 +3,54 @@ const assert = require('node:assert/strict');
 
 const gameTelemetry = require('../../electron/game-telemetry');
 
-// Minimal fake of Electron's webContents.debugger — supports the handful of
-// calls attachCapture() actually makes (attach/isAttached/sendCommand/on),
-// plus a way to manually fire 'message'/'detach' the way the real debugger
-// would. This is the actual surface the confirmed bug lived on: a real
-// detach event that used to only get logged, never re-driving a re-attach.
-function createFakeDebugger() {
-  const listeners = { message: [], detach: [] };
-  let attached = false;
-  return {
-    isAttached: () => attached,
-    attach: () => { attached = true; },
-    sendCommand: async () => {},
-    on: (event, cb) => { if (listeners[event]) listeners[event].push(cb); },
-    _emitMessage: (method, params) => listeners.message.forEach((cb) => cb(null, method, params)),
-    _emitDetach: (reason) => { attached = false; listeners.detach.forEach((cb) => cb(null, reason)); }
-  };
-}
-
+// Minimal fake of Electron's webContents — supports the handful of calls
+// attachCapture()'s JS-based path actually makes (executeJavaScript to
+// inject the patch, then poll it every 250ms; isDestroyed/once for
+// teardown). _queueFrame lets a test push a raw WS payload the way the
+// injected page-side patch would, for the next poll tick to pick up.
+// _destroy() both fires the 'destroyed' listener (as Electron would) and
+// must be called at the end of every test here — attachCapture's poll
+// interval is a REAL setInterval, and a real timer left running keeps
+// node:test's process alive forever instead of exiting after the run.
 function createFakeWc() {
-  const dbg = createFakeDebugger();
+  let queue = [];
   const destroyListeners = [];
   return {
-    debugger: dbg,
+    _queueFrame: (data) => queue.push({ t: Date.now(), data }),
+    isDestroyed: () => false,
+    executeJavaScript: async (script) => {
+      // Only the drain call (game-socket-capture.js's drainFrameQueueScript)
+      // needs a real return value here — the inject call's result is never
+      // read by attachCaptureViaJs, so any string is fine for it.
+      if (typeof script === 'string' && script.includes('__nexaFrameQueue.splice')) {
+        const drained = queue;
+        queue = [];
+        return drained;
+      }
+      return null;
+    },
     once: (event, cb) => { if (event === 'destroyed') destroyListeners.push(cb); },
     _destroy: () => destroyListeners.forEach((cb) => cb())
   };
 }
 
-describe('attachCapture onDetach/onFrame callback contract', () => {
-  test('onDetach fires when the CDP debugger session detaches — this is the fixed bug: previously nothing outside attachCapture ever heard about it', () => {
-    const wc = createFakeWc();
-    let detachedWith = null;
-    gameTelemetry.attachCapture(wc, 'acc-detach-test', {
-      onDetach: (reason) => { detachedWith = reason; }
-    });
+// The interval-based poll runs every 250ms — wait a bit past that so the
+// fake's queued frame gets drained and processed.
+function waitForPoll(ms = 300) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-    assert.equal(detachedWith, null); // not called yet
-    wc.debugger._emitDetach('replaced_with_devtools');
-    assert.equal(detachedWith, 'replaced_with_devtools');
-  });
-
-  test('onFrame fires for every real game WS frame after applyFrame has already processed it', () => {
+describe('attachCapture onFrame callback contract (JS-based capture)', () => {
+  test('onFrame fires for every real game WS frame after applyFrame has already processed it', async () => {
     const wc = createFakeWc();
     const framesSeen = [];
     gameTelemetry.attachCapture(wc, 'acc-frame-test', {
       onFrame: (msg) => framesSeen.push(msg)
     });
 
-    wc.debugger._emitMessage('Network.webSocketFrameReceived', {
-      response: { payloadData: JSON.stringify({ type: 'field-kill', xpGained: 10 }) }
-    });
+    wc._queueFrame(JSON.stringify({ type: 'field-kill', xpGained: 10 }));
+    await waitForPoll();
+    wc._destroy();
 
     assert.equal(framesSeen.length, 1);
     assert.equal(framesSeen[0].type, 'field-kill');
@@ -64,38 +61,61 @@ describe('attachCapture onDetach/onFrame callback contract', () => {
     assert.ok(deltas.lastKillAt);
   });
 
-  test('non-JSON WS frame payloads are ignored and never reach onFrame', () => {
+  test('non-JSON WS frame payloads are ignored and never reach onFrame', async () => {
     const wc = createFakeWc();
     let called = false;
     gameTelemetry.attachCapture(wc, 'acc-badframe-test', { onFrame: () => { called = true; } });
 
-    wc.debugger._emitMessage('Network.webSocketFrameReceived', { response: { payloadData: 'not json' } });
+    wc._queueFrame('not json');
+    await waitForPoll();
+    wc._destroy();
 
     assert.equal(called, false);
   });
 
-  test('calling attachCapture a second time while already attached is a no-op — no duplicate listeners, callbacks fire only once per event', () => {
+  test('calling attachCapture a second time while already attached is a no-op — no duplicate polling interval', async () => {
     const wc = createFakeWc();
-    let detachCount = 0;
-    gameTelemetry.attachCapture(wc, 'acc-dup-test', { onDetach: () => { detachCount += 1; } });
-    // Second call — wc.debugger.isAttached() is now true, so attachCapture's
-    // own idempotency guard must return immediately without registering a
-    // second 'detach' listener.
-    gameTelemetry.attachCapture(wc, 'acc-dup-test', { onDetach: () => { detachCount += 1; } });
+    let frameCount = 0;
+    gameTelemetry.attachCapture(wc, 'acc-dup-test', { onFrame: () => { frameCount += 1; } });
+    // Second call — the interval-exists guard must return immediately
+    // without starting a second poller.
+    gameTelemetry.attachCapture(wc, 'acc-dup-test', { onFrame: () => { frameCount += 1; } });
 
-    wc.debugger._emitDetach('target_closed');
-    assert.equal(detachCount, 1);
+    wc._queueFrame(JSON.stringify({ type: 'balls', balls: [] }));
+    await waitForPoll();
+    wc._destroy();
+
+    assert.equal(frameCount, 1);
   });
 
-  test('a thrown onDetach callback is caught and logged, never crashes the debugger event pipeline', () => {
+  test('a thrown onFrame callback is caught and logged, never crashes the poll loop', async () => {
     const wc = createFakeWc();
-    gameTelemetry.attachCapture(wc, 'acc-throw-test', { onDetach: () => { throw new Error('boom'); } });
-    assert.doesNotThrow(() => wc.debugger._emitDetach('crashed'));
+    gameTelemetry.attachCapture(wc, 'acc-throw-test', { onFrame: () => { throw new Error('boom'); } });
+
+    wc._queueFrame(JSON.stringify({ type: 'balls', balls: [] }));
+    await assert.doesNotReject(waitForPoll());
+    wc._destroy();
   });
 
-  test('attachCapture without any options object still works exactly as before (backwards compatible call sites)', () => {
+  test('attachCapture without any options object still works exactly as before (backwards compatible call sites)', async () => {
     const wc = createFakeWc();
     assert.doesNotThrow(() => gameTelemetry.attachCapture(wc, 'acc-noopts-test'));
-    assert.doesNotThrow(() => wc.debugger._emitDetach('some-reason'));
+    wc._queueFrame(JSON.stringify({ type: 'balls', balls: [] }));
+    await assert.doesNotReject(waitForPoll());
+    wc._destroy();
+  });
+
+  test('reattachCapture forces a fresh poll cycle — used by connection-manager recovery level 3', async () => {
+    const wc = createFakeWc();
+    const framesSeen = [];
+    gameTelemetry.attachCapture(wc, 'acc-reattach-test', { onFrame: (msg) => framesSeen.push(msg) });
+
+    gameTelemetry.reattachCapture(wc, 'acc-reattach-test', { onFrame: (msg) => framesSeen.push(msg) });
+
+    wc._queueFrame(JSON.stringify({ type: 'field-kill', xpGained: 1 }));
+    await waitForPoll();
+    wc._destroy();
+
+    assert.equal(framesSeen.length, 1);
   });
 });

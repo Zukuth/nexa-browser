@@ -7,7 +7,6 @@ const extractZip = require('extract-zip');
 const store = require('./store');
 const { GAP, GRID_MAX_PANELS, MIN_SPLIT_FRAC, resolveFracs, cellsForMode, freeCells, normalizeFracsWithMin } = require('./layout-utils');
 const gameTelemetry = require('./game-telemetry');
-const frameCaptureShadow = require('./game-socket-capture');
 const pokeFormulas = require('./poke-formulas');
 const market = require('./market');
 const networkHealth = require('./network-health');
@@ -1369,9 +1368,9 @@ function wireAccountWebContents(wc, account, hostWebContents) {
       }
     }
   })();
-  // Must attach before the real navigation starts — CDP's Network.enable
-  // needs to be on before the game's own page connects its WebSocket, or the
-  // connection (and the frames right after it) is missed entirely. The
+  // Attaches as early as possible — the injected WebSocket.prototype patch
+  // (game-socket-capture.js) covers any socket already created by the time
+  // it runs, but the sooner it installs, the smaller that race window. The
   // renderer creates every <webview> pointed at about:blank first and only
   // sets the real `src` after receiving 'webview:ready' below, specifically
   // so this always runs before that real navigation, for every account (not
@@ -1416,20 +1415,17 @@ function wireAccountWebContents(wc, account, hostWebContents) {
     if (account.hideChat || account.hideGameBar) applyGameCssToggles(wc, account);
     if (account.sellLockOn) applySellLock(wc, account);
     if (gameTelemetry.isGameUrl(wc.getURL())) enableGameSocketCapture(wc);
-    if (process.env.NEXA_JS_CAPTURE_SHADOW === '1' && gameTelemetry.isGameUrl(wc.getURL())) {
-      startFrameCaptureShadowPoll(wc, account.id);
-    }
     // A navigation could have crossed the /login → game boundary (or back
     // out of it), which changes whether the powerSaveBlocker is needed.
     refreshPowerBlockerNeed();
     if (isGameLoginUrl(wc.getURL())) {
-      // No WS layer exists here and CDP must never attach — the state
-      // machine models this as IDLE, not a WS_* state.
+      // No WS layer exists here and the capture script must never attach —
+      // the state machine models this as IDLE, not a WS_* state.
       feedConnectionEvent(account.id, { type: 'LOGIN_PAGE' });
     }
     // Covers an account that started elsewhere and only just navigated to
-    // the game — attachCapture() is idempotent (checks debugger.isAttached())
-    // so this is a no-op for accounts that already attached before loadURL.
+    // the game — attachCapture() is idempotent (checks its own interval-
+    // exists guard) so this is a no-op for accounts already attached.
     if (gameTelemetry.isGameUrl(wc.getURL())) {
       attachGameCaptureFor(wc, account.id);
       // A full page load (e.g. after a crash-recovery reload) means any
@@ -1490,7 +1486,6 @@ function wireAccountWebContents(wc, account, hostWebContents) {
   // guard makes this safe to also fire when the app itself initiated the
   // close (closeAccountView already handles that path).
   wc.once('destroyed', () => {
-    stopFrameCaptureShadowPoll(account.id);
     // If `views.get(id)` no longer points at THIS wc, a newer one has
     // already replaced it (e.g. openAccountInNewWindow closing this
     // window's copy right before the popped-out window's replacement
@@ -1674,48 +1669,6 @@ function gameSocketCaptureScript() {
 
 function enableGameSocketCapture(wc) {
   wc.executeJavaScript(gameSocketCaptureScript()).catch(() => {});
-}
-
-// Etapa A (shadow mode) of the CDP -> passive-JS migration — see the plan.
-// Gated behind NEXA_JS_CAPTURE_SHADOW=1, off by default: zero effect on the
-// real app unless explicitly opted into for a validation session. Logs both
-// what CDP already captures (see the matching NEXA_JS_CAPTURE_SHADOW branch
-// in game-telemetry.js's debugger message handler) and what this passive
-// patch captures to the same file, so the two streams can be compared by
-// eye after a real play session — no automated diffing, this is a temporary
-// validation tool, not a permanent feature.
-const frameShadowPollers = new Map(); // accountId -> intervalId
-
-function shadowLog(line) {
-  try {
-    fs.appendFileSync(path.join(__dirname, '..', 'shadow-capture.log'), line + '\n');
-  } catch { /* best-effort debug tool, never let a log failure affect the app */ }
-}
-
-function startFrameCaptureShadowPoll(wc, accountId) {
-  if (frameShadowPollers.has(accountId)) return;
-  wc.executeJavaScript(frameCaptureShadow.frameCaptureShadowScript()).catch(() => {});
-  const intervalId = setInterval(async () => {
-    if (wc.isDestroyed()) { stopFrameCaptureShadowPoll(accountId); return; }
-    let frames;
-    try {
-      frames = await wc.executeJavaScript(frameCaptureShadow.drainFrameQueueScript());
-    } catch {
-      return;
-    }
-    for (const frame of frames || []) {
-      let type = '?';
-      try { type = JSON.parse(frame.data).type || '?'; } catch { /* not JSON, leave as '?' */ }
-      shadowLog(`[JS] ${accountId} ${frame.t} ${type}`);
-    }
-  }, 250);
-  frameShadowPollers.set(accountId, intervalId);
-}
-
-function stopFrameCaptureShadowPoll(accountId) {
-  const intervalId = frameShadowPollers.get(accountId);
-  if (intervalId) clearInterval(intervalId);
-  frameShadowPollers.delete(accountId);
 }
 
 // Polls briefly for window.__nexaGameSocket (populated by the capture patch
@@ -4201,16 +4154,14 @@ ipcMain.handle('pokeFormulas:getHuntTable', async (_e, payload) => {
 // ── Memory optimizer ────────────────────────────────────────────────────────
 // Safe operations only: clears HTTP cache and Cache Storage (cached files,
 // service-worker caches) — never touches cookies, localStorage, IndexedDB or
-// any other storage that keeps the user logged in. Inactive renderers also
-// get a CDP memory purge so their JS heaps can shrink without a reload.
-// Starts at launch time, not 0 — startAutoOptimizeLoop's first check (30 min
-// after launch) computed `elapsed = Date.now() - 0`, always past the 24h
-// threshold, so every fresh app start ran a forced CDP memory purge
-// (Memory.forciblyPurgeJavaScriptMemory) on inactive accounts ~30 minutes
-// in. That purge can disrupt an account's live JS/WS state mid-session —
-// exactly the kind of silent hiccup that can bounce the game's client back
-// to its spawn/depot screen without the page ever reloading or the user
-// noticing anything happened.
+// any other storage that keeps the user logged in. Inactive renderers are
+// also asked to GC their own JS heap (window.gc(), best-effort). This used
+// to also force a CDP memory purge (Memory.forciblyPurgeJavaScriptMemory) —
+// dropped once game accounts stopped attaching the CDP debugger at all (see
+// game-telemetry.js), since that purge could disrupt an account's live
+// JS/WS state mid-session anyway — exactly the kind of silent hiccup that
+// can bounce the game's client back to its spawn/depot screen without the
+// page ever reloading or the user noticing anything happened.
 let lastOptimizeAt = Date.now();
 let optimizeRunning = false;
 
@@ -4279,16 +4230,15 @@ async function optimizeMemorySafe() {
       result.cacheCleared++;
     } catch {}
 
-    // 2. For INACTIVE account renderers: ask Chromium to purge renderer memory
-    //    via CDP. The active account is left untouched so farming isn't broken.
+    // 2. For INACTIVE account renderers: ask the renderer to GC its own JS
+    //    heap. The active account is left untouched so farming isn't broken.
     const activeId = data.settings.activeAccountId;
     for (const [accountId, wc] of views.entries()) {
       if (accountId === activeId || wc.isDestroyed() || purchaseInFlight.has(accountId)) continue;
       try {
-        if (wc.debugger.isAttached()) {
-          await wc.debugger.sendCommand('Memory.forciblyPurgeJavaScriptMemory').catch(() => {});
-        }
-        // Ask the renderer to GC its own JS heap (works if game exposes gc()).
+        // Works if the game exposes gc() — best-effort, no CDP involved
+        // (game accounts no longer attach the CDP debugger at all since the
+        // telemetry capture migrated to a passive JS patch).
         await wc.executeJavaScript('try{window.gc&&window.gc()}catch(e){}').catch(() => {});
         result.viewsPurged++;
       } catch {}
@@ -4337,9 +4287,6 @@ async function optimizeMemoryDeepClean() {
     for (const [accountId, wc] of views.entries()) {
       if (accountId === activeId || wc.isDestroyed() || purchaseInFlight.has(accountId)) continue;
       try {
-        if (wc.debugger.isAttached()) {
-          await wc.debugger.sendCommand('Memory.forciblyPurgeJavaScriptMemory').catch(() => {});
-        }
         await wc.executeJavaScript('try{window.gc&&window.gc()}catch(e){}').catch(() => {});
         result.viewsPurged++;
       } catch {}
@@ -4418,21 +4365,19 @@ function feedConnectionEvent(accountId, event) {
 }
 
 // Thin wrapper around gameTelemetry.attachCapture — when stability is
-// enabled, wires its onDetach/onFrame callbacks into the connection
-// manager; when disabled, calls it exactly as every version before this
-// stage did (no options, no behavior change).
+// enabled, wires its onFrame callback into the connection manager; when
+// disabled, calls it exactly as every version before this stage did (no
+// options, no behavior change). There's no onDetach anymore: that was a
+// CDP-only concept (the debugger session dying) — the JS-based capture
+// (game-telemetry.js) doesn't "detach", its interval either keeps polling
+// or the webContents got destroyed, which it already handles on its own.
 function attachGameCaptureFor(wc, accountId) {
-  // Etapa C of the CDP -> passive-JS migration: reversible via a settings
-  // flag, default off, so nothing changes until explicitly opted into.
-  const useJsCapture = !!(data.settings.stability && data.settings.stability.useJsFrameCapture);
   if (!stabilityEnabled()) {
-    gameTelemetry.attachCapture(wc, accountId, { useJsCapture });
+    gameTelemetry.attachCapture(wc, accountId);
     return;
   }
   gameTelemetry.attachCapture(wc, accountId, {
-    onDetach: (reason) => feedConnectionEvent(accountId, { type: 'WS_DETACHED', reason }),
-    onFrame: () => feedConnectionEvent(accountId, { type: 'FRAME_RECEIVED' }),
-    useJsCapture
+    onFrame: () => feedConnectionEvent(accountId, { type: 'FRAME_RECEIVED' })
   });
 }
 
@@ -4471,8 +4416,9 @@ async function runRecoveryLevel({ accountId, level, wc, reason }) {
     } catch { /* not exposed on this Electron/webview combination — best effort only */ }
     feedConnectionEvent(accountId, { type: 'RECOVERY_LEVEL_2_DONE' });
   } else if (level === 3) {
-    gameTelemetry.attachCapture(wc, accountId, {
-      onDetach: (detachReason) => feedConnectionEvent(accountId, { type: 'WS_DETACHED', reason: detachReason }),
+    // Used to mean "re-attach the CDP debugger" — now means "force a clean
+    // re-poll cycle of the JS capture" (gameTelemetry.reattachCapture).
+    gameTelemetry.reattachCapture(wc, accountId, {
       onFrame: () => feedConnectionEvent(accountId, { type: 'FRAME_RECEIVED' })
     });
     feedConnectionEvent(accountId, { type: 'WS_REATTACHED' });

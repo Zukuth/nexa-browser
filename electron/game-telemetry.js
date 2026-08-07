@@ -1,17 +1,27 @@
-// Fase A del motor de telemetría en tiempo real para cuentas de
-// poke.idleworld.online. Lee los frames WebSocket que el propio juego ya
-// transmite (protocolo JSON documentado, no DOM) vía el debugger CDP de
-// Chromium — igual que hace https://github.com/AntonioFleck/poke-idle-launcher.
-// Cada cuenta es un <webview> real (ver wireAccountWebContents en main.js);
+// Motor de telemetría en tiempo real para cuentas de poke.idleworld.online.
+// Lee los frames WebSocket que el propio juego ya transmite (protocolo JSON
+// documentado, no DOM) vía un parche pasivo de WebSocket.prototype inyectado
+// en el mundo principal del propio webview (ver game-socket-capture.js) —
+// mismo enfoque que usa https://github.com/soufoka/PokeGrid-source. Cada
+// cuenta es un <webview> real (ver wireAccountWebContents en main.js);
 // attachCapture() recibe su webContents directo. Nunca inyecta comandos,
 // nunca automatiza clicks/capturas: es observación de red de solo lectura.
 //
-// Por qué CDP y no un parche de window.WebSocket (como hace PokeGrid): CDP se
-// adjunta ANTES de loadURL() y Network.enable ve toda la actividad de red a
-// nivel de proceso, así que no depende de ganarle una carrera a la propia
-// conexión WebSocket del juego. Un parche inyectado después de did-finish-load
-// puede perderse la conexión si el juego ya conectó antes de que el script
-// corra.
+// Reemplazó una implementación anterior basada en el debugger CDP de
+// Chromium (wc.debugger.attach + Network.enable). Se sacó del todo tras un
+// bug real en producción: un detach del debugger dejaba la telemetría de
+// una cuenta congelada hasta un reload completo, sin ningún mecanismo que
+// la recuperara. El reemplazo se validó en modo sombra contra CDP antes del
+// cutover (136/136 frames coincidieron exactamente, incluyendo field-init
+// justo en un teleporte de hunt — el momento de mayor riesgo de carrera de
+// inicialización) y luego en una sesión de juego real ya como único
+// mecanismo (240/240 frames, sin huecos ni errores). El costo aceptado del
+// nuevo enfoque: executeJavaScript() solo puede correr después de que el
+// webview ya existe (a diferencia de CDP, que se adjunta antes de
+// loadURL()), así que hay una ventana chica donde el WebSocket del juego
+// podría abrir antes de que el parche se instale — mitigado parcheando
+// WebSocket.prototype (no una instancia), que cubre retroactivamente
+// cualquier socket ya creado.
 //
 // `goldPerHour` = oro de capturas (sellValue, del frame poke-delta) + oro de
 // vender el loot de las kills - costo de las bolas gastadas — el mismo
@@ -69,13 +79,14 @@ function rarityFromQuality(q) {
 function isGameUrl(url) {
   try {
     const u = new URL(url);
-    // Excludes /login on purpose: attaching the CDP debugger there is what
-    // was causing Cloudflare Turnstile's error 600010 on every fresh
-    // install. Turnstile's own anti-debugging check treats a debugger
-    // session (CDP or DevTools, same underlying mechanism) as a bot signal
-    // and hard-fails the challenge — documented behavior, not specific to
-    // this app. The game's WebSocket only exists after login anyway, so
-    // there's nothing to capture on /login and no reason to attach there.
+    // Excludes /login on purpose: the game's WebSocket only exists after
+    // login anyway, so there's nothing to capture there. Also avoids
+    // running any injected script near Cloudflare Turnstile's challenge
+    // iframe — back when capture used the CDP debugger, attaching there was
+    // what caused Turnstile's error 600010 on every fresh install (a
+    // debugger session is a documented anti-bot signal); kept as a rule for
+    // the current JS-based capture too since there's no upside to touching
+    // that page at all.
     return u.hostname === GAME_HOSTNAME && !u.pathname.startsWith('/login');
   } catch {
     return false;
@@ -786,30 +797,26 @@ function adjustWallet(accountId, { currency, delta }) {
   state.wallet.updatedAt = Date.now();
 }
 
-// Etapa C of the CDP -> passive-JS migration: the JS-based capture (built
-// and validated in shadow mode in Etapas A/B — confirmed live, 136/136
-// frames matched CDP exactly, including field-init right at a hunt
-// teleport, the highest-risk moment for this approach's known race
-// condition) can now actually feed applyFrame() for real, gated behind
-// settings.stability.useJsFrameCapture so it's instantly reversible if
-// anything looks wrong in real use. accountId -> intervalId, mirrors the
-// shadow poller's map in main.js but this one is the real telemetry path.
+// accountId -> intervalId. The interval polls window.__nexaFrameQueue
+// (populated by the injected WebSocket.prototype patch, see
+// game-socket-capture.js) every 250ms, since there's no direct IPC channel
+// out of the page's main world.
 const jsCaptureIntervals = new Map();
 
 function attachCaptureViaJs(wc, accountId, { onFrame } = {}) {
   if (jsCaptureIntervals.has(accountId)) return;
-  const frameCaptureShadow = require('./game-socket-capture');
+  const socketCapture = require('./game-socket-capture');
   const state = getOrCreateState(accountId);
   attachedAccounts.add(accountId);
   ensureItemPriceCatalog();
   ensureCreatureCatalog();
 
-  wc.executeJavaScript(frameCaptureShadow.frameCaptureShadowScript()).catch(() => {});
+  wc.executeJavaScript(socketCapture.frameCaptureScript()).catch(() => {});
   const intervalId = setInterval(async () => {
     if (wc.isDestroyed()) { detachCaptureViaJs(accountId); return; }
     let frames;
     try {
-      frames = await wc.executeJavaScript(frameCaptureShadow.drainFrameQueueScript());
+      frames = await wc.executeJavaScript(socketCapture.drainFrameQueueScript());
     } catch {
       return;
     }
@@ -826,18 +833,6 @@ function attachCaptureViaJs(wc, accountId, { onFrame } = {}) {
       if (typeof onFrame === 'function') {
         try { onFrame(msg); } catch (err) { console.error('[game-telemetry] onFrame handler failed for', accountId, err); }
       }
-      // Temporary verification aid for the Etapa C real-use test — same
-      // opt-in flag and file as the Etapa A shadow log, prefixed [JS-REAL]
-      // so it's obvious this is the real telemetry path, not a comparison.
-      // Safe to remove once Etapa C is confirmed and D begins.
-      if (process.env.NEXA_DEBUG_NET === '1') {
-        try {
-          require('fs').appendFileSync(
-            require('path').join(__dirname, '..', 'shadow-capture.log'),
-            `[JS-REAL] ${accountId} ${Date.now()} ${msg && msg.type}\n`
-          );
-        } catch { /* best-effort debug tool, never let a log failure affect the app */ }
-      }
     }
   }, 250);
   jsCaptureIntervals.set(accountId, intervalId);
@@ -852,122 +847,30 @@ function detachCaptureViaJs(accountId) {
   attachedAccounts.delete(accountId);
 }
 
-// Attaches once per account webContents' lifetime — idempotent, safe to call
-// again on every navigation (mirrors how injectGameOverlayButtons is already
-// called repeatedly and no-ops harmlessly). Only ever attaches for accounts
-// actually on the game's domain, per the port plan's scoping rule. Takes the
-// webContents directly (not a WebContentsView wrapper — accounts are real
-// <webview> elements now, see wireAccountWebContents in main.js).
-function attachCapture(wc, accountId, { onDetach, onFrame, useJsCapture } = {}) {
-  if (useJsCapture) return attachCaptureViaJs(wc, accountId, { onFrame });
-  if (wc.debugger.isAttached()) return;
+// Attaches once per account webContents' lifetime — idempotent (both the
+// interval-exists guard above and the injected script's own
+// window.__nexaFrameCapture guard), safe to call again on every navigation
+// (mirrors how injectGameOverlayButtons is already called repeatedly and
+// no-ops harmlessly). Only ever attaches for accounts actually on the
+// game's domain, per the port plan's scoping rule. Takes the webContents
+// directly (not a WebContentsView wrapper — accounts are real <webview>
+// elements now, see wireAccountWebContents in main.js).
+function attachCapture(wc, accountId, { onFrame } = {}) {
+  return attachCaptureViaJs(wc, accountId, { onFrame });
+}
 
-  try {
-    wc.debugger.attach('1.3');
-  } catch (err) {
-    console.error('[game-telemetry] debugger.attach failed for', accountId, err);
-    return;
-  }
-
-  wc.debugger.sendCommand('Network.enable').catch((err) => {
-    console.error('[game-telemetry] Network.enable failed for', accountId, err);
-  });
-
-  const state = getOrCreateState(accountId);
-  attachedAccounts.add(accountId);
-  ensureItemPriceCatalog();
-  ensureCreatureCatalog();
-
-  wc.debugger.on('message', (_event, method, params) => {
-    // Debug instrumentation (NEXA_DEBUG_NET=1, off by default, zero cost
-    // when off) — logs outgoing REST calls, WS frames, and GET response
-    // bodies for the game's own account/inventory-management endpoints, so
-    // real endpoints (teleport, shop, depot, family) get confirmed live
-    // instead of guessed. Kept around (not deleted after Etapa 4/5) since
-    // Etapa 7 (Depot) needs the exact same technique.
-    if (process.env.NEXA_DEBUG_NET === '1') {
-      // Writes synchronously straight to disk instead of console.log — a
-      // redirected stdout pipe for a GUI (non-TTY) Electron process buffers
-      // heavily and doesn't flush until a clean process exit, which force-
-      // killing (needed to close the app between test runs) never triggers.
-      // Confirmed live: an entire capture session produced zero visible
-      // output via `> out.txt` redirection for exactly this reason.
-      let line = null;
-      if (method === 'Network.requestWillBeSent' && params.request && /idleworld\.online/.test(params.request.url || '')) {
-        line = `[REQUEST] ${params.request.method} ${params.request.url} ${params.request.postData || ''}`;
-      } else if (method === 'Network.webSocketFrameSent') {
-        line = `[WS-SENT] ${(params.response && params.response.payloadData) || ''}`;
-      } else if (method === 'Network.webSocketFrameReceived' && params.response && params.response.payloadData) {
-        try {
-          const parsed = JSON.parse(params.response.payloadData);
-          line = `[WS-RECV] ${parsed && parsed.type} ${JSON.stringify(parsed).slice(0, parsed && parsed.type === 'family' ? 4000 : 400)}`;
-        } catch {}
-      } else if (method === 'Network.webSocketClosed' || method === 'Network.webSocketCreated') {
-        line = `[WS-LIFECYCLE] ${method} ${JSON.stringify(params).slice(0, 200)}`;
-      } else if (method === 'Network.responseReceived' && params.response && /\/api\/game\/(shop|depot|family)(\?|\/|$)/.test(params.response.url || '')) {
-        const logPath = require('path').join(__dirname, '..', 'netdebug.log');
-        wc.debugger.sendCommand('Network.getResponseBody', { requestId: params.requestId })
-          .then((body) => {
-            try { require('fs').appendFileSync(logPath, `[BODY ${params.response.url}] ${body.body}\n`); } catch {}
-          }).catch((err) => {
-            try { require('fs').appendFileSync(logPath, `[BODY-ERROR ${params.response.url}] ${err.message}\n`); } catch {}
-          });
-      }
-      if (line) {
-        try { require('fs').appendFileSync(require('path').join(__dirname, '..', 'netdebug.log'), line + '\n'); } catch {}
-      }
-    }
-    if (method !== 'Network.webSocketFrameReceived') return;
-    const payload = params.response && params.response.payloadData;
-    if (!payload) return;
-    state.lastFrameTs = Date.now();
-    let msg;
-    try {
-      msg = JSON.parse(payload);
-    } catch {
-      return; // not JSON — not one of the game's own protocol frames
-    }
-    applyFrame(state, msg);
-    if (msg && msg.type) resolveFrameWaiters(accountId, msg.type);
-    // Etapa A (shadow mode) of the CDP -> passive-JS migration — see the
-    // plan. Logs what CDP captures next to what the new passive patch
-    // captures (main.js's startFrameCaptureShadowPoll, same file, same
-    // format) so the two streams can be compared by eye after a real play
-    // session. Off by default, zero effect unless explicitly opted into.
-    if (process.env.NEXA_JS_CAPTURE_SHADOW === '1') {
-      try {
-        require('fs').appendFileSync(
-          require('path').join(__dirname, '..', 'shadow-capture.log'),
-          `[CDP] ${accountId} ${Date.now()} ${msg.type}\n`
-        );
-      } catch { /* best-effort debug tool, never let a log failure affect the app */ }
-    }
-    if (typeof onFrame === 'function') {
-      try { onFrame(msg); } catch (err) { console.error('[game-telemetry] onFrame handler failed for', accountId, err); }
-    }
-  });
-
-  wc.debugger.on('detach', (_event, reason) => {
-    console.log('[game-telemetry] debugger detached for', accountId, reason);
-    if (process.env.NEXA_DEBUG_NET === '1') {
-      try { require('fs').appendFileSync(require('path').join(__dirname, '..', 'netdebug.log'), `[DEBUGGER-DETACH] ${accountId} ${reason}\n`); } catch {}
-    }
-    attachedAccounts.delete(accountId);
-    // Previously this only logged — nothing ever re-attached automatically,
-    // so a detach (confirmed live: opening regular DevTools on an account
-    // triggers one, since Chromium only allows one CDP client per target;
-    // there may be other silent causes too) permanently froze this
-    // account's telemetry until a full page reload happened to come along.
-    // onDetach lets the connection-manager wiring (main.js, gated behind
-    // settings.stability.enabled) drive an actual re-attach attempt instead.
-    if (typeof onDetach === 'function') {
-      try { onDetach(reason); } catch (err) { console.error('[game-telemetry] onDetach handler failed for', accountId, err); }
-    }
-  });
-
-  wc.once('destroyed', () => {
-    attachedAccounts.delete(accountId);
-  });
+// Recovery-level-3 action (see game-connection-manager.js / main.js's
+// runRecoveryLevel) — forces a clean re-poll cycle instead of trusting the
+// existing interval. Has real recovery value even though the injected
+// script and the interval guard above are both already idempotent on their
+// own: this covers the case where the interval itself stopped for some
+// reason (e.g. a bug, or the page's own state getting wiped by something
+// other than a full navigation) while the account otherwise looks alive —
+// a plain attachCapture() call would silently no-op on that instead of
+// fixing it.
+function reattachCapture(wc, accountId, { onFrame } = {}) {
+  detachCaptureViaJs(accountId);
+  attachCaptureViaJs(wc, accountId, { onFrame });
 }
 
 function getStats(accountId) {
@@ -1040,6 +943,7 @@ function isLikelyFrozen(state, thresholdMs, now = Date.now()) {
 module.exports = {
   isGameUrl,
   attachCapture,
+  reattachCapture,
   getStats,
   getAllStats,
   removeState,
