@@ -507,7 +507,13 @@ function displayName(account, index) {
 function escapeHtmlClient(s) {
   const div = document.createElement('div');
   div.textContent = String(s ?? '');
-  return div.innerHTML;
+  // div.innerHTML already escapes &/</> for text-node safety, but a bare
+  // quote is never special there — this function is also used inside HTML
+  // attributes (src="...", title="...") with values that can come straight
+  // from the game's own market listings (icon/iconUrl), which any player
+  // can publish. Without escaping quotes too, a crafted listing could break
+  // out of an attribute and inject markup into this privileged renderer.
+  return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // 'system' = sin atributo, sigue prefers-color-scheme (ver style.css);
