@@ -79,8 +79,12 @@ const huntAttackerEl = document.getElementById('hunt-attacker');
 const huntKphEl = document.getElementById('hunt-kph');
 const huntSortEl = document.getElementById('hunt-sort');
 const huntTableWrapEl = document.getElementById('hunt-table-wrap');
+const huntSearchEl = document.getElementById('hunt-search');
+const huntLevelEl = document.getElementById('hunt-level');
 const tierClanEl = document.getElementById('tier-clan');
 const tierTypeEl = document.getElementById('tier-type');
+const tierSearchEl = document.getElementById('tier-search');
+const tierLevelEl = document.getElementById('tier-level');
 const tierRefreshBtn = document.getElementById('tier-refresh');
 const tierMetaEl = document.getElementById('tier-meta');
 const tierListWrapEl = document.getElementById('tier-list-wrap');
@@ -5908,6 +5912,8 @@ huntAttackerEl.addEventListener('change', () => {
 });
 huntKphEl.addEventListener('change', runHuntTable);
 huntSortEl.addEventListener('change', runHuntTable);
+huntSearchEl?.addEventListener('input', renderHuntTable);
+huntLevelEl?.addEventListener('input', renderHuntTable);
 
 let huntTableCache = [];
 
@@ -5935,12 +5941,33 @@ async function runHuntTable() {
   renderHuntTable();
 }
 
+// "Poder" at a chosen level (same statsAtLevelClient/tierScoreClient used by
+// Tier List — perfect-IV, standard-quality reference point) — purely a
+// comparison aid for picking prey. XP/hora and oro/hora never change with
+// this: the game computes those per species, not per level (confirmed by
+// the existing formulas — xpPerHour/goldPerHour take no level argument),
+// so this stays a separate column instead of pretending to adjust them.
+function huntPowerAtLevel(pokeId, level) {
+  if (!level) return null;
+  const creature = (creatureCatalogCache || []).find((c) => c.pokeId === pokeId);
+  if (!creature) return null;
+  return tierScoreClient(statsAtLevelClient(creature, level), false);
+}
+
 function renderHuntTable() {
   const sortMode = huntSortEl.value;
-  const rows = huntTableCache.slice().sort((a, b) => {
+  const level = Math.min(100, Math.max(0, Number(huntLevelEl?.value) || 0)) || null;
+  const searchQuery = normalizeTextForFilter(huntSearchEl?.value || '');
+  let rows = huntTableCache;
+  if (searchQuery) {
+    rows = rows.filter((r) => normalizeTextForFilter(r.name || '').includes(searchQuery));
+  }
+  rows = rows.map((r) => ({ ...r, powerAtLevel: huntPowerAtLevel(r.pokeId, level) }));
+  rows = rows.slice().sort((a, b) => {
     if (sortMode === 'gold') return b.goldPerHour - a.goldPerHour;
     if (sortMode === 'matchup') return (b.matchup ?? -1) - (a.matchup ?? -1);
     if (sortMode === 'level') return (a.huntLevel ?? 0) - (b.huntLevel ?? 0);
+    if (sortMode === 'power') return (b.powerAtLevel ?? -1) - (a.powerAtLevel ?? -1);
     return b.xpPerHour - a.xpPerHour;
   });
 
@@ -5959,12 +5986,14 @@ function renderHuntTable() {
       <td>${matchupHtml}</td>
       <td class="poke-hunt-num">${formatCompactNumber(r.xpPerHour)}</td>
       <td class="poke-hunt-num">${formatCompactNumber(r.goldPerHour)}</td>
+      ${level ? `<td class="poke-hunt-num">${r.powerAtLevel}</td>` : ''}
     </tr>`;
   }).join('');
 
+  const powerColHeader = level ? `<th>${escapeHtmlClient(t('pokeIdle.col.powerAtLevel', { level }))}</th>` : '';
   huntTableWrapEl.innerHTML = `
     <table class="poke-hunt-table">
-      <thead><tr><th>${t('pokeIdle.col.pokemon')}</th><th>${t('pokeIdle.col.type')}</th><th>${t('pokeIdle.col.level')}</th><th>${t('pokeIdle.col.matchup')}</th><th>${t('pokeIdle.col.xpPerHour')}</th><th>${t('pokeIdle.col.goldPerHour')}</th></tr></thead>
+      <thead><tr><th>${t('pokeIdle.col.pokemon')}</th><th>${t('pokeIdle.col.type')}</th><th>${t('pokeIdle.col.level')}</th><th>${t('pokeIdle.col.matchup')}</th><th>${t('pokeIdle.col.xpPerHour')}</th><th>${t('pokeIdle.col.goldPerHour')}</th>${powerColHeader}</tr></thead>
       <tbody>${body}</tbody>
     </table>
   `;
@@ -5997,6 +6026,30 @@ const TIER_CLANS = [
   { id: 'water_ice', key: 'clan.waterIce', elements: ['WATER', 'ICE'] },
   { id: 'ghost_poison_dark', key: 'clan.ghostPoisonDark', elements: ['GHOST', 'POISON', 'DARK'] }
 ];
+
+// Mismo growthStat() que ya usa la Calculadora IV (poke-formulas.js), portado
+// al cliente para no ir por IPC en cada re-render de Tier List/Caza & XP
+// (se recalcula en cada tecla del filtro). Sin nivel elegido, se usan las
+// stats base tal cual (comportamiento de siempre). Con nivel, se usa el
+// MISMO default que piwtools.com.br (la herramienta de referencia de la que
+// están portadas todas estas fórmulas) — confirmado en vivo resolviendo los
+// 6 stats mostrados para Abra nivel 100 contra sus stats base reales
+// (creatures.json): los 6 dan growth=21/calidad≈1.8 de forma consistente,
+// no growth=32/calidad=1.0 como se había asumido sin verificar al principio.
+const TIER_QUALITY_EXP = { hp: 0.95, atk: 0.80, def: 0.80, spatk: 0.80, spdef: 0.80, speed: 0.95 };
+const TIER_LEVEL_GROWTH = 21;
+const TIER_LEVEL_QUALITY = 1.8;
+
+function statsAtLevelClient(creature, level) {
+  const base = { hp: creature.baseHp, atk: creature.baseAtk, def: creature.baseDef, spatk: creature.baseSpAtk, spdef: creature.baseSpDef, speed: creature.baseSpeed };
+  if (!level) return base;
+  const scaled = {};
+  for (const key of Object.keys(base)) {
+    const qFactor = Math.pow(TIER_LEVEL_QUALITY, TIER_QUALITY_EXP[key]);
+    scaled[key] = Math.round((base[key] + 2 * TIER_LEVEL_GROWTH) * level / 100 * qFactor);
+  }
+  return scaled;
+}
 
 // Ranking por percentil de stats base (ofensa/bulk/velocidad) — no es un tier
 // oficial del juego, es el mismo criterio que usa pokemon-360.web.app.
@@ -6052,12 +6105,12 @@ async function populateTierFilters() {
   tierTypeEl.value = currentType;
 }
 
-function computeTierList(clanId) {
+function computeTierList(clanId, level) {
   const catalog = creatureCatalogCache || [];
   const clan = TIER_CLANS.find((c) => c.id === clanId);
   const withScore = catalog.map((c) => {
     const inClan = clan ? clan.elements.includes(c.type1) || clan.elements.includes(c.type2) : false;
-    const stats = { hp: c.baseHp, atk: c.baseAtk, def: c.baseDef, spatk: c.baseSpAtk, spdef: c.baseSpDef, speed: c.baseSpeed };
+    const stats = statsAtLevelClient(c, level);
     return { creature: c, score: tierScoreClient(stats, inClan) };
   });
   withScore.sort((a, b) => b.score - a.score);
@@ -6090,10 +6143,16 @@ function renderTierList() {
   if (!tierListWrapEl || !creatureCatalogCache) return;
   const clanId = tierClanEl.value;
   const typeFilter = tierTypeEl.value;
-  const fullList = computeTierList(clanId);
+  const level = Math.min(100, Math.max(0, Number(tierLevelEl?.value) || 0)) || null;
+  const fullList = computeTierList(clanId, level);
   let filtered = typeFilter
     ? fullList.filter((r) => r.creature.type1 === typeFilter || r.creature.type2 === typeFilter)
     : fullList;
+
+  const searchQuery = normalizeTextForFilter(tierSearchEl?.value || '');
+  if (searchQuery) {
+    filtered = filtered.filter((r) => normalizeTextForFilter(r.creature.name || '').includes(searchQuery));
+  }
 
   const captureFilter = tierCaptureFilterEl ? tierCaptureFilterEl.value : '';
   if (captureFilter) {
@@ -6117,8 +6176,9 @@ function renderTierList() {
     </tr>`;
   }).join('');
 
+  const scoreColLabel = level ? t('pokeIdle.col.scoreAtLevel', { level }) : t('pokeIdle.col.score');
   tierListWrapEl.innerHTML = `<table class="poke-hunt-table poke-tier-table">
-    <thead><tr><th>${t('pokeIdle.col.tier')}</th><th></th><th>${t('pokeIdle.col.name')}</th><th>${t('pokeIdle.col.type')}</th><th>${t('pokeIdle.col.score')}</th></tr></thead>
+    <thead><tr><th>${t('pokeIdle.col.tier')}</th><th></th><th>${t('pokeIdle.col.name')}</th><th>${t('pokeIdle.col.type')}</th><th>${escapeHtmlClient(scoreColLabel)}</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
 
@@ -6129,6 +6189,8 @@ function renderTierList() {
 
 tierClanEl.addEventListener('change', renderTierList);
 tierTypeEl.addEventListener('change', renderTierList);
+tierSearchEl?.addEventListener('input', renderTierList);
+tierLevelEl?.addEventListener('input', renderTierList);
 tierCaptureFilterEl?.addEventListener('change', () => { populateTierCaptureAccountFilter(); renderTierList(); });
 tierCaptureAccountEl?.addEventListener('change', renderTierList);
 tierRefreshBtn?.addEventListener('click', async () => {

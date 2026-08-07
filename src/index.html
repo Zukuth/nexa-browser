@@ -621,12 +621,24 @@
           <input type="number" id="hunt-kph" min="1" value="650" />
         </div>
         <div class="settings-row">
+          <span data-i18n="pokeIdle.tierSearch">Buscar por nombre</span>
+          <input type="search" id="hunt-search" data-i18n-placeholder="pokeIdle.tierSearchPlaceholder" placeholder="Nombre del Pokémon" />
+        </div>
+        <div class="settings-row">
+          <div>
+            <span data-i18n="pokeIdle.tierLevel">Ajustar por nivel</span>
+            <div class="settings-hint" data-i18n="pokeIdle.huntLevelHint">Agrega una columna de poder real a ese nivel (mismo default que piwtools.com.br) para comparar presas — XP/hora y oro/hora no cambian con el nivel (el juego los calcula por especie, no por nivel). Vacío = sin columna extra.</div>
+          </div>
+          <input type="number" id="hunt-level" min="1" max="100" placeholder="—" style="width:70px;" />
+        </div>
+        <div class="settings-row">
           <span data-i18n="pokeIdle.sortBy">Ordenar por</span>
           <select id="hunt-sort">
             <option value="xp">XP/h</option>
             <option value="gold">Oro/h</option>
             <option value="matchup">Matchup</option>
             <option value="level" data-i18n="pokeIdle.level">Nivel</option>
+            <option value="power" data-i18n="pokeIdle.tierPowerAtLevel">Poder a nivel</option>
           </select>
         </div>
         <div id="hunt-table-wrap" class="poke-hunt-table-wrap"></div>
@@ -639,6 +651,17 @@
           no representa un tier oficial del juego. Elegí un Pokémon para ver sus evoluciones y sus matchups de
           tipo más fuertes/débiles.
         </p>
+        <div class="settings-row">
+          <span data-i18n="pokeIdle.tierSearch">Buscar por nombre</span>
+          <input type="search" id="tier-search" data-i18n-placeholder="pokeIdle.tierSearchPlaceholder" placeholder="Nombre del Pokémon" />
+        </div>
+        <div class="settings-row">
+          <div>
+            <span data-i18n="pokeIdle.tierLevel">Ajustar por nivel</span>
+            <div class="settings-hint" data-i18n="pokeIdle.tierLevelHint">Recalcula stats reales a ese nivel (mismo default que piwtools.com.br) en vez de solo stats base — cambia el ranking, no un tier oficial del juego. Vacío = stats base sin ajustar.</div>
+          </div>
+          <input type="number" id="tier-level" min="1" max="100" placeholder="—" style="width:70px;" />
+        </div>
         <div class="settings-row">
           <span data-i18n="pokeIdle.clan">Clan (bono x1.30 a ofensa/bulk de sus tipos)</span>
           <select id="tier-clan"><option value="" data-i18n="pokeIdle.clanNone">Ninguno</option></select>
