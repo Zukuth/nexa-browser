@@ -11,9 +11,25 @@
 // at any time, including while an account sits on /login behind Turnstile.
 
 const { net } = require('electron');
-const dns = require('node:dns');
 
 const DEFAULT_TIMEOUT_MS = 5000;
+
+// Chromium's own resolver (net.resolveHost), NOT Node's dns module. Confirmed
+// live this was a real bug, not a hypothetical: Node's dns.promises.resolve()
+// (c-ares) failed with ECONNREFUSED on a machine where the game itself was
+// online and playing fine — Node's resolver doesn't necessarily go through
+// the same DNS servers/DNS-over-HTTPS/VPN config Chromium's network stack
+// uses, so it can report "DNS broken" while the actual webview (and thus the
+// actual game connection) works perfectly. net.resolveHost asks Chromium's
+// own network service, so it reflects reality instead of a different,
+// possibly-misconfigured-for-this-machine resolution path. Wrapped to keep
+// resolveImpl's existing contract (resolves to an array of address strings)
+// so the rest of this function — and the existing unit tests, which inject
+// their own fake resolveImpl — don't need to change.
+async function resolveHostnameViaChromium(hostname) {
+  const resolved = await net.resolveHost(hostname);
+  return (resolved && resolved.endpoints || []).map((e) => e.address);
+}
 
 // accountId is accepted (not otherwise used) purely so future per-account
 // context — a per-account proxy, for instance — has an obvious place to
@@ -25,7 +41,7 @@ async function checkAccountNetwork(accountId, opts = {}) {
     proxyActive = false,
     // Injectable for unit testing without a real network/Electron runtime.
     fetchImpl = typeof fetch === 'function' ? fetch : null,
-    resolveImpl = dns.promises.resolve,
+    resolveImpl = resolveHostnameViaChromium,
     isOnlineImpl = net && typeof net.isOnline === 'function' ? net.isOnline : null
   } = opts;
 
