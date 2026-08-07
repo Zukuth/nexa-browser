@@ -366,6 +366,11 @@ const marketViewButtons = document.querySelectorAll('.market-view-btn');
 const marketRefreshBtn = document.getElementById('market-refresh');
 const marketLastUpdatedEl = document.getElementById('market-last-updated');
 const marketResultsEl = document.getElementById('market-results');
+const marketPaginationEl = document.getElementById('market-pagination');
+const marketPageNumbersEl = document.getElementById('market-page-numbers');
+const marketPagePrevBtn = document.getElementById('market-page-prev');
+const marketPageNextBtn = document.getElementById('market-page-next');
+const marketPageSummaryEl = document.getElementById('market-page-summary');
 const marketAlertFeedEl = document.getElementById('market-alert-feed');
 const networkListEl = document.getElementById('network-list');
 const marketModal = document.getElementById('market-modal');
@@ -4402,6 +4407,14 @@ function populateMarketAccountDropdown() {
 let marketViewMode = 'grid';
 let marketListingsCache = [];
 let marketRenderedListings = new Map();
+// El Market global no pagina server-side — GET /api/game/market?category=X
+// devuelve TODO en una sola llamada (confirmado en vivo: 11.489
+// publicaciones en "All" en un solo response, sin ningún campo de
+// paginación). Volcar eso entero al DOM de una sola vez trabaría el
+// render, así que se pagina del lado del cliente sobre marketListingsCache
+// (ya está todo ahí, no hace falta volver a pedirle nada al servidor).
+const MARKET_PAGE_SIZE = 30;
+let marketCurrentPage = 1;
 let marketLastUpdatedAt = 0;
 let marketSelectedListing = null;
 let marketSelectedAccountId = null;
@@ -4986,7 +4999,7 @@ function syncMarketAutoRefreshTimer() {
   const seconds = Math.min(120, Math.max(5, Number(marketPrefs.refreshSeconds) || 15));
   marketAutoRefreshTimer = setInterval(() => {
     if (!pokeIdlePanel.classList.contains('open')) return;
-    loadMarketListings(true);
+    loadMarketListings(true, { preservePage: true });
   }, seconds * 1000);
 }
 
@@ -5131,7 +5144,7 @@ function renderMarketCard(listing, { onBuy, onOpen, listingKey } = {}) {
       await syncMarketInventoryAfterBuy(targetListing, marketAccountSelect.value, res);
       await renderMarketPurchaseHistory();
       await new Promise((resolve) => setTimeout(resolve, 700));
-      await loadMarketListings(true);
+      await loadMarketListings(true, { preservePage: true });
     } else {
       buyBtn.disabled = false;
       buyBtn.textContent = t('pokeIdle.marketBuy');
@@ -5314,8 +5327,75 @@ function markMarketCardBought(card, buyBtn) {
   buyBtn.textContent = t('pokeIdle.marketBought');
 }
 
-function renderMarketResults() {
+// Genera la lista de "botones" a mostrar en la paginación: siempre 1 y el
+// total, la página actual con una página de margen a cada lado, y '...'
+// donde haya un salto — así con cientos de páginas (11.489 resultados / 30
+// = ~383 páginas en "All") la barra sigue siendo un puñado de botones, no
+// 383 botones reales en el DOM.
+function buildMarketPageWindow(current, total) {
+  const pages = new Set([1, total, current, current - 1, current + 1]);
+  const sorted = Array.from(pages).filter((p) => p >= 1 && p <= total).sort((a, b) => a - b);
+  const result = [];
+  let prev = null;
+  for (const page of sorted) {
+    if (prev != null && page - prev > 1) result.push('...');
+    result.push(page);
+    prev = page;
+  }
+  return result;
+}
+
+function goToMarketPage(page) {
+  const totalCount = getMarketFilteredListings().length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / MARKET_PAGE_SIZE));
+  marketCurrentPage = Math.min(Math.max(1, page), totalPages);
+  renderMarketResults({ resetPage: false });
+}
+
+function updateMarketPagination(totalCount) {
+  const totalPages = Math.max(1, Math.ceil(totalCount / MARKET_PAGE_SIZE));
+  if (!marketPaginationEl || !marketPageNumbersEl) return;
+  if (totalCount === 0 || totalPages <= 1) {
+    marketPaginationEl.style.display = 'none';
+    if (marketPageSummaryEl) marketPageSummaryEl.textContent = '';
+    return;
+  }
+  marketPaginationEl.style.display = '';
+  marketPagePrevBtn.disabled = marketCurrentPage <= 1;
+  marketPageNextBtn.disabled = marketCurrentPage >= totalPages;
+  marketPageNumbersEl.innerHTML = '';
+  buildMarketPageWindow(marketCurrentPage, totalPages).forEach((entry) => {
+    if (entry === '...') {
+      const span = document.createElement('span');
+      span.className = 'market-page-ellipsis';
+      span.textContent = '…';
+      marketPageNumbersEl.appendChild(span);
+      return;
+    }
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'market-page-btn' + (entry === marketCurrentPage ? ' active' : '');
+    btn.textContent = String(entry);
+    btn.addEventListener('click', () => goToMarketPage(entry));
+    marketPageNumbersEl.appendChild(btn);
+  });
+  if (marketPageSummaryEl) {
+    marketPageSummaryEl.textContent = t('pokeIdle.marketPageSummary')
+      .replace('{page}', marketCurrentPage)
+      .replace('{totalPages}', totalPages)
+      .replace('{n}', totalCount);
+  }
+}
+
+marketPagePrevBtn?.addEventListener('click', () => goToMarketPage(marketCurrentPage - 1));
+marketPageNextBtn?.addEventListener('click', () => goToMarketPage(marketCurrentPage + 1));
+
+// `resetPage` true (default): un filtro/búsqueda/orden/categoría nuevo —
+// vuelve a la página 1. `resetPage` false: navegación de página (viene de
+// goToMarketPage, que ya calculó/clampeó marketCurrentPage).
+function renderMarketResults({ resetPage = true } = {}) {
   const listings = getMarketFilteredListings();
+  if (resetPage) marketCurrentPage = 1;
   marketRenderedListings = new Map();
   marketResultsEl.classList.toggle('market-view-list', marketViewMode === 'list');
   marketResultsEl.classList.toggle('market-view-grid', marketViewMode !== 'list');
@@ -5324,15 +5404,19 @@ function renderMarketResults() {
   if (!listings.length) {
     marketStatusEl.textContent = t('pokeIdle.marketNoResults');
     marketResultsEl.innerHTML = `<div class="market-empty-state">${t('pokeIdle.marketNoResults')}</div>`;
+    updateMarketPagination(0);
     return;
   }
 
+  const totalPages = Math.max(1, Math.ceil(listings.length / MARKET_PAGE_SIZE));
+  if (marketCurrentPage > totalPages) marketCurrentPage = totalPages;
+  const pageStart = (marketCurrentPage - 1) * MARKET_PAGE_SIZE;
   marketStatusEl.textContent = t('pokeIdle.marketResultsCount').replace('{n}', listings.length);
   let rendered = 0;
   let failed = 0;
-  listings.slice(0, 60).forEach((listing, index) => {
+  listings.slice(pageStart, pageStart + MARKET_PAGE_SIZE).forEach((listing, index) => {
     try {
-      const listingKey = marketListingRenderKey(listing, index);
+      const listingKey = marketListingRenderKey(listing, pageStart + index);
       marketRenderedListings.set(listingKey, listing);
       marketResultsEl.appendChild(renderMarketCard(listing, {
         onOpen: openMarketListing,
@@ -5354,9 +5438,15 @@ function renderMarketResults() {
   if (!rendered) {
     marketResultsEl.innerHTML = `<div class="market-empty-state">${t('pokeIdle.marketRenderFailed')}</div>`;
   }
+  updateMarketPagination(listings.length);
 }
 
-async function loadMarketListings(forceRefresh = false) {
+// `preservePage`: true for anything that's re-fetching the SAME query
+// (auto-refresh, the manual Actualizar button, post-buy inventory syncs) so
+// browsing page 5+ doesn't silently get yanked back to page 1 on every
+// refresh cycle. false (default) is for genuinely new queries (category
+// switch), where starting over at page 1 is the right call.
+async function loadMarketListings(forceRefresh = false, { preservePage = false } = {}) {
   if (marketLoadInFlight) return;
   const accountId = marketAccountSelect.value;
   if (!accountId) {
@@ -5411,7 +5501,7 @@ async function loadMarketListings(forceRefresh = false) {
   await ensureItemCatalogRenderer();
   await renderMarketPurchaseHistory();
   if (loadToken !== marketLoadToken) return;
-  renderMarketResults();
+  renderMarketResults({ resetPage: !preservePage });
   scanMarketDeals(marketListingsCache);
   renderMarketHealth();
 }
@@ -5439,7 +5529,7 @@ marketDealNotifyInput?.addEventListener('change', () => {
   }
   setMarketPrefs({ dealNotify: marketDealNotifyInput.checked });
 });
-marketRefreshBtn.addEventListener('click', () => loadMarketListings(true));
+marketRefreshBtn.addEventListener('click', () => loadMarketListings(true, { preservePage: true }));
 marketCategoriesEl.querySelectorAll('.poke-market-cat').forEach((btn) => {
   btn.addEventListener('click', () => {
     marketCategoriesEl.querySelectorAll('.poke-market-cat').forEach((item) => item.classList.remove('active'));
@@ -5474,7 +5564,7 @@ marketDetailBuyBtn.addEventListener('click', async () => {
     await syncMarketInventoryAfterBuy(marketSelectedListing, marketSelectedAccountId, res);
     await renderMarketPurchaseHistory();
     marketDetailStatusEl.textContent = marketStatusEl.textContent;
-    await loadMarketListings(true);
+    await loadMarketListings(true, { preservePage: true });
   } else {
     marketDetailBuyBtn.disabled = false;
     marketDetailBuyBtn.textContent = t('pokeIdle.marketBuy');

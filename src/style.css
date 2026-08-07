@@ -2799,6 +2799,63 @@ html, body {
   font-size: 12px;
 }
 
+.market-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 14px 0 4px;
+  flex-wrap: wrap;
+}
+
+.market-page-nav,
+.market-page-btn {
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.market-page-nav:hover,
+.market-page-btn:hover {
+  filter: brightness(1.15);
+}
+
+.market-page-nav:disabled {
+  opacity: 0.35;
+  cursor: default;
+  filter: none;
+}
+
+.market-page-numbers {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.market-page-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+}
+
+.market-page-ellipsis {
+  color: var(--muted);
+  padding: 0 2px;
+}
+
+.market-page-summary {
+  text-align: center;
+  margin: 0;
+}
+
 .market-detail-body {
   display: flex;
   flex-direction: column;

@@ -12,6 +12,16 @@ const AUTH_HEADER_JS = `(() => {
   } catch (e) { return {}; }
 })()`;
 
+// Confirmed live (a temporary debug log, since removed): GET
+// /api/game/market?category=X returns EVERY listing in one response — no
+// page/limit/offset param is sent, and the payload has no pagination field
+// at all (checked its top-level keys: charId, listings, mine, requests,
+// myRequests, offersIn, myOffers, history, blacklist, catalog — nothing
+// page-shaped). Confirmed with real numbers: category=All returned 11,489
+// listings, category=Items returned ~2,300, both in a single call. So
+// nothing needs to be fetched again here — the renderer-side render cap
+// (see renderMarketResults in src/renderer.js) is what was hiding results,
+// not this fetch.
 function fetchListingsScript(category) {
   const cat = MARKET_CATEGORIES.includes(category) ? category : 'All';
   return `(async () => {
