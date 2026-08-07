@@ -4,6 +4,10 @@ test-results/
 *.log
 .tmp-game-js/
 .tmp-justpokedex/
+.tmp_poke/
+output/
+/err.txt
+/out.txt
 
 # Android
 android/.gradle/
