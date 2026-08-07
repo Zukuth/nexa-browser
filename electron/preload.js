@@ -120,6 +120,7 @@ contextBridge.exposeInMainWorld('api', {
   stopNetLog: () => ipcRenderer.invoke('diagnostics:stopNetLog'),
   getStabilityAccountState: (id) => ipcRenderer.invoke('stability:getAccountState', { id }),
   manualReconnectAccount: (id) => ipcRenderer.invoke('stability:manualReconnect', { id }),
+  testStabilityNetwork: (id) => ipcRenderer.invoke('stability:testNetwork', { id }),
   onStabilityUpdate: (cb) => ipcRenderer.on('stability:update', (_e, data) => cb(data)),
   optimizeMemory: () => ipcRenderer.invoke('memory:optimize'),
   deepCleanMemory: () => ipcRenderer.invoke('memory:deepClean'),

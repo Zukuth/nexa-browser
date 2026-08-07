@@ -117,7 +117,8 @@ const DEFAULT_DATA = {
       autoRefresh: false,
       refreshSeconds: 15,
       dealMaxPrice: 0,
-      dealNotify: true
+      dealNotify: true,
+      dealsOnly: false
     },
     // Stability/connection-manager overhaul — everything here defaults to
     // off/safe so existing installs behave exactly as before until a user

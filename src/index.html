@@ -919,6 +919,16 @@
           </div>
         </div>
         <div class="market-filter-card">
+          <div class="settings-row market-toggle-row">
+            <span data-i18n="pokeIdle.marketDealsOnly">Solo ofertas</span>
+            <label class="switch">
+              <input type="checkbox" id="market-deals-only" />
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div id="market-deals-hint" class="settings-hint" data-i18n="pokeIdle.marketDealsOnlyHint">
+            Muestra publicaciones muy por debajo de su precio típico (según el historial de ventas que Nexa va observando): barato = 25% o más abajo, oferta = 100% o más abajo del valor real.
+          </div>
           <div id="market-iv-filter" class="settings-row" style="display:none;">
             <span data-i18n="pokeIdle.minIv">IV mínimo</span>
             <input type="number" id="market-iv-min" min="0" max="192" value="0" style="width:70px;" />
@@ -1156,6 +1166,14 @@
                 <p id="stability-account-status" data-i18n="stability.accountStatusEmpty">Sin datos todavía — activá la recuperación de conexión arriba.</p>
               </div>
               <button type="button" id="stability-manual-reconnect" data-i18n="stability.manualReconnect">Reconectar cuenta</button>
+            </div>
+            <div class="poke-eco-benchmark-card">
+              <div>
+                <strong data-i18n="stability.networkTestTitle">Test de red</strong>
+                <p data-i18n="stability.networkTestHint">Revisa tu conexión con el servidor del juego en este momento (red, DNS, HTTPS) — el mismo chequeo que corre solo el Nivel 1 de recuperación, pero a pedido.</p>
+              </div>
+              <button type="button" id="stability-test-network" data-i18n="stability.networkTestRun">Probar conexión</button>
+              <div id="stability-network-test-result" class="poke-eco-benchmark-result" data-i18n="pokeIdle.ecoBenchmarkEmpty">Sin medición todavía.</div>
             </div>
             <div class="poke-eco-benchmark-card">
               <div>

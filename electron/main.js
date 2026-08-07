@@ -3710,11 +3710,30 @@ ipcMain.handle('pokeFormulas:getItemCatalog', async () => {
   return gameTelemetry.getItemCatalogArray();
 });
 
+// Every Market/Tienda/Depot/Venta-masiva/Familia handler below assumes the
+// account is actually ON poke.idleworld.online right now — market.js's
+// injected scripts use relative fetch('/api/game/...') URLs, which only
+// resolve against that origin. An account sitting on the login page,
+// about:blank, or literally any other site (these are general-purpose
+// browser tabs, not exclusively game tabs) made that fetch throw "Failed
+// to parse URL from /api/game/..." straight into the renderer — confirmed
+// live. This guard turns that into a normal { ok: false } result with a
+// clear message, the same way the market-alert background loop already
+// checks isGameUrl() before touching a webContents (see startMarketAlertLoop).
+function requireGameWebContents(id) {
+  const wc = views.get(id);
+  if (!wc || wc.isDestroyed()) return { error: 'La cuenta no está abierta' };
+  if (!gameTelemetry.isGameUrl(wc.getURL())) {
+    return { error: 'Esta cuenta no está en el juego ahora mismo — abrí Poke Idle World en esa pestaña primero.' };
+  }
+  return { wc };
+}
+
 // Market tab — browse/buy straight from the account's own session, no travel
 // to an in-game NPC needed. See electron/market.js for the confirmed API shape.
 ipcMain.handle('market:getListings', async (_e, { id, category }) => {
-  const wc = views.get(id);
-  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  const { wc, error } = requireGameWebContents(id);
+  if (error) return { ok: false, error };
   try {
     return await wc.executeJavaScript(market.fetchListingsScript(category));
   } catch (e) {
@@ -3730,8 +3749,8 @@ ipcMain.handle('market:getListings', async (_e, { id, category }) => {
 const purchaseInFlight = new Set();
 
 ipcMain.handle('market:buy', async (_e, { id, listing }) => {
-  const wc = views.get(id);
-  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  const { wc, error } = requireGameWebContents(id);
+  if (error) return { ok: false, error };
   purchaseInFlight.add(id);
   try {
   const normalizedListing = listing ? {
@@ -3860,8 +3879,8 @@ ipcMain.handle('market:buy', async (_e, { id, listing }) => {
 // no UI-click simulation required), so this is just fetch + POST, sharing
 // purchaseInFlight with the Global Market purchase-in-flight guard.
 ipcMain.handle('shop:get', async (_e, { id }) => {
-  const wc = views.get(id);
-  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  const { wc, error } = requireGameWebContents(id);
+  if (error) return { ok: false, error };
   try {
     return await wc.executeJavaScript(market.fetchShopScript());
   } catch (e) {
@@ -3870,8 +3889,8 @@ ipcMain.handle('shop:get', async (_e, { id }) => {
 });
 
 ipcMain.handle('shop:buy', async (_e, { id, ballId, itemId, qty }) => {
-  const wc = views.get(id);
-  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  const { wc, error } = requireGameWebContents(id);
+  if (error) return { ok: false, error };
   const qtyNum = Number(qty);
   if (!Number.isInteger(qtyNum) || qtyNum < 1) return { ok: false, error: 'Cantidad inválida' };
   if (ballId == null && itemId == null) return { ok: false, error: 'Falta el ítem a comprar' };
@@ -3895,8 +3914,9 @@ ipcMain.handle('shop:buy', async (_e, { id, ballId, itemId, qty }) => {
 // a locked item/pokemon must never sell even by mistake.
 ipcMain.handle('items:sell', async (_e, { id, items }) => {
   const account = getAccount(id);
-  const wc = views.get(id);
-  if (!account || !wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  if (!account) return { ok: false, error: 'La cuenta no está abierta' };
+  const { wc, error } = requireGameWebContents(id);
+  if (error) return { ok: false, error };
   if (!Array.isArray(items) || !items.length) return { ok: false, error: 'Nada para vender' };
   const lockedIds = new Set(account.sellLockItemIds || []);
   const filtered = items.filter((it) => it && Number.isInteger(it.itemId) && !lockedIds.has(it.itemId) && Number.isInteger(it.qty) && it.qty > 0);
@@ -3913,8 +3933,9 @@ ipcMain.handle('items:sell', async (_e, { id, items }) => {
 
 ipcMain.handle('pokemon:sell', async (_e, { id, pokeIds }) => {
   const account = getAccount(id);
-  const wc = views.get(id);
-  if (!account || !wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  if (!account) return { ok: false, error: 'La cuenta no está abierta' };
+  const { wc, error } = requireGameWebContents(id);
+  if (error) return { ok: false, error };
   if (!Array.isArray(pokeIds) || !pokeIds.length) return { ok: false, error: 'Nada para vender' };
   const lockedIds = new Set(account.sellLockPokeIds || []);
   const filtered = pokeIds.map(String).filter((pid) => !lockedIds.has(pid));
@@ -3948,8 +3969,8 @@ ipcMain.handle('pokemon:sell', async (_e, { id, pokeIds }) => {
 // own WebSocket (poke-store/poke-withdraw), mirroring how sell/teleport
 // already work for each of those two systems respectively.
 ipcMain.handle('depot:get', async (_e, { id }) => {
-  const wc = views.get(id);
-  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  const { wc, error } = requireGameWebContents(id);
+  if (error) return { ok: false, error };
   try {
     return await wc.executeJavaScript(market.fetchDepotScript());
   } catch (e) {
@@ -3958,8 +3979,8 @@ ipcMain.handle('depot:get', async (_e, { id }) => {
 });
 
 ipcMain.handle('depot:moveItem', async (_e, { id, itemId, dir }) => {
-  const wc = views.get(id);
-  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  const { wc, error } = requireGameWebContents(id);
+  if (error) return { ok: false, error };
   if (!Number.isInteger(itemId) || (dir !== 'store' && dir !== 'withdraw')) return { ok: false, error: 'Datos inválidos' };
   purchaseInFlight.add(id);
   try {
@@ -3972,8 +3993,8 @@ ipcMain.handle('depot:moveItem', async (_e, { id, itemId, dir }) => {
 });
 
 ipcMain.handle('depot:movePoke', async (_e, { id, pokeId, dir }) => {
-  const wc = views.get(id);
-  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  const { wc, error } = requireGameWebContents(id);
+  if (error) return { ok: false, error };
   if (!pokeId || (dir !== 'store' && dir !== 'withdraw')) return { ok: false, error: 'Datos inválidos' };
   purchaseInFlight.add(id);
   try {
@@ -4000,8 +4021,8 @@ ipcMain.handle('depot:movePoke', async (_e, { id, pokeId, dir }) => {
 // wait-for-the-real-frame pattern as pokemon sell/depot, reusing the now-
 // generic waitForFrame() instead of a fixed delay.
 ipcMain.handle('family:get', async (_e, { id }) => {
-  const wc = views.get(id);
-  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  const { wc, error } = requireGameWebContents(id);
+  if (error) return { ok: false, error };
   try {
     const waitPromise = gameTelemetry.waitForFrame(id, 'family');
     const sent = await wc.executeJavaScript(sendGameSocketFrameScript({ type: 'family-get' }));
@@ -4014,8 +4035,8 @@ ipcMain.handle('family:get', async (_e, { id }) => {
 });
 
 ipcMain.handle('family:moveItem', async (_e, { id, itemId, quantity, dir }) => {
-  const wc = views.get(id);
-  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  const { wc, error } = requireGameWebContents(id);
+  if (error) return { ok: false, error };
   if (!Number.isInteger(itemId) || !Number.isInteger(quantity) || quantity < 1 || (dir !== 'deposit' && dir !== 'withdraw')) {
     return { ok: false, error: 'Datos inválidos' };
   }
@@ -4034,8 +4055,8 @@ ipcMain.handle('family:moveItem', async (_e, { id, itemId, quantity, dir }) => {
 });
 
 ipcMain.handle('family:movePoke', async (_e, { id, pokeId, dir }) => {
-  const wc = views.get(id);
-  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  const { wc, error } = requireGameWebContents(id);
+  if (error) return { ok: false, error };
   if (!pokeId || (dir !== 'deposit' && dir !== 'withdraw')) return { ok: false, error: 'Datos inválidos' };
   purchaseInFlight.add(id);
   try {
@@ -4446,6 +4467,15 @@ async function runRecoveryLevel({ accountId, level, wc, reason }) {
 ipcMain.handle('stability:getAccountState', (_e, { id }) => {
   if (!connectionManagers.has(id)) return null;
   return connectionManagers.get(id).getState();
+});
+
+// On-demand "test my connection" for the Estabilidad tab — same probe
+// (network interface / DNS / HTTPS reachability to the game's own host)
+// that Level 1 recovery already runs automatically; this just exposes it
+// as a manual, on-request check so a user can see it directly instead of
+// having to wait for a freeze to trigger it.
+ipcMain.handle('stability:testNetwork', async (_e, { id }) => {
+  return await networkHealth.checkAccountNetwork(id, { hostname: 'poke.idleworld.online' });
 });
 
 ipcMain.handle('stability:manualReconnect', (_e, { id }) => {

@@ -2658,6 +2658,13 @@ html, body {
   color: #86efac;
 }
 
+.market-chip-price-super {
+  background: rgba(249, 115, 22, 0.18);
+  border-color: rgba(249, 115, 22, 0.35);
+  color: #fdba74;
+  font-weight: 700;
+}
+
 .market-chip-price-normal {
   background: rgba(148, 163, 184, 0.12);
   border-color: rgba(148, 163, 184, 0.22);
@@ -2787,6 +2794,17 @@ html, body {
   color: var(--muted);
   text-align: center;
   background: rgba(255, 255, 255, 0.02);
+}
+
+/* .hidden has no generic rule in this stylesheet — every use is scoped
+   per-element (see .dropdown-menu.hidden, #findbar.hidden, etc. above).
+   #poke-settings-empty never had its own, so toggling the class in JS
+   (renderPokeAccountSettings) never actually hid it — it showed
+   "No hay cuentas disponibles" at all times, even with a real account
+   selected. Confirmed live: the JS state was always correct, only the CSS
+   was missing. */
+.market-empty-state.hidden {
+  display: none;
 }
 
 .market-render-warning {

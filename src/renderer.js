@@ -170,6 +170,8 @@ const stabilityLastResortReloadEl = document.getElementById('stability-last-reso
 const stabilityNotifyEl = document.getElementById('stability-notify');
 const stabilityAccountStatusEl = document.getElementById('stability-account-status');
 const stabilityManualReconnectBtn = document.getElementById('stability-manual-reconnect');
+const stabilityTestNetworkBtn = document.getElementById('stability-test-network');
+const stabilityNetworkTestResultEl = document.getElementById('stability-network-test-result');
 const stabilityExportReportBtn = document.getElementById('stability-export-report');
 const stabilityStartNetlogBtn = document.getElementById('stability-start-netlog');
 const stabilityStopNetlogBtn = document.getElementById('stability-stop-netlog');
@@ -351,6 +353,7 @@ const marketStatusEl = document.getElementById('market-status');
 const marketSearchInput = document.getElementById('market-search');
 const marketSortSelect = document.getElementById('market-sort');
 const marketRarityFilterSelect = document.getElementById('market-rarity-filter');
+const marketDealsOnlyInput = document.getElementById('market-deals-only');
 const marketShowEpicInput = document.getElementById('market-show-epic');
 const marketShowLegendaryInput = document.getElementById('market-show-legendary');
 const marketShowDollarInput = document.getElementById('market-show-dollar');
@@ -1795,6 +1798,37 @@ stabilityManualReconnectBtn?.addEventListener('click', async () => {
     stabilityManualReconnectBtn.disabled = false;
   }
 });
+// Turns the raw checkAccountNetwork() result (network.js — the same probe
+// Level 1 recovery already runs on its own) into a plain-language verdict,
+// worst-problem-first: no point saying "DNS is fine" if there's no network
+// interface at all. Points at "Reconectar cuenta" as the fix action — reuses
+// the existing recovery levels instead of inventing a new one, since the
+// test IS exactly what that button's own Level 1 check already does.
+function formatNetworkTestResult(result) {
+  if (!result) return t('stability.networkTestFailed');
+  if (result.electronOnline === false) return `🔴 ${t('stability.networkTestNoInternet')}`;
+  if (!result.dnsResolved) return `🔴 ${t('stability.networkTestDnsFailed')}`;
+  if (!result.httpsReachable) {
+    return `🟠 ${t('stability.networkTestHttpsFailed', { detail: result.lastErrorDescription || result.httpsStatus || '?' })}`;
+  }
+  return `🟢 ${t('stability.networkTestOk', { status: result.httpsStatus ?? '?', n: (result.resolvedAddresses || []).length })}`;
+}
+
+stabilityTestNetworkBtn?.addEventListener('click', async () => {
+  const account = selectedPokeSettingsAccount();
+  if (!account || !stabilityNetworkTestResultEl) return;
+  stabilityTestNetworkBtn.disabled = true;
+  stabilityNetworkTestResultEl.textContent = t('stability.networkTestRunning');
+  try {
+    const result = await window.api.testStabilityNetwork(account.id);
+    stabilityNetworkTestResultEl.textContent = formatNetworkTestResult(result);
+  } catch (err) {
+    stabilityNetworkTestResultEl.textContent = t('stability.networkTestFailed');
+  } finally {
+    stabilityTestNetworkBtn.disabled = false;
+  }
+});
+
 stabilityExportReportBtn?.addEventListener('click', async () => {
   try {
     const report = await window.api.exportDiagnosticsReport();
@@ -2879,6 +2913,15 @@ function resolveSpriteDexId(pokeId, name) {
     rest = match[1];
     if (nameMap.has(rest)) return nameMap.get(rest);
   }
+  // Some forms name the base species FIRST and the form descriptor last
+  // instead — confirmed live with a game update that added "Castform Fire"
+  // (base "Castform", suffix "Fire"), the opposite order from "Mega
+  // Blastoise"/"Brave Blastoise" above. Try stripping a trailing word too.
+  rest = name;
+  while ((match = rest.match(/^(.+)[\s-][^\s-]+$/))) {
+    rest = match[1];
+    if (nameMap.has(rest)) return nameMap.get(rest);
+  }
   return null;
 }
 
@@ -3668,12 +3711,15 @@ depotTabsEl?.addEventListener('click', (e) => {
   depotPokemonPanelEl.classList.toggle('hidden', depotActiveTab !== 'pokemon');
   depotFamilyItemsPanelEl.classList.toggle('hidden', depotActiveTab !== 'family-items');
   depotFamilyPokemonPanelEl.classList.toggle('hidden', depotActiveTab !== 'family-pokemon');
-  if (depotActiveTab === 'family-items' || depotActiveTab === 'family-pokemon') renderDepotFamily({ forceRefresh: !depotFamilyLoaded });
+  // Always refetch on entering a family tab (not just the first time this
+  // session) — a stale "no family" cached from before the user joined one
+  // in-game would otherwise never self-correct until they hit "Actualizar"
+  // by hand.
+  if (depotActiveTab === 'family-items' || depotActiveTab === 'family-pokemon') renderDepotFamily({ forceRefresh: true });
 });
 
 depotAccountEl?.addEventListener('change', () => {
   depotCache = null;
-  depotFamilyLoaded = false;
   renderDepotItems({ forceRefresh: true });
   renderDepotPokemon();
   if (depotActiveTab === 'family-items' || depotActiveTab === 'family-pokemon') renderDepotFamily({ forceRefresh: true });
@@ -3824,15 +3870,12 @@ depotBoxWrapEl?.addEventListener('click', handleDepotPokeClick);
 // the item's FULL current quantity per click (no quantity prompt) — same
 // simplification already used for the individual Depot's item columns,
 // kept consistent rather than adding a one-off prompt just for this tab.
-let depotFamilyLoaded = false;
-
 async function renderDepotFamily({ forceRefresh } = {}) {
   const accountId = depotAccountEl.value;
   if (!accountId) return;
   if (forceRefresh) {
     await window.api.getFamily(accountId);
     await refreshGameStatsNow();
-    depotFamilyLoaded = true;
   }
   const gs = gameStats[accountId];
   const family = gs && gs.family;
@@ -4436,7 +4479,8 @@ const MARKET_PREFS_DEFAULTS = {
   autoRefresh: false,
   refreshSeconds: 15,
   dealMaxPrice: 0,
-  dealNotify: true
+  dealNotify: true,
+  dealsOnly: false
 };
 let marketPrefs = { ...MARKET_PREFS_DEFAULTS };
 
@@ -4501,7 +4545,8 @@ function syncMarketPrefsFromState() {
     autoRefresh: stored.autoRefresh ?? MARKET_PREFS_DEFAULTS.autoRefresh,
     refreshSeconds: Math.min(120, Math.max(5, Number(stored.refreshSeconds ?? MARKET_PREFS_DEFAULTS.refreshSeconds) || MARKET_PREFS_DEFAULTS.refreshSeconds)),
     dealMaxPrice: Math.max(0, Number(stored.dealMaxPrice ?? MARKET_PREFS_DEFAULTS.dealMaxPrice) || 0),
-    dealNotify: stored.dealNotify ?? MARKET_PREFS_DEFAULTS.dealNotify
+    dealNotify: stored.dealNotify ?? MARKET_PREFS_DEFAULTS.dealNotify,
+    dealsOnly: stored.dealsOnly ?? MARKET_PREFS_DEFAULTS.dealsOnly
   };
   if (!marketPrefs.showDollar && !marketPrefs.showDiamonds) {
     marketPrefs.showDollar = MARKET_PREFS_DEFAULTS.showDollar;
@@ -4838,6 +4883,43 @@ function marketPriceSignal(listing) {
   return { type: 'normal', label: `${t('pokeIdle.marketPriceNormal')} ${pct >= 0 ? '+' : '-'}${absPct}%`, baseline, pct, sample: values.length, context };
 }
 
+// "Ofertas" (filtro "Solo ofertas") — reusa la mediana que ya calcula
+// marketPriceSignal() para la insignia de cada carta. dealPct es "cuánto
+// más vale de lo que están pidiendo" (no "cuánto descuento tiene el
+// precio") — a mitad de precio (ratio 0.5) da 100%, que es exactamente la
+// lectura "vale el doble de lo que piden" que se pidió para esta sección.
+// Cualquier listing que ya califica como 'cheap' en marketPriceSignal
+// (25%+ por debajo del típico) entra en el filtro; los que además llegan a
+// 100%+ se destacan aparte en la insignia (ver renderMarketCard).
+function marketListingDealPct(listing) {
+  const signal = marketPriceSignal(listing);
+  if (!signal || signal.type !== 'cheap' || !signal.baseline) return null;
+  const price = marketListingPrice(listing);
+  if (!price) return null;
+  const ratio = price / signal.baseline;
+  if (!ratio) return null;
+  return Math.round((1 / ratio - 1) * 100);
+}
+
+function marketListingIsDeal(listing) {
+  return marketListingDealPct(listing) != null;
+}
+
+// Distinguishes the two deal tiers on the badge itself: a plain 'cheap'
+// signal keeps its existing "Barato -X%" label, but once it crosses the
+// 100%+ threshold it gets its own class/label so it stands out in the
+// "Solo ofertas" list instead of looking identical to a 26%-off listing.
+function marketDealBadgeInfo(listing, priceSignal) {
+  if (!priceSignal) return null;
+  if (priceSignal.type === 'cheap') {
+    const dealPct = marketListingDealPct(listing);
+    if (dealPct != null && dealPct >= 100) {
+      return { cls: 'super', label: `🔥 ${t('pokeIdle.marketPriceSuperDeal')} +${dealPct}%`, context: priceSignal.context };
+    }
+  }
+  return { cls: priceSignal.type, label: priceSignal.label, context: priceSignal.context };
+}
+
 function marketListingStableId(listing) {
   return String(listing?.listingId ?? listing?.marketId ?? listing?.id ?? listing?.refId ?? marketListingRenderKey(listing));
 }
@@ -4940,6 +5022,7 @@ function shouldShowMarketListing(listing, { includeQuery = true } = {}) {
       if (marketRaritySortKey(listing) !== marketRarityKeyFromText(marketRarityFilterSelect.value)) return false;
     }
   }
+  if (marketPrefs.dealsOnly && !marketListingIsDeal(listing)) return false;
   if (includeQuery) {
     const query = normalizeTextForFilter(marketSearchInput.value);
     if (query && !marketListingSearchBlob(listing).includes(query)) return false;
@@ -4981,6 +5064,7 @@ function syncMarketFilterControls() {
   if (marketRefreshSecondsInput) marketRefreshSecondsInput.value = marketPrefs.refreshSeconds ?? MARKET_PREFS_DEFAULTS.refreshSeconds;
   if (marketDealMaxPriceInput) marketDealMaxPriceInput.value = marketPrefs.dealMaxPrice ?? 0;
   if (marketDealNotifyInput) marketDealNotifyInput.checked = marketPrefs.dealNotify !== false;
+  if (marketDealsOnlyInput) marketDealsOnlyInput.checked = !!marketPrefs.dealsOnly;
   if (marketRarityFilterSelect && !marketRarityFilterSelect.value) marketRarityFilterSelect.value = 'all';
   const rarityRow = marketRarityFilterSelect && marketRarityFilterSelect.closest('.settings-row');
   const epicRow = marketShowEpicInput && marketShowEpicInput.closest('.settings-row');
@@ -5098,6 +5182,7 @@ function renderMarketCard(listing, { onBuy, onOpen, listingKey } = {}) {
   const currencySymbol = marketCurrencySymbol(currency);
   const currencyLabel = marketCurrencyLabel(currency);
   const priceSignal = marketPriceSignal(listing);
+  const dealBadge = marketDealBadgeInfo(listing, priceSignal);
   const category = marketListingCategory(listing);
   const rarity = marketListingRarity(listing);
   const meta = marketListingMetaLine(listing);
@@ -5111,7 +5196,7 @@ function renderMarketCard(listing, { onBuy, onOpen, listingKey } = {}) {
         ${category ? `<span class="market-chip">${escapeHtmlClient(category)}</span>` : ''}
         ${rarity ? `<span class="market-chip market-chip-rarity">${escapeHtmlClient(rarity)}</span>` : ''}
         ${owner ? `<span class="market-chip market-chip-muted">${escapeHtmlClient(owner)}</span>` : ''}
-        ${priceSignal ? `<span class="market-chip market-chip-price-${escapeHtmlClient(priceSignal.type)}" title="${escapeHtmlClient(priceSignal.context)}">${escapeHtmlClient(priceSignal.label)}</span>` : ''}
+        ${dealBadge ? `<span class="market-chip market-chip-price-${escapeHtmlClient(dealBadge.cls)}" title="${escapeHtmlClient(dealBadge.context)}">${escapeHtmlClient(dealBadge.label)}</span>` : ''}
       </div>
       ${iv != null ? `<div class="market-iv">IV ${iv}/192</div>` : ''}
       ${meta.length ? `<div class="market-meta-line">${meta.map((item) => `<span>${escapeHtmlClient(item)}</span>`).join('')}</div>` : ''}
@@ -5175,6 +5260,7 @@ function renderMarketDetail(listing, accountId) {
   const currencySymbol = marketCurrencySymbol(currency);
   const currencyLabel = marketCurrencyLabel(currency);
   const priceSignal = marketPriceSignal(listing);
+  const dealBadge = marketDealBadgeInfo(listing, priceSignal);
   const rows = [
     [t('pokeIdle.marketSeller'), marketListingOwner(listing) || '—'],
     [t('pokeIdle.marketPublished'), marketListingPublished(listing) ? formatRelativeTime(marketListingPublished(listing)) : '—'],
@@ -5198,7 +5284,7 @@ function renderMarketDetail(listing, accountId) {
       <div class="market-detail-copy">
         <div class="market-detail-title">${escapeHtmlClient(marketListingName(listing))}</div>
         <div class="market-detail-price">${currencySymbol}${formatCompactNumber(price)} <span class="market-currency-label">${escapeHtmlClient(currencyLabel)}</span></div>
-        ${priceSignal ? `<div class="market-detail-price-signal market-chip-price-${escapeHtmlClient(priceSignal.type)}" title="${escapeHtmlClient(priceSignal.context)}">${escapeHtmlClient(priceSignal.label)} · ${escapeHtmlClient(priceSignal.context)}</div>` : ''}
+        ${dealBadge ? `<div class="market-detail-price-signal market-chip-price-${escapeHtmlClient(dealBadge.cls)}" title="${escapeHtmlClient(dealBadge.context)}">${escapeHtmlClient(dealBadge.label)} · ${escapeHtmlClient(dealBadge.context)}</div>` : ''}
         ${rarity ? `<div class="market-detail-rarity">${escapeHtmlClient(rarity)}</div>` : ''}
         ${iv != null ? `<div class="market-detail-iv">IV ${iv}/192</div>` : ''}
         ${marketListingDescription(listing) ? `<div class="market-detail-desc">${escapeHtmlClient(marketListingDescription(listing))}</div>` : `<div class="market-detail-desc market-detail-empty">${t('pokeIdle.marketNoResults')}</div>`}
@@ -5516,6 +5602,7 @@ marketSearchInput.addEventListener('input', renderMarketResults);
 marketSortSelect.addEventListener('change', renderMarketResults);
 marketRarityFilterSelect.addEventListener('change', renderMarketResults);
 marketIvMinInput.addEventListener('input', renderMarketResults);
+marketDealsOnlyInput?.addEventListener('change', () => setMarketPrefs({ dealsOnly: marketDealsOnlyInput.checked }));
 marketShowEpicInput.addEventListener('change', () => setMarketPrefs({ showEpic: marketShowEpicInput.checked }));
 marketShowLegendaryInput.addEventListener('change', () => setMarketPrefs({ showLegendary: marketShowLegendaryInput.checked }));
 marketShowDollarInput.addEventListener('change', () => setMarketPrefs({ showDollar: marketShowDollarInput.checked }));
