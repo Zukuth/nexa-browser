@@ -4,9 +4,9 @@
 
 Nexa Browser te deja abrir varias sesiones completamente aisladas del mismo sitio —distintas cuentas de Gmail, redes sociales, plataformas de trabajo, juegos online— todas al mismo tiempo, en una sola ventana, sin perfiles de Chrome separados ni ventanas de incógnito por todos lados.
 
-[![VirusTotal](https://img.shields.io/badge/VirusTotal-0%2F66%20detections-brightgreen?logo=virustotal&logoColor=white)](https://www.virustotal.com/gui/file/529da74d5400672edb009ce3ca8efff2a81dbab6c52e2b642e629056166f3bf6/detection)
+[![VirusTotal](https://img.shields.io/badge/VirusTotal-0%2F67%20detections-brightgreen?logo=virustotal&logoColor=white)](https://www.virustotal.com/gui/file/d83da03ae2fa7ca534f62d8492e80df823d1091b7421cfb6d48aa604a74c2da7/detection)
 
-**Escaneado en VirusTotal: 0/66 motores antivirus lo marcaron como malicioso** ([ver análisis completo](https://www.virustotal.com/gui/file/529da74d5400672edb009ce3ca8efff2a81dbab6c52e2b642e629056166f3bf6/detection)) — análisis hecho sobre `Nexa Browser-Setup-0.2.1-x64.exe`, el instalador tal cual se publica en [Releases](https://github.com/Zukuth/nexa-browser/releases/latest).
+**Escaneado en VirusTotal: 0/67 motores antivirus lo marcaron como malicioso** ([ver análisis completo](https://www.virustotal.com/gui/file/d83da03ae2fa7ca534f62d8492e80df823d1091b7421cfb6d48aa604a74c2da7/detection)) — análisis hecho sobre `Nexa-Browser-Setup-0.3.6-x64.exe`, **la última versión estable disponible**, tal cual se publica en [Releases](https://github.com/Zukuth/nexa-browser/releases/latest).
 
 ## Por qué instalarlo
 
@@ -66,15 +66,29 @@ Activalo en las cuentas que dejás en segundo plano (por ejemplo, un juego idle)
 
 ## 🎮 Poke Idle World — panel de herramientas integrado
 
-Para quienes juegan [Poke Idle World](https://poke.idleworld.online), Nexa Browser trae un panel propio (botón 🎮 en la barra superior) que lee en vivo los datos que el propio juego transmite — **de solo lectura: nunca automatiza capturas ni toca el captcha**.
+Para quienes juegan [Poke Idle World](https://poke.idleworld.online), Nexa Browser trae un panel propio (botón 🎮 en la barra superior) que lee en vivo los datos que el propio juego transmite — **de solo lectura: nunca automatiza capturas ni toca el captcha**. Todos los catálogos (ítems, Pokémon, evoluciones) se traen en vivo directo del juego, así que cualquier actualización que el juego reciba aparece automáticamente en estas herramientas, sin esperar una nueva versión de Nexa Browser.
 
+### Resumen y seguimiento en vivo
 - **📊 Resumen en vivo**: muertes/hora, XP/hora, oro/hora, capturas/hora y shinies, sumado en tiempo real por cada cuenta abierta.
-- **🧬 Calculadora de Growth/IV y Quality**: la fórmula real del juego, portada y verificada — elegí una captura o un Pokémon del equipo para autocompletar, sin tipear nada, y mirá el veredicto (Excepcional a Bajo) según el % de IV real.
-- **🏆 Tier List**: ranking del roster completo por percentil de stats base, con bono de Clan opcional. Al elegir un Pokémon se muestra su línea evolutiva y sus matchups de tipo más fuertes y más débiles.
-- **⚔️ Caza & XP**: XP/hora y oro/hora reales de cada especie cazable, con el multiplicador de daño de tu atacante actual contra cada tipo.
-- **💰 Drops en vivo**: todo lo que sueltan tus kills en la sesión actual, con ícono e valor real a precio NPC — separado por cuenta si tenés varias abiertas.
 - **✨ Capturas destacadas**: log en tiempo real de todo lo capturado en la sesión, con sprite, quality e IV.
-- **🔔 Alertas nativas**: notificaciones de Windows para shiny, capturas raras, desconexión/reconexión y pocas balls, configurables una por una.
+- **💰 Drops en vivo**: todo lo que sueltan tus kills en la sesión actual, con ícono e valor real a precio NPC — separado por cuenta si tenés varias abiertas.
+- **📈 Comparador de hunts**: sesión actual vs. la hunt anterior, más un historial de las últimas 20 hunts por cuenta (oro/hora, XP/hora, kills/hora).
+
+### Herramientas de análisis
+- **🧬 Calculadora de Growth/IV y Quality**: la fórmula real del juego, portada y verificada — elegí una captura o un Pokémon del equipo para autocompletar, sin tipear nada, y mirá el veredicto (Excepcional a Bajo) según el % de IV real.
+- **🏆 Tier List**: ranking del roster completo por percentil de stats base, con bono de Clan opcional, buscador por nombre y un campo para **ajustar el ranking a un nivel específico** (recalcula las stats reales a ese nivel, mismo estándar que usan las calculadoras de referencia de la comunidad). Al elegir un Pokémon se muestra su línea evolutiva completa y sus matchups de tipo más fuertes y más débiles.
+- **⚔️ Caza & XP**: XP/hora y oro/hora reales de cada especie cazable, con el multiplicador de daño de tu atacante actual contra cada tipo, buscador por nombre, y una columna opcional de "Poder a nivel X" para comparar presas ajustando por nivel.
+- **📖 Pokédex**: filtros de solo lectura por capturado/no capturado, por cuenta.
+
+### Comercio integrado (sin salir del navegador)
+- **🏪 Tienda portátil**: comprá Poké Balls, pociones y revives directo de la tienda de Mark, en lote, sin viajar al NPC.
+- **📤 Venta masiva protegida**: vendé ítems y Pokémon en lote desde el navegador, con un candado configurable por ítem/Pokémon para que nunca se vendan por error.
+- **📦 Depot portátil**: movimientos entre tu mochila/equipo y el Depot con un click — incluye el **Depot familiar** (ítems y Pokémon compartidos con tu familia en el juego), con buscador en las cuatro pestañas.
+- **🛒 Market global**: comprá y vendé directo del Market del juego, misma sesión y saldo de la cuenta elegida. Paginación real (se puede ver **todo** lo publicado, no solo los primeros resultados) y una sección de **Ofertas** que detecta automáticamente publicaciones muy por debajo de su valor típico, con insignia especial para las mejores oportunidades.
+
+### Alertas y estabilidad de conexión
+- **🔔 Alertas nativas**: notificaciones de Windows para shiny, capturas raras, desconexión/reconexión y pocas balls, configurables una por una — incluye un sniper de IV mínimo en el Market global.
+- **🩺 Panel de Estabilidad**: recuperación de conexión automática por niveles (revalidación de red, reconexión suave, reinyección de la captura de telemetría, aviso/recarga como último recurso), mantener la app activa en segundo plano, y un **Test de red a pedido** que revisa tu conexión con el servidor del juego (red, DNS, HTTPS) con un solo click.
 
 ## Instalación
 
@@ -116,53 +130,48 @@ Construido con [Electron](https://www.electronjs.org/) — motor Chromium real, 
 
 ## Changelog
 
-### v0.3.0 — Market Sniper, Optimizador de Memoria y Correcciones Mayores
+### v0.3.6 — Paridad completa con PIW-QOL, Market renovado, telemetría sin CDP y fix de seguridad
 
-#### Correcciones críticas
+Todo lo acumulado desde v0.3.0: siete etapas nuevas de herramientas para Poke Idle World, un cambio de fondo en cómo se captura la telemetría del juego, un Market global mucho más completo, una vulnerabilidad de seguridad real cerrada, y varios bugs encontrados y arreglados en uso real.
 
-**Saldo siempre mostraba "—"**
-El saldo de oro de cada cuenta se leía desde frames WebSocket del tipo `player` que el juego envía de forma constante, pero esas frames no se reconocían como fuente confiable. El renderer solo muestra datos provenientes de `visual-hud`, `visual-shop`, `visual` y `adjusted`. Se añadió un conjunto `WALLET_FRAME_TYPES` en `game-telemetry.js` que marca automáticamente como confiables las frames de tipo `player`, `balance`, `wallet`, `trainer` y `account`. El saldo ahora aparece en tiempo real desde que abrís la pestaña, sin necesidad de visitar la tienda ni recargar.
+#### Paridad completa con PIW-QOL (7 etapas nuevas)
 
-**Compras recargaban la página e interrumpían el farmeo**
-Después de cada compra exitosa en el Market, el sistema llamaba a `wc.reload()` para "refrescar el estado del juego". Esto cortaba el movimiento del personaje, reseteaba el nivel visible del Pokémon en pantalla y obligaba al usuario a esperar el re-login. Se eliminó esa llamada por completo. El ítem ahora llega al depósito vía sincronización WebSocket silenciosa, sin recargas ni interrupciones.
+Se portaron al navegador, de forma nativa (sin userscript de terceros), las herramientas que la comunidad ya usaba por afuera:
 
-**"Pestaña NaN" en el historial de compras**
-La función `displayName(account)` se llamaba sin pasar el índice del array, lo que resultaba en `undefined + 1 = NaN`. Se corrigió usando `findIndex` para obtener el índice real y pasarlo correctamente.
+- **Comparador de hunts**: sesión actual vs. la anterior, más historial de las últimas 20 hunts por cuenta.
+- **Pokédex de solo lectura**: filtro por capturado/no capturado, derivado de la colección real de cada cuenta.
+- **Favoritos de hunt + Teleporte**: guardá tus zonas de caza favoritas y viajá a ellas con un click — confirmado en vivo que el juego lo resuelve por WebSocket (`enter-hunt`), no por REST.
+- **Tienda portátil**: compra en lote de Poké Balls, pociones y revives sin viajar al NPC Mark.
+- **Venta masiva protegida**: vendé ítems y Pokémon en lote con un candado configurable por ítem/Pokémon, para que nunca se vendan por error — el servidor también revalida el candado del lado suyo, no solo la interfaz.
+- **Depot portátil (personal y familiar)**: movimientos entre mochila/equipo y el Depot con un click, incluida la sección compartida con tu familia en el juego (ítems y Pokémon), con buscador en las cuatro pestañas.
 
-**Botones X flotaban fuera de las tarjetas de alerta**
-Los badges y botones de cerrar en las tarjetas del Market usaban `position: absolute` con `z-index` alto, lo que los sacaba del flujo de `overflow: hidden` de la tarjeta y aparecían superpuestos sobre el modal. Se envolvieron en un `div.market-alert-header` con `display: flex`, eliminando el posicionamiento absoluto.
+#### Telemetría del juego: se saca el debugger de Chrome (CDP) del todo
 
----
+La captura de datos en tiempo real (Resumen, Drops, Capturas destacadas, etc.) usaba el Chrome DevTools Protocol (`wc.debugger.attach`) desde el principio. Un detach del debugger — confirmado en vivo, por ejemplo al abrir las DevTools reales sobre una cuenta — dejaba la telemetría de esa cuenta congelada hasta un reload completo, sin ningún mecanismo que la recuperara. Se reemplazó por un parche pasivo de `WebSocket.prototype` inyectado directamente en la página del juego (mismo enfoque que usan otras herramientas de la comunidad para este juego) — más liviano, sin la superficie de fallo del debugger. Migración validada en modo sombra antes del cambio real: 136/136 frames coincidieron exactamente contra la captura vieja, incluido el momento de mayor riesgo (un teleporte de hunt), y luego 240/240 y 382/382 frames sin huecos en dos sesiones de juego real ya con el mecanismo nuevo como único camino.
 
-#### Market Sniper — mejoras completas
+#### Market global renovado
 
-**Feed ampliado y TTL extendido**
-El feed de alertas pasó de 5 a **20 entradas**, y el tiempo de vida de cada alerta subió de 5 a **30 minutos**. Las alertas más viejas se descarten automáticamente al vencerse o cuando el feed se llena.
+- **Paginación real**: antes el navegador cortaba en 60 resultados sin avisar, aunque el contador de arriba mostrara el total real — confirmado en vivo que el propio juego ya manda **todo** en una sola llamada (11.489 publicaciones vistas en la categoría "All", sin ningún parámetro de página). Ahora se pagina del lado del cliente sobre esos datos, con navegación numerada.
+- **Sección de Ofertas**: nuevo filtro "Solo ofertas" que usa el historial de precios que Nexa ya viene observando por Pokémon/ítem — cualquier publicación 25% o más por debajo de su valor típico entra al filtro, y las que llegan a 100% o más ("vale el doble de lo que piden") se destacan con una insignia propia.
 
-**Filtro de precio máximo**
-Se agregó un campo "Precio máximo (sniper)" en la sección de Alertas. Si se configura un valor mayor que 0, el sniper solo genera alertas para Pokémon cuyo precio de venta en el Market esté por debajo de ese límite. Los listings más caros se ignoran silenciosamente, reduciendo el ruido en el feed.
+#### Estabilidad y diagnóstico
 
-**Click en notificación navega directo al Pokémon**
-Antes, hacer click en la notificación de escritorio de Windows solo abría la app. Ahora abre el panel lateral, desplaza automáticamente hasta la sección Market y resalta con un pulso visual azul (tres destellos) exactamente la tarjeta del Pokémon alertado. Desde ahí podés ver los detalles o comprarlo directamente.
+- **Test de red a pedido**: nueva tarjeta en el panel de Estabilidad con un botón "Probar conexión" que corre el mismo chequeo de red/DNS/HTTPS contra el servidor del juego que ya usa el Nivel 1 de recuperación automática, mostrando un veredicto en texto plano.
+- **Resolución de DNS corregida**: el test (y el chequeo automático de recuperación) usaba el resolvedor de DNS de Node, que en ciertas configuraciones de red da un falso negativo ("DNS roto") aunque el juego esté conectado y andando perfecto — confirmado en vivo, reproducido y corregido usando el mismo motor de red que usa el propio navegador (Chromium) en lugar del de Node.
+- **Depot familiar dejaba de reconocer la familia**: solo se pedían los datos reales al servidor la primera vez que se abría esa pestaña en toda la sesión — si esa primera vez pasaba antes de unirse a una familia en el juego, quedaba mostrando "no pertenece a ninguna familia" para siempre sin reintentar. Ahora se refresca cada vez que se entra a esa sección.
+- **Aviso falso de "No hay cuentas disponibles" en Ajustes**: se mostraba siempre, sin importar si había una cuenta seleccionada — la lógica en código ya estaba bien, faltaba la regla de estilo que ocultara el aviso.
+- **Error al usar Market/Tienda/Depot/Venta masiva/Familia con la cuenta fuera del juego**: si la pestaña estaba en el login, en blanco, o en cualquier otro sitio, esas herramientas tiraban un error técnico crudo en vez de un aviso entendible. Ahora se valida antes y se muestra un mensaje claro.
 
----
+#### Tier List y Caza & XP: buscador y ajuste por nivel
 
-#### Optimizador de memoria ⚡
+Se agregó un buscador por nombre y un campo de nivel a ambas herramientas — al indicar un nivel, el ranking/las comparaciones usan las stats reales calculadas a ese nivel en vez de solo stats base. Verificado en vivo contra la calculadora de referencia de la comunidad (piwtools.com.br) para usar exactamente el mismo estándar de cálculo (IV 21, calidad ~1.8), en vez de un supuesto sin confirmar.
 
-Se agregó un botón **⚡ Optimizar** en la barra de estado inferior. Al pulsarlo, el navegador limpia la caché HTTP y la Cache Storage de todas las sesiones activas sin cerrar ninguna cuenta ni borrar cookies, localStorage ni datos de sesión. Los usuarios siguen logueados y el farmeo no se interrumpe.
+#### Seguridad
 
-**Auto-optimización a las 24 horas**: si el navegador lleva más de 24 horas sin optimizar, el botón se ilumina en amarillo para avisar que hay memoria acumulada. La limpieza también se ejecuta automáticamente en segundo plano al llegar a ese umbral.
+Se cerró una vulnerabilidad real de tipo XSS: la función que escapa texto para insertarlo en la interfaz no escapaba comillas, lo que en teoría permitía que una publicación maliciosa del Market global (con una comilla en su nombre o ícono) inyectara código en el navegador. Corregido y verificado.
 
----
+#### Motor y proyecto
 
-#### Detector de personaje congelado
-
-Si una cuenta lleva más de 4 minutos sin registrar actividad (kills/XP = 0) estando conectada, el navegador pulsa la conexión WebSocket del juego mediante CDP para forzar la reconexión al servidor. También despacha los eventos `focus` y `nexa-reconnect` para despertar el ciclo de React del juego. El proceso es completamente silencioso — no hay notificación, no se recarga la página — y opera máximo una vez cada 5 minutos por cuenta.
-
----
-
-#### Otras mejoras
-
-- **URL por defecto**: las nuevas pestañas abren en `poke.idleworld.online/login` en lugar de Google.
-- **`fs.watch` en el archivo de datos**: si algo modifica el archivo de configuración fuera del proceso (un editor de texto, un script externo), el navegador detecta el cambio y registra una advertencia en consola.
-- **Eventos post-compra saneados**: se eliminaron `online` y `visibilitychange` de los eventos que el script de sincronización post-compra dispara en el contexto del juego. Esos eventos disparaban reconexiones WebSocket innecesarias.
+- **Electron actualizado a 43.3.0** y **electron-builder a 26.15.3** (0 vulnerabilidades conocidas en las herramientas de compilación, antes había 11).
+- **Cobertura de pruebas ampliada** a 215 tests automáticos.
+- **Windows como única plataforma**: se retira el soporte para Linux y el desarrollo inicial (nunca terminado) de una app nativa para Android — el proyecto se enfoca por completo en el navegador de escritorio para Windows.
