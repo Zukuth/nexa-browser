@@ -109,6 +109,7 @@ contextBridge.exposeInMainWorld('api', {
   sellItems: (id, items) => ipcRenderer.invoke('items:sell', { id, items }),
   sellPokemon: (id, pokeIds) => ipcRenderer.invoke('pokemon:sell', { id, pokeIds }),
   getDepot: (id) => ipcRenderer.invoke('depot:get', { id }),
+  getPokes: (id) => ipcRenderer.invoke('pokes:get', { id }),
   moveDepotItem: (id, itemId, dir) => ipcRenderer.invoke('depot:moveItem', { id, itemId, dir }),
   moveDepotPoke: (id, pokeId, dir) => ipcRenderer.invoke('depot:movePoke', { id, pokeId, dir }),
   getFamily: (id) => ipcRenderer.invoke('family:get', { id }),

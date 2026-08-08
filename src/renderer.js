@@ -3718,14 +3718,17 @@ depotTabsEl?.addEventListener('click', (e) => {
   // Always refetch on entering a family tab (not just the first time this
   // session) — a stale "no family" cached from before the user joined one
   // in-game would otherwise never self-correct until they hit "Actualizar"
-  // by hand.
+  // by hand. Same reasoning for the personal Pokémon tab: Equipo/Box only
+  // ever reflect whatever `pokes` frame happened to arrive passively, which
+  // can still be empty the first time this tab is opened this session.
+  if (depotActiveTab === 'pokemon') renderDepotPokemon({ forceRefresh: true });
   if (depotActiveTab === 'family-items' || depotActiveTab === 'family-pokemon') renderDepotFamily({ forceRefresh: true });
 });
 
 depotAccountEl?.addEventListener('change', () => {
   depotCache = null;
   renderDepotItems({ forceRefresh: true });
-  renderDepotPokemon();
+  renderDepotPokemon({ forceRefresh: true });
   if (depotActiveTab === 'family-items' || depotActiveTab === 'family-pokemon') renderDepotFamily({ forceRefresh: true });
 });
 
@@ -3818,9 +3821,16 @@ function depotPokeRowHtml(p, dir) {
   `;
 }
 
-function renderDepotPokemon() {
+async function renderDepotPokemon({ forceRefresh } = {}) {
   if (!depotTeamWrapEl) return;
   const accountId = depotAccountEl.value;
+  if (!accountId) return;
+  if (forceRefresh) {
+    depotTeamWrapEl.innerHTML = `<div class="settings-hint poke-skeleton-hint">${t('pokeIdle.shopLoading')}</div>`;
+    depotBoxWrapEl.innerHTML = '';
+    await window.api.getPokes(accountId);
+    await refreshGameStatsNow();
+  }
   const gs = gameStats[accountId];
   if (!gs) {
     depotTeamWrapEl.innerHTML = `<div class="settings-hint">${t('pokeIdle.noAccounts')}</div>`;
@@ -4325,7 +4335,8 @@ function openPokeIdlePanel() {
   renderSellhubPokemon();
   populateDepotAccountDropdown();
   renderDepotItems();
-  renderDepotPokemon();
+  renderDepotPokemon({ forceRefresh: true });
+  renderDepotFamily({ forceRefresh: true });
   populateCalcSourceDropdown();
   populateHuntAttackerDropdown();
   runHuntTable();

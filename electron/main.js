@@ -4010,6 +4010,28 @@ ipcMain.handle('depot:movePoke', async (_e, { id, pokeId, dir }) => {
   }
 });
 
+// Personal Depot's Pokémon subtab (Equipo/Box) only ever read whatever
+// `pokes` frame the server happened to push on its own — same passive-only
+// bug the family depot had before its own forceRefresh fix. If no `pokes`
+// frame had fired yet this session (e.g. right after connecting, before any
+// level-up/capture/sale), Equipo/Box stayed empty forever even with real
+// Pokémon in the collection. Mirrors family:get below: actively ask via the
+// game's own WebSocket and wait for the real frame instead of trusting
+// whatever's already cached.
+ipcMain.handle('pokes:get', async (_e, { id }) => {
+  const { wc, error } = requireGameWebContents(id);
+  if (error) return { ok: false, error };
+  try {
+    const waitPromise = gameTelemetry.waitForNextPokes(id);
+    const sent = await wc.executeJavaScript(sendGameSocketFrameScript({ type: 'pokes-get' }));
+    if (!sent) return { ok: false, error: 'No se pudo pedir los datos (socket del juego no disponible).' };
+    await waitPromise;
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+});
+
 // Family depot — endpoints confirmed live (NEXA_DEBUG_NET capture, account
 // actually in a family this time): everything goes over the game's own
 // WebSocket, no REST. {"type":"family-get"} -> {type:"family", family:{...,
