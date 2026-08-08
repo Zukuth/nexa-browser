@@ -164,7 +164,7 @@ La captura de datos en tiempo real (Resumen, Drops, Capturas destacadas, etc.) u
 
 #### Tier List y Caza & XP: buscador y ajuste por nivel
 
-Se agregó un buscador por nombre y un campo de nivel a ambas herramientas — al indicar un nivel, el ranking/las comparaciones usan las stats reales calculadas a ese nivel en vez de solo stats base. Verificado en vivo contra la calculadora de referencia de la comunidad (piwtools.com.br) para usar exactamente el mismo estándar de cálculo (IV 21, calidad ~1.8), en vez de un supuesto sin confirmar.
+Se agregó un buscador por nombre y un campo de nivel a ambas herramientas — al indicar un nivel, el ranking/las comparaciones usan las stats reales calculadas a ese nivel en vez de solo stats base. Verificado en vivo contra una calculadora de referencia de la comunidad para usar exactamente el mismo estándar de cálculo (IV 21, calidad ~1.8), en vez de un supuesto sin confirmar.
 
 #### Seguridad
 
