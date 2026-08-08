@@ -21,7 +21,7 @@
   "devDependencies": {
     "@playwright/test": "^1.61.1",
     "electron": "^43.0.0",
-    "electron-builder": "^24.13.3",
+    "electron-builder": "^26.15.3",
     "ws": "^8.21.1"
   },
   "build": {
@@ -42,7 +42,9 @@
           ]
         }
       ],
-      "publisherName": "Nexa Browser",
+      "signtoolOptions": {
+        "publisherName": "Nexa Browser"
+      },
       "artifactName": "Nexa-Browser-Setup-${version}-x64.${ext}"
     },
     "nsis": {
