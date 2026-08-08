@@ -814,6 +814,18 @@ function attachCaptureViaJs(wc, accountId, { onFrame } = {}) {
   wc.executeJavaScript(socketCapture.frameCaptureScript()).catch(() => {});
   const intervalId = setInterval(async () => {
     if (wc.isDestroyed()) { detachCaptureViaJs(accountId); return; }
+    // Re-asserted on every tick, not just once at attach time. Confirmed
+    // live with 2+ accounts open: an account that isn't the currently
+    // visible one can end up with the one-time injection above never having
+    // actually taken (or its window.__nexaFrameCapture/__nexaGameSocket
+    // state lost some other way) while this SAME polling loop keeps
+    // reading real frames from it just fine — which ruled out the guest
+    // page being suspended and pointed at the injection itself being the
+    // gap. Both capture scripts guard themselves (window.__nexaFrameCapture
+    // / window.__nexaWsCapture), so re-running them here is a no-op once
+    // already active — cheap self-healing instead of a single fragile
+    // injection point, at the same 250ms cadence this loop already runs at.
+    try { await wc.executeJavaScript(socketCapture.frameCaptureScript()); } catch {}
     let frames;
     try {
       frames = await wc.executeJavaScript(socketCapture.drainFrameQueueScript());

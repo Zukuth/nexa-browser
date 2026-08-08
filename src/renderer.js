@@ -112,8 +112,10 @@ const sellhubItemsWrapEl = document.getElementById('sellhub-items-wrap');
 const sellhubPokemonWrapEl = document.getElementById('sellhub-pokemon-wrap');
 const sellhubItemsSelectAllBtn = document.getElementById('sellhub-items-select-all');
 const sellhubItemsSellBtn = document.getElementById('sellhub-items-sell');
+const sellhubItemsRefreshBtn = document.getElementById('sellhub-items-refresh');
 const sellhubPokemonSelectAllBtn = document.getElementById('sellhub-pokemon-select-all');
 const sellhubPokemonSellBtn = document.getElementById('sellhub-pokemon-sell');
+const sellhubPokemonRefreshBtn = document.getElementById('sellhub-pokemon-refresh');
 const sellhubRarityProtectEl = document.getElementById('sellhub-rarity-protect');
 const sellhubItemsSearchEl = document.getElementById('sellhub-items-search');
 const sellhubPokemonSearchEl = document.getElementById('sellhub-pokemon-search');
@@ -142,6 +144,8 @@ const depotFamilyPokemonNoneEl = document.getElementById('depot-family-pokemon-n
 const depotFamilyPokemonBodyEl = document.getElementById('depot-family-pokemon-body');
 const depotFamilyMovesEl = document.getElementById('depot-family-moves');
 const depotFamilyRefreshBtn = document.getElementById('depot-family-refresh');
+const depotPokemonRefreshBtn = document.getElementById('depot-pokemon-refresh');
+const depotFamilyPokemonRefreshBtn = document.getElementById('depot-family-pokemon-refresh');
 const depotFamilyBackpackWrapEl = document.getElementById('depot-family-backpack-wrap');
 const depotFamilyStorageWrapEl = document.getElementById('depot-family-storage-wrap');
 const depotFamilyBoxWrapEl = document.getElementById('depot-family-box-wrap');
@@ -436,6 +440,23 @@ function pokeLiveAccountsStatus() {
   const gameAccounts = state.accounts.filter(isPokeGameAccount);
   const tracked = gameAccounts.filter((a) => gameStats[a.id]);
   return { gameAccounts, tracked };
+}
+
+// Mi Equipo (gs.team), Depot's Pokémon subtab (gs.collection) and Venta
+// masiva's Pokémon subtab (gs.collection) all read data that only gets
+// populated when the server pushes a `pokes` frame on its own — if that
+// hasn't happened yet this session (right after connecting, before any
+// capture/sale/level-up), all three show empty even with real Pokémon
+// in-game. Confirmed live: the game's own in-page team HUD (a separate,
+// independent data path) showed the real team while these panels — which
+// go through gameStats instead — showed nothing. One active pokes-get per
+// open game account (best-effort — an account mid-navigation or off the
+// game page just no-ops) covers all three at once instead of duplicating
+// the request per panel.
+async function refreshPokesForOpenAccounts() {
+  const { gameAccounts } = pokeLiveAccountsStatus();
+  await Promise.all(gameAccounts.map((a) => window.api.getPokes(a.id).catch(() => {})));
+  await refreshGameStatsNow();
 }
 
 function pokeLoadingOrEmptyHtml(gameAccounts) {
@@ -3376,6 +3397,10 @@ sellhubTabsEl?.addEventListener('click', (e) => {
   sellhubTabsEl.querySelectorAll('button[data-tab]').forEach((b) => b.classList.toggle('active', b === btn));
   sellhubItemsPanelEl.classList.toggle('hidden', sellhubActiveTab !== 'items');
   sellhubPokemonPanelEl.classList.toggle('hidden', sellhubActiveTab !== 'pokemon');
+  // Same passive-data staleness the Depot's Pokémon subtab had — force a
+  // fresh pokes-get on entering this tab instead of trusting a collection
+  // that might never have been populated yet this session.
+  if (sellhubActiveTab === 'pokemon') refreshPokesForOpenAccounts().then(renderSellhubPokemon);
 });
 
 sellhubAccountEl?.addEventListener('change', () => {
@@ -3383,10 +3408,13 @@ sellhubAccountEl?.addEventListener('change', () => {
   sellhubSelectedPokeIds.clear();
   renderSellhubItems();
   renderSellhubPokemon();
+  if (sellhubActiveTab === 'pokemon') refreshPokesForOpenAccounts().then(renderSellhubPokemon);
 });
 
 sellhubItemsSearchEl?.addEventListener('input', () => renderSellhubItems());
 sellhubPokemonSearchEl?.addEventListener('input', () => renderSellhubPokemon());
+sellhubItemsRefreshBtn?.addEventListener('click', () => renderSellhubItems());
+sellhubPokemonRefreshBtn?.addEventListener('click', () => refreshPokesForOpenAccounts().then(renderSellhubPokemon));
 
 sellhubRarityFilterEl?.addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-rarity]');
@@ -3825,10 +3853,17 @@ async function renderDepotPokemon({ forceRefresh } = {}) {
   if (!depotTeamWrapEl) return;
   const accountId = depotAccountEl.value;
   if (!accountId) return;
+  // Same reasoning as renderDepotFamily: a failed pokes-get (account not
+  // actually on the game page, WS timeout) shouldn't render identically to
+  // "this account genuinely has nothing here" — only used below when the
+  // resulting collection actually comes up empty, so a failed refresh on an
+  // account that already had real cached data doesn't blank it out.
+  let fetchError = null;
   if (forceRefresh) {
     depotTeamWrapEl.innerHTML = `<div class="settings-hint poke-skeleton-hint">${t('pokeIdle.shopLoading')}</div>`;
     depotBoxWrapEl.innerHTML = '';
-    await window.api.getPokes(accountId);
+    const result = await window.api.getPokes(accountId);
+    if (!result || !result.ok) fetchError = (result && result.error) || '?';
     await refreshGameStatsNow();
   }
   const gs = gameStats[accountId];
@@ -3838,6 +3873,12 @@ async function renderDepotPokemon({ forceRefresh } = {}) {
     return;
   }
   const collection = gs.collection || [];
+  if (fetchError && !collection.length) {
+    const msg = `<div class="settings-hint">${t('pokeIdle.sellhubError', { message: fetchError })}</div>`;
+    depotTeamWrapEl.innerHTML = msg;
+    depotBoxWrapEl.innerHTML = msg;
+    return;
+  }
   const query = normalizeTextForFilter(depotPokemonSearchEl ? depotPokemonSearchEl.value : '');
   const matches = (p) => !query || normalizeTextForFilter(p.name || '').includes(query);
   const team = collection.filter((p) => p.team && matches(p));
@@ -3887,13 +3928,23 @@ depotBoxWrapEl?.addEventListener('click', handleDepotPokeClick);
 async function renderDepotFamily({ forceRefresh } = {}) {
   const accountId = depotAccountEl.value;
   if (!accountId) return;
+  // A failed request (account not actually on the game page right now, WS
+  // timeout, etc.) used to be swallowed silently here and rendered exactly
+  // like "this account really has no family" — completely indistinguishable
+  // to the user. Now the fetch failure gets its own message instead of
+  // pretending it's a real empty state.
+  let fetchError = null;
   if (forceRefresh) {
-    await window.api.getFamily(accountId);
+    const result = await window.api.getFamily(accountId);
+    if (!result || !result.ok) fetchError = (result && result.error) || '?';
     await refreshGameStatsNow();
   }
   const gs = gameStats[accountId];
   const family = gs && gs.family;
   const hasFamily = !!(family && family.info);
+  const noneText = fetchError ? t('pokeIdle.sellhubError', { message: fetchError }) : t('pokeIdle.depotNoFamily');
+  depotFamilyNoneEl.textContent = noneText;
+  depotFamilyPokemonNoneEl.textContent = noneText;
   depotFamilyNoneEl.classList.toggle('hidden', hasFamily);
   depotFamilyItemsBodyEl.classList.toggle('hidden', !hasFamily);
   depotFamilyPokemonNoneEl.classList.toggle('hidden', hasFamily);
@@ -3998,6 +4049,8 @@ depotFamilyStorageWrapEl?.addEventListener('click', handleDepotFamilyItemClick);
 depotFamilyBoxWrapEl?.addEventListener('click', handleDepotFamilyPokeClick);
 depotFamilyPokeStorageWrapEl?.addEventListener('click', handleDepotFamilyPokeClick);
 depotFamilyRefreshBtn?.addEventListener('click', () => renderDepotFamily({ forceRefresh: true }));
+depotPokemonRefreshBtn?.addEventListener('click', () => renderDepotPokemon({ forceRefresh: true }));
+depotFamilyPokemonRefreshBtn?.addEventListener('click', () => renderDepotFamily({ forceRefresh: true }));
 
 function renderPokeIdleNotable() {
   const el = pokeIdleNotableEl;
@@ -4335,13 +4388,22 @@ function openPokeIdlePanel() {
   renderSellhubPokemon();
   populateDepotAccountDropdown();
   renderDepotItems();
-  renderDepotPokemon({ forceRefresh: true });
+  renderDepotPokemon();
   renderDepotFamily({ forceRefresh: true });
   populateCalcSourceDropdown();
   populateHuntAttackerDropdown();
   runHuntTable();
   populateTierCaptureAccountFilter();
   populateTierFilters().then(renderTierList);
+  // Paint instantly from whatever's cached above, then bring Mi Equipo /
+  // Depot / Venta masiva up to date in the background — see
+  // refreshPokesForOpenAccounts()'s comment for why this is needed at all.
+  refreshPokesForOpenAccounts().then(() => {
+    renderPokeIdleTeam();
+    renderDepotPokemon();
+    renderSellhubPokemon();
+    renderTierList();
+  });
 }
 
 function closePokeIdlePanel() {

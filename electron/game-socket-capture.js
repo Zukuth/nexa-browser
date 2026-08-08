@@ -28,15 +28,32 @@ function frameCaptureScript() {
     if (window.__nexaFrameCapture) return;
     window.__nexaFrameCapture = true;
     window.__nexaFrameQueue = window.__nexaFrameQueue || [];
-    const push = (data) => {
-      try { window.__nexaFrameQueue.push({ t: Date.now(), data: String(data) }); } catch (e) {}
+    const push = (data, socket) => {
+      try {
+        window.__nexaFrameQueue.push({ t: Date.now(), data: String(data) });
+        // Piggybacks the game's own socket reference (needed to send our
+        // own outgoing frames — family-get, pokes-get, depot moves,
+        // teleport) onto this same, already-proven-reliable capture path
+        // instead of the separate send-only patch in main.js's
+        // gameSocketCaptureScript. That one only grabs a reference when the
+        // PAGE itself calls .send(), which real accounts confirmed live can
+        // go quiet on for a while (sitting connected but idle, or right
+        // after an internal reconnect) — leaving every outgoing frame we
+        // send failing as "socket del juego no disponible" even though the
+        // account was clearly connected. Incoming messages, by contrast,
+        // arrive constantly and reliably on every account (this exact
+        // mechanism is what the 136/136 · 240/240 · 382/382 frame-parity
+        // checks were run against), so grabbing the reference here as well
+        // covers the idle-client gap.
+        if (socket) window.__nexaGameSocket = socket;
+      } catch (e) {}
     };
     const proto = WebSocket.prototype;
     const originalAddEventListener = proto.addEventListener;
     proto.addEventListener = function(type, listener, options) {
       if (type === 'message' && typeof listener === 'function') {
         const wrapped = function(event) {
-          push(event && event.data);
+          push(event && event.data, this);
           return listener.apply(this, arguments);
         };
         return originalAddEventListener.call(this, type, wrapped, options);
@@ -51,7 +68,7 @@ function frameCaptureScript() {
         configurable: true,
         set(fn) {
           const wrapped = typeof fn === 'function' ? function(event) {
-            push(event && event.data);
+            push(event && event.data, this);
             return fn.apply(this, arguments);
           } : fn;
           onmessageDescriptor.set.call(this, wrapped);

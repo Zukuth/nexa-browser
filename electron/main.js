@@ -1654,22 +1654,59 @@ function applySellLock(wc, account) {
 // confirmed live), so the reference is populated almost immediately after
 // injection, with zero behavior change to the original send. Idempotent via
 // window.__nexaWsCapture, safe to re-run on every did-finish-load.
+//
+// Bug found live: relying ONLY on the page's own .send() left
+// window.__nexaGameSocket unset (or stuck pointing at a dead, already-closed
+// socket after a reconnect) whenever an account sat connected-but-otherwise-
+// quiet for a while without the game happening to call .send() again in that
+// window — every one of OUR OWN outgoing frames (family-get, pokes-get,
+// depot moves, teleport) then failed as "socket del juego no disponible" on
+// an account that was, from the player's side, connected and playing fine.
+// Now also captured the moment a WebSocket is constructed (same idea as the
+// receive-side capture in game-socket-capture.js, which patches the
+// prototype instead of waiting for a specific call) — trySend()'s own
+// readyState check below already handles the brief CONNECTING window before
+// a freshly (re)constructed socket reaches OPEN.
 function gameSocketCaptureScript() {
-  return `(function() {
-    if (window.__nexaWsCapture) return;
-    window.__nexaWsCapture = true;
-    const proto = WebSocket.prototype;
-    const originalSend = proto.send;
-    proto.send = function(data) {
-      window.__nexaGameSocket = this;
-      return originalSend.call(this, data);
-    };
-  })();`;
+  return `(function() {${GAME_SOCKET_CAPTURE_BODY}})();`;
 }
 
 function enableGameSocketCapture(wc) {
   wc.executeJavaScript(gameSocketCaptureScript()).catch(() => {});
 }
+
+// Body of gameSocketCaptureScript() without its own IIFE wrapper, reused
+// inline by sendGameSocketFrameScript below so every single outgoing frame
+// re-asserts the capture patch immediately before trying to send — instead
+// of depending on some earlier injection (did-finish-load, or the telemetry
+// poll loop in game-telemetry.js) having already run in this exact
+// webContents. Confirmed live with 2+ accounts open that an account could
+// still fail with "socket del juego no disponible" even after those other
+// injection points existed, so this closes the gap at the one place that
+// actually matters: right where the send is attempted.
+const GAME_SOCKET_CAPTURE_BODY = `
+    if (!window.__nexaWsCapture) {
+      window.__nexaWsCapture = true;
+      const OriginalWebSocket = window.WebSocket;
+      const proto = OriginalWebSocket.prototype;
+      const originalSend = proto.send;
+      proto.send = function(data) {
+        window.__nexaGameSocket = this;
+        return originalSend.call(this, data);
+      };
+      function NexaWebSocket(...args) {
+        const ws = new OriginalWebSocket(...args);
+        window.__nexaGameSocket = ws;
+        return ws;
+      }
+      NexaWebSocket.prototype = proto;
+      NexaWebSocket.CONNECTING = OriginalWebSocket.CONNECTING;
+      NexaWebSocket.OPEN = OriginalWebSocket.OPEN;
+      NexaWebSocket.CLOSING = OriginalWebSocket.CLOSING;
+      NexaWebSocket.CLOSED = OriginalWebSocket.CLOSED;
+      window.WebSocket = NexaWebSocket;
+    }
+`;
 
 // Polls briefly for window.__nexaGameSocket (populated by the capture patch
 // above, but only once the game itself calls .send() at least once — usually
@@ -1691,6 +1728,7 @@ function enterHuntScript(slug) {
 // case instead of writing a new one-off sender each time.
 function sendGameSocketFrameScript(frame) {
   return `(function() {
+    ${GAME_SOCKET_CAPTURE_BODY}
     return new Promise((resolve) => {
       let tries = 0;
       const trySend = () => {
