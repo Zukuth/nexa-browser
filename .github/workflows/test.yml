@@ -13,7 +13,15 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # 22+ required — test/unit/store.test.js uses node:test's
+          # mock.module() (--experimental-test-module-mocks, see package.json's
+          # "test" script) to fake the 'electron' module before requiring
+          # store.js. That API doesn't exist on Node 20, which is what this
+          # workflow ran until now — confirmed live: CI failed with
+          # "Cannot read properties of undefined (reading 'getPath')" at
+          # store.js:5, since require('electron') silently returned the
+          # unmocked stub. 24 matches what's verified locally.
+          node-version: 24
 
       - run: npm ci
 
