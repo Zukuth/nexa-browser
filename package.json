@@ -55,15 +55,6 @@
       "createStartMenuShortcut": true,
       "shortcutName": "Nexa Browser"
     },
-    "linux": {
-      "target": [
-        "AppImage",
-        "deb"
-      ],
-      "category": "Network",
-      "maintainer": "Nexa Browser",
-      "artifactName": "Nexa-Browser-${version}-x64.${ext}"
-    },
     "directories": {
       "output": "build"
     },

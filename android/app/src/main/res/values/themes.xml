@@ -1,8 +1,0 @@
-<resources>
-    <style name="Theme.NexaBrowser" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <item name="colorPrimary">#4F8CFF</item>
-        <item name="colorPrimaryDark">#1A1A2E</item>
-        <item name="colorAccent">#FF6B9D</item>
-        <item name="android:windowBackground">#16161F</item>
-    </style>
-</resources>

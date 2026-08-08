@@ -8,9 +8,3 @@ test-results/
 output/
 /err.txt
 /out.txt
-
-# Android
-android/.gradle/
-android/local.properties
-*.apk
-*.aab

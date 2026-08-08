@@ -1,9 +1,9 @@
-name: Test Build (Windows + Linux)
+name: Test Build (Windows)
 
 # Build-only, on demand — no git tag and no GitHub Release involved. Meant
 # for "does this actually package and run" checks during development, unlike
-# build-windows.yml/build-linux.yml which publish to a real Release on a tag
-# push. Uploads as workflow-run artifacts (private to the repo's Actions tab,
+# build-windows.yml, which publishes to a real Release on a tag push.
+# Uploads as workflow-run artifacts (private to the repo's Actions tab,
 # downloadable via `gh run download`), never touching the public Releases page.
 on:
   workflow_dispatch:
@@ -24,12 +24,6 @@ jobs:
             glob: |
               build/*.exe
               build/*.blockmap
-          - os: ubuntu-latest
-            flag: --linux
-            artifact: linux-packages
-            glob: |
-              build/*.AppImage
-              build/*.deb
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

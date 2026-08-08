@@ -1,13 +1,12 @@
 name: Build Windows
 
-# Mirrors build-linux.yml — exists because building the NSIS installer
-# locally on Windows can get blocked by that machine's own Application
-# Control / WDAC policy (electron-builder needs to actually *run* the
-# freshly-built, unsigned installer.exe once internally, to extract the
-# uninstaller stub — some local security policies block that even though
-# nothing is wrong with the build itself). Building on a clean GitHub-hosted
-# Windows runner sidesteps whatever policy is active on any given local
-# machine.
+# Exists because building the NSIS installer locally on Windows can get
+# blocked by that machine's own Application Control / WDAC policy
+# (electron-builder needs to actually *run* the freshly-built, unsigned
+# installer.exe once internally, to extract the uninstaller stub — some
+# local security policies block that even though nothing is wrong with the
+# build itself). Building on a clean GitHub-hosted Windows runner sidesteps
+# whatever policy is active on any given local machine.
 
 on:
   push:
