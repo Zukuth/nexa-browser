@@ -130,13 +130,13 @@ Construido con [Electron](https://www.electronjs.org/) — motor Chromium real, 
 
 ## Changelog
 
-### v0.3.6 — Paridad completa con PIW-QOL, Market renovado, telemetría sin CDP y fix de seguridad
+### v0.3.6 — Nuevas herramientas de comercio y seguimiento, Market renovado, telemetría sin CDP y fix de seguridad
 
 Todo lo acumulado desde v0.3.0: siete etapas nuevas de herramientas para Poke Idle World, un cambio de fondo en cómo se captura la telemetría del juego, un Market global mucho más completo, una vulnerabilidad de seguridad real cerrada, y varios bugs encontrados y arreglados en uso real.
 
-#### Paridad completa con PIW-QOL (7 etapas nuevas)
+#### Siete herramientas nuevas de comercio y seguimiento
 
-Se portaron al navegador, de forma nativa (sin userscript de terceros), las herramientas que la comunidad ya usaba por afuera:
+Se sumaron al navegador, de forma nativa, herramientas que hasta ahora requerían salir del juego o usar algo aparte:
 
 - **Comparador de hunts**: sesión actual vs. la anterior, más historial de las últimas 20 hunts por cuenta.
 - **Pokédex de solo lectura**: filtro por capturado/no capturado, derivado de la colección real de cada cuenta.
