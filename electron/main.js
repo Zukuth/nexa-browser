@@ -915,11 +915,21 @@ function extensionIdFromInput(input) {
   return match ? match[0] : null;
 }
 
+// Compatibilidad de extensiones: prodversion le dice al Chrome Web Store con
+// qué motor estamos, y Google puede devolver una build más vieja del paquete
+// si cree que el navegador es más antiguo de lo que realmente es. Este valor
+// estaba fijo en "131.0.6778.86" — confirmado desatualizado: esta app corre
+// Electron 43.3.0 (Chromium ~150) desde hace varias versiones. Usar la
+// versión real de Chromium en cada descarga evita pedirle a Google una build
+// pensada para un motor mucho más viejo que el que realmente ejecuta la
+// extensión. Verificado en vivo: instalación real de AdGuard Adblocker
+// (bgnkhhnnamicmpeenaelnjfhikgbkllg) completó ok con la versión corregida.
 function downloadCrx(id) {
+  const chromeVersion = process.versions.chrome || '131.0.6778.86';
   const url =
     'https://clients2.google.com/service/update2/crx?response=redirect' +
     '&os=win&arch=x64&os_arch=x64&nacl_arch=x64' +
-    '&prod=chrome&prodchannel=stable&prodversion=131.0.6778.86&lang=en' +
+    `&prod=chrome&prodchannel=stable&prodversion=${chromeVersion}&lang=en` +
     '&acceptformat=crx3' +
     `&x=id%3D${id}%26uc`;
   return new Promise((resolve, reject) => {
