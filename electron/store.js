@@ -100,6 +100,11 @@ const DEFAULT_DATA = {
     // of (never instead of) the per-account manual ecoMode toggle. See
     // startAutoEcoLoop() in main.js.
     autoEco: { enabled: false, minutes: 30 },
+    // Per-tab FPS/ping badges (electron/main.js's injectFpsOverlay/
+    // injectPingOverlay) — on by default since they shipped on by default;
+    // both user-toggleable independently in Configuración.
+    showFpsOverlay: true,
+    showPingOverlay: true,
     hardwareAcceleration: true,
     pokeIdleAlerts: {
       enabled: true,

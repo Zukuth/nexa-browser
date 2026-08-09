@@ -1480,7 +1480,8 @@ function wireAccountWebContents(wc, account, hostWebContents) {
   wc.on('did-finish-load', () => {
     wc.setZoomFactor(account.zoom || data.settings.defaultZoom || 1);
     syncBackgroundThrottling(wc, wc.getURL());
-    injectFpsOverlay(wc);
+    injectFpsOverlay(wc, data.settings.showFpsOverlay !== false);
+    injectPingOverlay(wc, data.settings.showPingOverlay !== false);
     if (account.ecoMode) enableEcoMode(wc);
     if (account.hideChat || account.hideGameBar) applyGameCssToggles(wc, account);
     if (account.sellLockOn) applySellLock(wc, account);
@@ -1704,15 +1705,30 @@ function startAutoEcoLoop() {
 // host UI's rAF, not any account's content). Runs for every account, not
 // just the game, so the user can see real FPS on any tab. Idempotent via
 // window.__nexaFpsOverlay, safe to re-run on every did-finish-load — reuses
-// the same badge element instead of appending duplicates.
-function injectFpsOverlay(wc) {
+// the same badge element instead of appending duplicates. `visible` sets the
+// starting display state (data.settings.showFpsOverlay at injection time);
+// toggling the setting later without a reload goes through
+// setFpsOverlayVisible() below instead of re-injecting.
+// Color thresholds mirror what GPU benchmarking overlays (MSI Afterburner/
+// RTSS) already do — green is healthy, yellow is a real but survivable
+// slowdown (matches Modo Eco's 30fps cap on purpose, not a false alarm),
+// red means something is actually wrong.
+const FPS_COLOR_SCRIPT = `
+    function nexaFpsColor(fps) {
+      if (fps >= 45) return '#3ddc57';
+      if (fps >= 20) return '#e0c341';
+      return '#e05555';
+    }
+`;
+function injectFpsOverlay(wc, visible) {
   wc.executeJavaScript(
     `(function() {
       if (window.__nexaFpsOverlay) return;
       window.__nexaFpsOverlay = true;
+      ${FPS_COLOR_SCRIPT}
       const badge = document.createElement('div');
       badge.id = 'nexa-fps-badge';
-      badge.style.cssText = 'position:fixed;top:6px;right:6px;z-index:2147483647;background:rgba(0,0,0,0.55);color:#0f0;font:11px monospace;padding:2px 6px;border-radius:4px;pointer-events:none;';
+      badge.style.cssText = 'position:fixed;top:6px;right:6px;z-index:2147483647;background:rgba(0,0,0,0.55);color:#3ddc57;font:11px monospace;padding:2px 6px;border-radius:4px;pointer-events:none;display:${visible ? '' : 'none'};';
       badge.textContent = '… FPS';
       (document.body || document.documentElement).appendChild(badge);
       let frames = 0;
@@ -1721,12 +1737,85 @@ function injectFpsOverlay(wc) {
         frames += 1;
         if (now - last >= 1000) {
           badge.textContent = frames + ' FPS';
+          badge.style.color = nexaFpsColor(frames);
           frames = 0;
           last = now;
         }
         requestAnimationFrame(loop);
       }
       requestAnimationFrame(loop);
+    })();`
+  ).catch(() => {});
+}
+
+// Toggles the already-injected FPS badge's visibility live, without
+// re-injecting or losing its running rAF counter — used when the user
+// flips "Mostrar FPS" in Configuración while accounts are already open.
+function setFpsOverlayVisible(wc, visible) {
+  wc.executeJavaScript(
+    `(function() {
+      const el = document.getElementById('nexa-fps-badge');
+      if (el) el.style.display = ${visible} ? '' : 'none';
+    })();`
+  ).catch(() => {});
+}
+
+// Real per-tab latency/ping counter — same idea and same visual style as
+// injectFpsOverlay above, but bottom-right instead of top-right, and
+// measuring round-trip time to the page's own origin instead of render FPS.
+// Uses a same-origin HEAD request (no CORS issues on any site, no extra
+// content downloaded) timed with performance.now(); a GET fallback covers
+// servers that reject HEAD on that route. Runs for every account, not just
+// the game — this is a generic "how's my connection to whatever site is
+// loaded" indicator. Idempotent via window.__nexaPingOverlay, safe to
+// re-run on every did-finish-load. Same green/yellow/red convention as the
+// FPS badge, tuned for a HEAD round-trip instead of a frame rate.
+const PING_COLOR_SCRIPT = `
+    function nexaPingColor(ms) {
+      if (ms <= 100) return '#3ddc57';
+      if (ms <= 300) return '#e0c341';
+      return '#e05555';
+    }
+`;
+function injectPingOverlay(wc, visible) {
+  wc.executeJavaScript(
+    `(function() {
+      if (window.__nexaPingOverlay) return;
+      window.__nexaPingOverlay = true;
+      ${PING_COLOR_SCRIPT}
+      const badge = document.createElement('div');
+      badge.id = 'nexa-ping-badge';
+      badge.style.cssText = 'position:fixed;bottom:6px;right:6px;z-index:2147483647;background:rgba(0,0,0,0.55);color:#3ddc57;font:11px monospace;padding:2px 6px;border-radius:4px;pointer-events:none;display:${visible ? '' : 'none'};';
+      badge.textContent = '… ms';
+      (document.body || document.documentElement).appendChild(badge);
+      async function measure() {
+        const url = location.href;
+        const start = performance.now();
+        try {
+          await fetch(url, { method: 'HEAD', cache: 'no-store' });
+        } catch (e) {
+          try {
+            await fetch(url, { method: 'GET', cache: 'no-store' });
+          } catch (e2) {
+            return; // offline or blocked — leave the last known value showing
+          }
+        }
+        const ms = Math.round(performance.now() - start);
+        badge.textContent = ms + ' ms';
+        badge.style.color = nexaPingColor(ms);
+      }
+      measure();
+      setInterval(measure, 2000);
+    })();`
+  ).catch(() => {});
+}
+
+// Same live-toggle pattern as setFpsOverlayVisible, for the ping badge.
+function setPingOverlayVisible(wc, visible) {
+  wc.executeJavaScript(
+    `(function() {
+      const el = document.getElementById('nexa-ping-badge');
+      if (el) el.style.display = ${visible} ? '' : 'none';
     })();`
   ).catch(() => {});
 }
@@ -3339,6 +3428,8 @@ const SETTINGS_UPDATE_WHITELIST = new Set([
   'hardwareAcceleration',
   'protectionLevel',
   'autoEco',
+  'showFpsOverlay',
+  'showPingOverlay',
   'defaultStartUrl',
   'supportPaypalUrl',
   'defaultZoom',
@@ -3375,6 +3466,15 @@ ipcMain.handle('settings:update', (_e, fields) => {
     app.setLoginItemSettings({ openAtLogin: !!fields.startWithWindows });
   }
   if ('stability' in fields) refreshPowerBlockerNeed();
+  // Live-apply to every already-open account instead of waiting for their
+  // next did-finish-load — the badges are already injected, this just
+  // flips their display style (see setFpsOverlayVisible/setPingOverlayVisible).
+  if ('showFpsOverlay' in fields) {
+    for (const wc of views.values()) if (!wc.isDestroyed()) setFpsOverlayVisible(wc, fields.showFpsOverlay !== false);
+  }
+  if ('showPingOverlay' in fields) {
+    for (const wc of views.values()) if (!wc.isDestroyed()) setPingOverlayVisible(wc, fields.showPingOverlay !== false);
+  }
   persist();
   broadcastState();
   return data;

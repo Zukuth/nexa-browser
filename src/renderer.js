@@ -334,6 +334,8 @@ const setReopenSpace = document.getElementById('set-reopen-space');
 const setProtectionLevel = document.getElementById('set-protection-level');
 const setAutoEcoEnabled = document.getElementById('set-auto-eco-enabled');
 const setAutoEcoMinutes = document.getElementById('set-auto-eco-minutes');
+const setShowFpsOverlay = document.getElementById('set-show-fps');
+const setShowPingOverlay = document.getElementById('set-show-ping');
 const setHwAccel = document.getElementById('set-hw-accel');
 const setExportSpaces = document.getElementById('set-export-spaces');
 const setImportSpaces = document.getElementById('set-import-spaces');
@@ -2688,6 +2690,8 @@ function openSettingsModal() {
   setProtectionLevel.value = s.protectionLevel || 'standard';
   setAutoEcoEnabled.checked = !!(s.autoEco && s.autoEco.enabled);
   setAutoEcoMinutes.value = String((s.autoEco && s.autoEco.minutes) || 30);
+  setShowFpsOverlay.checked = s.showFpsOverlay !== false;
+  setShowPingOverlay.checked = s.showPingOverlay !== false;
   setHwAccel.checked = s.hardwareAcceleration !== false;
   setDefaultUrl.value = s.defaultStartUrl || 'https://www.google.com';
   if (setSupportPaypalUrl) setSupportPaypalUrl.value = s.supportPaypalUrl || '';
@@ -6568,6 +6572,14 @@ setAutoEcoMinutes.addEventListener('change', () => {
   const minutes = Math.min(60, Math.max(1, Number(setAutoEcoMinutes.value) || 30));
   setAutoEcoMinutes.value = String(minutes);
   window.api.updateSettings({ autoEco: { enabled: setAutoEcoEnabled.checked, minutes } });
+});
+
+setShowFpsOverlay.addEventListener('change', () => {
+  window.api.updateSettings({ showFpsOverlay: setShowFpsOverlay.checked });
+});
+
+setShowPingOverlay.addEventListener('change', () => {
+  window.api.updateSettings({ showPingOverlay: setShowPingOverlay.checked });
 });
 
 setDefaultUrl.addEventListener('change', () => {
