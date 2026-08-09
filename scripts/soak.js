@@ -113,8 +113,18 @@ async function main() {
     console.error('[soak] errors encountered:', errors.slice(0, 10));
   }
 
+  // QA audit finding (2026-08-08): the old log line here claimed "expected:
+  // some" — that was never actually reachable by this script. RECOVERY_FAILED
+  // only comes from a RECOVERY_EXHAUSTED event, which is emitted by main.js's
+  // real runRecoveryLevel() once shouldStopRetrying() hits maxAttempts — logic
+  // this simplified harness never wires in (it only drives levels 1-3 via the
+  // onRecoveryLevel callback above). On top of that, every 40-tick cycle's
+  // FRAME_RECEIVED barrage (ticks 0-29) resets any manager straight back to
+  // HEALTHY before enough consecutive failures could accumulate anyway. 0/4
+  // here is the manager behaving correctly given what's actually simulated,
+  // not a sign anything is stuck.
   const stuckInRecoveryFailed = managers.filter((m) => m.getState().state === 'RECOVERY_FAILED');
-  console.log(`[soak] managers currently in RECOVERY_FAILED: ${stuckInRecoveryFailed.length}/${ACCOUNT_COUNT} (expected: some, since we forced repeated disconnects)`);
+  console.log(`[soak] managers currently in RECOVERY_FAILED: ${stuckInRecoveryFailed.length}/${ACCOUNT_COUNT} (expected: 0 — this harness never wires RECOVERY_EXHAUSTED, see comment above)`);
 
   await server.close().catch(() => {});
 

@@ -1,4 +1,29 @@
-﻿const listEl = document.getElementById('account-list');
+﻿// Catches uncaught exceptions/rejections in the HOST chrome UI itself (this
+// file) — not account webviews, which already have their own extensive
+// crash/error coverage in main.js (render-process-gone, unresponsive,
+// crash-classifier). Before this, an uncaught error here only surfaced if
+// Chromium happened to also log it as a console error, which main.js's
+// console-message forwarder would catch — real but incidental, not
+// guaranteed for every error shape. Fire-and-forget (window.api.reportError
+// is a plain ipcRenderer.send, no round-trip) so a broken error handler
+// can never itself throw or hang the page.
+window.addEventListener('error', (e) => {
+  window.api.reportError({
+    kind: 'error',
+    message: e.message,
+    stack: e.error && e.error.stack,
+    source: `${e.filename}:${e.lineno}:${e.colno}`
+  });
+});
+window.addEventListener('unhandledrejection', (e) => {
+  window.api.reportError({
+    kind: 'unhandledrejection',
+    message: e.reason && e.reason.message ? e.reason.message : String(e.reason),
+    stack: e.reason && e.reason.stack
+  });
+});
+
+const listEl = document.getElementById('account-list');
 const btnNewTab = document.getElementById('btn-new-tab');
 const btnToggleAll = document.getElementById('btn-toggle-all');
 const addressInput = document.getElementById('input-address');

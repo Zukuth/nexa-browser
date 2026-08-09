@@ -15,6 +15,7 @@ const gameConnectionManager = require('./game-connection-manager');
 const memoryOptimizer = require('./memory-optimizer');
 const { classifyCrash } = require('./crash-classifier');
 const diagnostics = require('./diagnostics');
+const { normalizeAddressInput } = require('./address-bar');
 // Catálogo único de traducciones compartido con el renderer — ver el comentario
 // de cabecera en src/i18n-data.js. El proceso main no tiene sandbox, así que
 // requerir un archivo bajo src/ funciona igual que con game-telemetry.js.
@@ -2086,6 +2087,18 @@ function createWindow() {
     console.log(`[renderer] ${message} (${sourceId}:${line})`);
   });
 
+  // Explicit capture from the host UI's own window.onerror/unhandledrejection
+  // (wired in renderer.js), landing in the same log as everything else here
+  // instead of depending on Chromium happening to also print the exception
+  // as a console error (which the console-message listener above would then
+  // catch, but only incidentally — not guaranteed for every error shape).
+  // QA audit finding (2026-08-08): the account webviews already have
+  // extensive crash/error coverage (render-process-gone, unresponsive,
+  // crash-classifier); the host chrome itself had none of its own.
+  ipcMain.on('renderer:error', (_e, info) => {
+    console.error('[renderer-error]', info && info.kind, info && info.message, info && info.stack);
+  });
+
   // Right-click Cut/Copy/Paste/Select all for our own chrome's editable
   // fields (address bar, command palette, settings inputs, etc). Electron
   // doesn't provide this by default the way a real browser does — only the
@@ -2179,7 +2192,7 @@ ipcMain.handle('accounts:quickAdd', () => {
 ipcMain.handle('account:navigate', (_e, { id, url }) => {
   const account = getAccount(id);
   if (!account) return;
-  const target = /^https?:\/\/|^about:/.test(url) ? url : `https://${url}`;
+  const target = normalizeAddressInput(url);
   account.url = target;
   persist();
   ensureView(account)?.loadURL(target);

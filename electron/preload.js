@@ -163,5 +163,8 @@ contextBridge.exposeInMainWorld('api', {
   // broadcast (see account:setLiveRect / 'account:liveRect' in main.js).
   onAccountLiveRect: (cb) => ipcRenderer.on('account:liveRect', (_e, data) => cb(data)),
   onOpenSpaceEditor: (cb) => ipcRenderer.on('ui:open-space-editor', (_e, data) => cb(data)),
-  onOpenAccountEditor: (cb) => ipcRenderer.on('ui:open-account-editor', (_e, data) => cb(data))
+  onOpenAccountEditor: (cb) => ipcRenderer.on('ui:open-account-editor', (_e, data) => cb(data)),
+  // One-way fire-and-forget (send, not invoke) — the host UI's own error
+  // handlers below must never await a round-trip or throw themselves.
+  reportError: (info) => ipcRenderer.send('renderer:error', info)
 });
