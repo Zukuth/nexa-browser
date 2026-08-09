@@ -1451,6 +1451,7 @@ function wireAccountWebContents(wc, account, hostWebContents) {
   wc.on('did-finish-load', () => {
     wc.setZoomFactor(account.zoom || data.settings.defaultZoom || 1);
     syncBackgroundThrottling(wc, wc.getURL());
+    injectFpsOverlay(wc);
     if (account.ecoMode) enableEcoMode(wc);
     if (account.hideChat || account.hideGameBar) applyGameCssToggles(wc, account);
     if (account.sellLockOn) applySellLock(wc, account);
@@ -1570,8 +1571,11 @@ function wireDidAttachWebview(hostWebContents) {
 // completely untouched — an idle-farming account with Modo Eco off must keep
 // making real progress in the background, same rule the Poke Idle telemetry
 // feature already follows. Idempotent (checks window.__nexaEco) so it's safe
-// to call again on every full page load.
-const ECO_MODE_FPS = 15;
+// to call again on every full page load. 15fps read as visibly janky once
+// the new per-tab FPS badge made the real number visible to the user —
+// raised to 30fps, still a real CPU saving over an uncapped ~60-144fps
+// canvas loop but no longer perceptibly harmful to the page.
+const ECO_MODE_FPS = 30;
 function enableEcoMode(wc) {
   wc.executeJavaScript(
     `(function() {
@@ -1598,6 +1602,40 @@ function disableEcoMode(wc) {
       window.requestAnimationFrame = window.__nexaEco.nativeRAF;
       window.cancelAnimationFrame = window.__nexaEco.nativeCAF;
       delete window.__nexaEco;
+    })();`
+  ).catch(() => {});
+}
+
+// Real per-tab FPS counter — measures the actual page's own render loop
+// (whatever it's doing with requestAnimationFrame, including Modo Eco's
+// throttle if that account has it on), not nexa-browser's own chrome FPS
+// (that's the separate counter already in the status bar, measuring the
+// host UI's rAF, not any account's content). Runs for every account, not
+// just the game, so the user can see real FPS on any tab. Idempotent via
+// window.__nexaFpsOverlay, safe to re-run on every did-finish-load — reuses
+// the same badge element instead of appending duplicates.
+function injectFpsOverlay(wc) {
+  wc.executeJavaScript(
+    `(function() {
+      if (window.__nexaFpsOverlay) return;
+      window.__nexaFpsOverlay = true;
+      const badge = document.createElement('div');
+      badge.id = 'nexa-fps-badge';
+      badge.style.cssText = 'position:fixed;top:6px;right:6px;z-index:2147483647;background:rgba(0,0,0,0.55);color:#0f0;font:11px monospace;padding:2px 6px;border-radius:4px;pointer-events:none;';
+      badge.textContent = '… FPS';
+      (document.body || document.documentElement).appendChild(badge);
+      let frames = 0;
+      let last = performance.now();
+      function loop(now) {
+        frames += 1;
+        if (now - last >= 1000) {
+          badge.textContent = frames + ' FPS';
+          frames = 0;
+          last = now;
+        }
+        requestAnimationFrame(loop);
+      }
+      requestAnimationFrame(loop);
     })();`
   ).catch(() => {});
 }

@@ -34,7 +34,6 @@ const statusSpaceInfo = document.getElementById('status-space-info');
 const statusActiveAccount = document.getElementById('status-active-account');
 const statusCpu = document.getElementById('status-cpu');
 const statusRam = document.getElementById('status-ram');
-const statusFps = document.getElementById('status-fps');
 const statusTime = document.getElementById('status-time');
 const statusVersion = document.getElementById('status-version');
 const btnOptimize = document.getElementById('btn-optimize');
@@ -866,18 +865,6 @@ function renderStatusBar() {
   const openTimes = state.accounts.filter((a) => !a.closed && a.openedAt).map((a) => a.openedAt);
   const oldest = openTimes.length ? Math.min(...openTimes) : appMeta.startTime;
   statusTime.textContent = formatDuration(Date.now() - oldest);
-}
-
-let fpsFrames = 0;
-let fpsLastCheck = performance.now();
-function fpsLoop(now) {
-  fpsFrames += 1;
-  if (now - fpsLastCheck >= 1000) {
-    statusFps.textContent = `${fpsFrames} FPS`;
-    fpsFrames = 0;
-    fpsLastCheck = now;
-  }
-  requestAnimationFrame(fpsLoop);
 }
 
 function renderRail() {
@@ -6914,7 +6901,6 @@ async function init() {
   document.documentElement.lang = state.settings.language || 'es';
   translateStaticDom();
   render();
-  requestAnimationFrame(fpsLoop);
   if (currentSpaceAccounts().length === 0) {
     await window.api.quickAddAccount();
   }
