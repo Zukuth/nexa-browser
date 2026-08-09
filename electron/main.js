@@ -1026,14 +1026,20 @@ function readManifest(dir) {
 async function installExtensionFromStore(input) {
   const id = extensionIdFromInput(input);
   if (!id) throw new Error(mt(data.settings.language || 'es', 'main.noValidExtensionId'));
-  if (data.settings.extensions.some((e) => e.id === id)) throw new Error(mt(data.settings.language || 'es', 'main.extensionAlreadyInstalled'));
+  // Checked by destination folder, not by e.id — finishInstall now stores
+  // whatever id Electron actually assigns on load (see its comment), which
+  // for a downloaded CRX never matches this store id, so comparing against
+  // e.id here would never catch a real duplicate. destDir is deterministic
+  // from the store id regardless, so it's still a reliable "already
+  // downloaded this one" check.
+  const destDir = path.join(EXTENSIONS_DIR, id);
+  if (data.settings.extensions.some((e) => e.path === destDir)) throw new Error(mt(data.settings.language || 'es', 'main.extensionAlreadyInstalled'));
 
   const crxBuf = await downloadCrx(id);
   const zipBuf = crxToZip(crxBuf);
   const zipPath = path.join(app.getPath('temp'), `${id}-${Date.now()}.zip`);
   fs.writeFileSync(zipPath, zipBuf);
 
-  const destDir = path.join(EXTENSIONS_DIR, id);
   if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true });
   await extractZip(zipPath, { dir: destDir });
   fs.unlinkSync(zipPath);
@@ -1041,11 +1047,24 @@ async function installExtensionFromStore(input) {
   return finishInstall(id, destDir);
 }
 
+// `id` here is only a GUESS at what Electron will assign — the Chrome Web
+// Store ID for a downloaded CRX (crxToZip strips the original signature/key,
+// so Electron can't recompute the store's canonical ID from the unpacked
+// folder) or a locally-replicated path hash for a manually loaded unpacked
+// folder. Confirmed live: installing AdGuard Adblocker from the store, the
+// guessed id (bgnkhhnn...) never matched what session.extensions.
+// loadExtension() actually assigned (cbmeffkc...) — every chrome-extension://
+// URL built from the guessed id then hit ERR_BLOCKED_BY_CLIENT, leaving the
+// popup permanently blank. loaded.id (what Electron/Chromium itself decided,
+// the only id any chrome-extension:// URL or session lookup can ever match)
+// is now the source of truth; the guess is only a fallback for the rare case
+// loadExtension() failed on every session.
 async function finishInstall(id, dir) {
   const manifest = readManifest(dir);
   const loaded = await loadExtensionOnAllSessions(dir);
+  const realId = loaded?.id || id;
   const entry = {
-    id,
+    id: realId,
     path: dir,
     name: loaded?.name || manifest.name || id,
     version: loaded?.version || manifest.version || '',
@@ -1789,6 +1808,14 @@ function injectPingOverlay(wc, visible) {
       badge.textContent = '… ms';
       (document.body || document.documentElement).appendChild(badge);
       async function measure() {
+        // fetch() only supports http(s) — about:blank (every account starts
+        // there before its real src loads) and any other scheme throw
+        // "Fetch API cannot load ... URL scheme is not supported" as a real
+        // console error every 2s regardless of the try/catch around it
+        // (Chromium logs the failed request at the network layer, not just
+        // as a JS exception) — confirmed live as exactly the spam reported.
+        // Skip the tick entirely instead of letting it always fail.
+        if (!location.protocol.startsWith('http')) return;
         const url = location.href;
         const start = performance.now();
         try {
