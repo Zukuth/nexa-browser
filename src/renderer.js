@@ -49,6 +49,7 @@ const tbMute = document.getElementById('tb-mute');
 const tbMuteAll = document.getElementById('tb-mute-all');
 const tbShield = document.getElementById('tb-shield');
 const tbShieldCount = document.getElementById('tb-shield-count');
+const tbScreenshot = document.getElementById('tb-screenshot');
 const tbFullscreen = document.getElementById('tb-fullscreen');
 const tbDownloads = document.getElementById('tb-downloads');
 const tbSettings = document.getElementById('tb-settings');
@@ -218,6 +219,8 @@ const calcStatInputs = {
 const btnLayoutMenu = document.getElementById('btn-layout-menu');
 const layoutMenu = document.getElementById('layout-menu');
 const layoutOptions = document.querySelectorAll('.layout-option');
+const protectionMenu = document.getElementById('protection-menu');
+const protectionOptions = document.querySelectorAll('.protection-option');
 const btnZoomMenu = document.getElementById('btn-zoom-menu');
 const zoomMenu = document.getElementById('zoom-menu');
 
@@ -328,7 +331,9 @@ const setLanguage = document.getElementById('set-language');
 const setTheme = document.getElementById('set-theme');
 const setStartWindows = document.getElementById('set-start-windows');
 const setReopenSpace = document.getElementById('set-reopen-space');
-const setAdblock = document.getElementById('set-adblock');
+const setProtectionLevel = document.getElementById('set-protection-level');
+const setAutoEcoEnabled = document.getElementById('set-auto-eco-enabled');
+const setAutoEcoMinutes = document.getElementById('set-auto-eco-minutes');
 const setHwAccel = document.getElementById('set-hw-accel');
 const setExportSpaces = document.getElementById('set-export-spaces');
 const setImportSpaces = document.getElementById('set-import-spaces');
@@ -855,9 +860,10 @@ function render() {
   tbMuteAll.title = state.settings.allMuted ? t('js.soundOnAll') : t('topbar.muteAll');
   tbMuteAll.classList.toggle('muted', !!state.settings.allMuted);
 
-  const adBlockOn = state.settings.adBlockEnabled !== false;
-  tbShield.classList.toggle('muted', adBlockOn);
-  tbShield.title = adBlockOn ? t('js.adblockOn') : t('js.adblockOff');
+  const protectionLevel = state.settings.protectionLevel || 'standard';
+  tbShield.classList.toggle('muted', protectionLevel !== 'off');
+  tbShield.title = t('js.protection' + protectionLevel[0].toUpperCase() + protectionLevel.slice(1));
+  protectionOptions.forEach((opt) => opt.classList.toggle('active', opt.dataset.level === protectionLevel));
   const activeBlocked = active ? metrics[active.id]?.blocked || 0 : 0;
   tbShieldCount.textContent = activeBlocked > 0 ? String(activeBlocked) : '';
 
@@ -1984,6 +1990,34 @@ layoutOptions.forEach((opt) => {
   });
 });
 
+// ---- Protection level dropdown ----
+// Replaces the old blind on/off toggle — clicking the shield icon itself now
+// opens a 3-way level picker (Desactivada/Estándar/Estricta), matching how
+// Firefox's shield icon opens an ETP level panel instead of a single
+// checkbox. The count badge keeps its own separate click target (below)
+// for the blocked-log dropdown, unchanged.
+
+tbShield.addEventListener('click', (e) => {
+  e.stopPropagation();
+  closeAllMenus({ keepProtection: true });
+  if (shieldMenu && !shieldMenu.classList.contains('hidden')) shieldMenu.classList.add('hidden');
+  const opening = protectionMenu.classList.contains('hidden');
+  protectionMenu.classList.toggle('hidden', !opening);
+  tbShield.classList.toggle('open', opening);
+  if (opening) window.api.hideViews();
+  else window.api.showViews();
+});
+
+protectionOptions.forEach((opt) => {
+  opt.addEventListener('click', (e) => {
+    e.stopPropagation();
+    window.api.updateSettings({ protectionLevel: opt.dataset.level });
+    protectionMenu.classList.add('hidden');
+    tbShield.classList.remove('open');
+    window.api.showViews();
+  });
+});
+
 // ---- Zoom dropdown ----
 
 function renderZoomMenu() {
@@ -2030,7 +2064,7 @@ btnZoomMenu.addEventListener('click', (e) => {
   else window.api.showViews();
 });
 
-function closeAllMenus({ keepZoom, keepLayout } = {}) {
+function closeAllMenus({ keepZoom, keepLayout, keepProtection } = {}) {
   if (!keepLayout && !layoutMenu.classList.contains('hidden')) {
     layoutMenu.classList.add('hidden');
     btnLayoutMenu.classList.remove('open');
@@ -2039,10 +2073,14 @@ function closeAllMenus({ keepZoom, keepLayout } = {}) {
     zoomMenu.classList.add('hidden');
     btnZoomMenu.classList.remove('open');
   }
+  if (!keepProtection && !protectionMenu.classList.contains('hidden')) {
+    protectionMenu.classList.add('hidden');
+    tbShield.classList.remove('open');
+  }
 }
 
 document.addEventListener('click', () => {
-  const wasOpen = !layoutMenu.classList.contains('hidden') || !zoomMenu.classList.contains('hidden');
+  const wasOpen = !layoutMenu.classList.contains('hidden') || !zoomMenu.classList.contains('hidden') || !protectionMenu.classList.contains('hidden');
   closeAllMenus({});
   if (wasOpen) window.api.showViews();
   if (shieldMenu && !shieldMenu.classList.contains('hidden')) {
@@ -2133,6 +2171,12 @@ tbMuteAll.addEventListener('click', () => {
 });
 
 tbFullscreen.addEventListener('click', () => window.api.toggleFullscreen());
+
+tbScreenshot.addEventListener('click', async () => {
+  const active = activeAccount();
+  if (!active) return;
+  await window.api.captureScreenshot(active.id);
+});
 
 // ---- Bookmarks modal ----
 
@@ -2351,17 +2395,23 @@ function getCommandActions() {
     });
   });
 
-  const adBlockOn = state.settings.adBlockEnabled !== false;
+  const protectionLevel = state.settings.protectionLevel || 'standard';
   actions.push(
     {
       icon: '➕', label: t('cmdk.newAccount'), keywords: 'nueva cuenta agregar add account',
       run: () => window.api.quickAddAccount()
     },
+    ...['off', 'standard', 'strict']
+      .filter((level) => level !== protectionLevel)
+      .map((level) => ({
+        icon: level === 'off' ? '🚫' : '🛡️',
+        label: `${t('cmdk.protection')}: ${t('protection.' + level)}`,
+        keywords: 'adblock proteccion rastreadores bloqueador tracking',
+        run: () => window.api.updateSettings({ protectionLevel: level })
+      })),
     {
-      icon: adBlockOn ? '🛡️' : '🚫',
-      label: adBlockOn ? t('cmdk.disableAdblock') : t('cmdk.enableAdblock'),
-      keywords: 'adblock bloqueador anuncios rastreadores',
-      run: () => window.api.updateSettings({ adBlockEnabled: !adBlockOn })
+      icon: '📷', label: t('cmdk.screenshot'), keywords: 'captura pantalla screenshot',
+      run: () => { const acc = activeAccount(); if (acc) window.api.captureScreenshot(acc.id); }
     },
     {
       icon: '⬇️', label: t('cmdk.openDownloads'), keywords: 'descargas downloads',
@@ -2635,7 +2685,9 @@ function openSettingsModal() {
   setTheme.value = s.theme || 'system';
   setStartWindows.checked = !!s.startWithWindows;
   setReopenSpace.checked = s.reopenLastSpace !== false;
-  setAdblock.checked = s.adBlockEnabled !== false;
+  setProtectionLevel.value = s.protectionLevel || 'standard';
+  setAutoEcoEnabled.checked = !!(s.autoEco && s.autoEco.enabled);
+  setAutoEcoMinutes.value = String((s.autoEco && s.autoEco.minutes) || 30);
   setHwAccel.checked = s.hardwareAcceleration !== false;
   setDefaultUrl.value = s.defaultStartUrl || 'https://www.google.com';
   if (setSupportPaypalUrl) setSupportPaypalUrl.value = s.supportPaypalUrl || '';
@@ -6502,12 +6554,20 @@ setHwAccel.addEventListener('change', async () => {
   }
 });
 
-setAdblock.addEventListener('change', () => {
-  window.api.updateSettings({ adBlockEnabled: setAdblock.checked });
+setProtectionLevel.addEventListener('change', () => {
+  window.api.updateSettings({ protectionLevel: setProtectionLevel.value });
 });
 
-tbShield.addEventListener('click', () => {
-  window.api.updateSettings({ adBlockEnabled: !(state.settings.adBlockEnabled !== false) });
+setAutoEcoEnabled.addEventListener('change', () => {
+  window.api.updateSettings({
+    autoEco: { enabled: setAutoEcoEnabled.checked, minutes: Number(setAutoEcoMinutes.value) || 30 }
+  });
+});
+
+setAutoEcoMinutes.addEventListener('change', () => {
+  const minutes = Math.min(60, Math.max(1, Number(setAutoEcoMinutes.value) || 30));
+  setAutoEcoMinutes.value = String(minutes);
+  window.api.updateSettings({ autoEco: { enabled: setAutoEcoEnabled.checked, minutes } });
 });
 
 setDefaultUrl.addEventListener('change', () => {

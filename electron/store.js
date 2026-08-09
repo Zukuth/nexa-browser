@@ -94,7 +94,12 @@ const DEFAULT_DATA = {
     allMuted: false,
     extensions: [],
     maximizedAccountId: null,
-    adBlockEnabled: true,
+    protectionLevel: 'standard', // 'off' | 'standard' | 'strict' — see applyAdBlock() in main.js
+    // "Modo Eco automático" (off by default) — auto-throttles an account's
+    // rAF once it's gone `minutes` without being the focused panel, on top
+    // of (never instead of) the per-account manual ecoMode toggle. See
+    // startAutoEcoLoop() in main.js.
+    autoEco: { enabled: false, minutes: 30 },
     hardwareAcceleration: true,
     pokeIdleAlerts: {
       enabled: true,
@@ -153,11 +158,21 @@ function load() {
       settings: { ...DEFAULT_DATA.settings, ...(parsed.settings || {}) }
     };
     if (!merged.settings.supportPaypalUrl) merged.settings.supportPaypalUrl = DEFAULT_DATA.settings.supportPaypalUrl;
+    // One-time migration (2026-08-08): adBlockEnabled (on/off) replaced by
+    // protectionLevel ('off'|'standard'|'strict') — only migrate a save file
+    // that still has the old field and never saved the new one, so an
+    // already-migrated file (or a fresh install) is left untouched.
+    const oldSettings = parsed.settings || {};
+    if (oldSettings.adBlockEnabled !== undefined && oldSettings.protectionLevel === undefined) {
+      merged.settings.protectionLevel = oldSettings.adBlockEnabled === false ? 'off' : 'standard';
+    }
+    delete merged.settings.adBlockEnabled;
     // Shallow settings spread above replaces settings.stability wholesale if
     // an older save file has a partial object — merge its sub-fields
     // explicitly so a save written before a new stability field existed
     // doesn't end up with that field as `undefined`.
     merged.settings.stability = { ...DEFAULT_DATA.settings.stability, ...((parsed.settings && parsed.settings.stability) || {}) };
+    merged.settings.autoEco = { ...DEFAULT_DATA.settings.autoEco, ...((parsed.settings && parsed.settings.autoEco) || {}) };
     // Passwords are decrypted later via decryptStoredPasswords(), once
     // app.whenReady() has resolved — see the comment on that function.
     return merged;

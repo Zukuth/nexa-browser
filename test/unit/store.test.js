@@ -80,10 +80,46 @@ describe('store.load()', () => {
     assert.equal(data.settings.stability.autoRecovery, true); // default preserved
   });
 
+  test('merges settings.autoEco sub-fields instead of replacing the whole object wholesale', () => {
+    fs.writeFileSync(store.DATA_FILE, JSON.stringify({ settings: { autoEco: { enabled: true } } }), 'utf-8');
+    const data = store.load();
+    assert.equal(data.settings.autoEco.enabled, true);
+    assert.equal(data.settings.autoEco.minutes, 30); // default preserved
+  });
+
+  test('defaults autoEco to disabled with a 30-minute threshold on a fresh install', () => {
+    const data = store.load();
+    assert.deepEqual(data.settings.autoEco, { enabled: false, minutes: 30 });
+  });
+
   test('restores supportPaypalUrl if a saved file has it blank', () => {
     fs.writeFileSync(store.DATA_FILE, JSON.stringify({ settings: { supportPaypalUrl: '' } }), 'utf-8');
     const data = store.load();
     assert.equal(data.settings.supportPaypalUrl, 'https://paypal.me/Zukuth');
+  });
+
+  test('migrates adBlockEnabled:true to protectionLevel:standard for a save file that predates the new field', () => {
+    fs.writeFileSync(store.DATA_FILE, JSON.stringify({ settings: { adBlockEnabled: true } }), 'utf-8');
+    const data = store.load();
+    assert.equal(data.settings.protectionLevel, 'standard');
+    assert.equal(data.settings.adBlockEnabled, undefined);
+  });
+
+  test('migrates adBlockEnabled:false to protectionLevel:off for a save file that predates the new field', () => {
+    fs.writeFileSync(store.DATA_FILE, JSON.stringify({ settings: { adBlockEnabled: false } }), 'utf-8');
+    const data = store.load();
+    assert.equal(data.settings.protectionLevel, 'off');
+  });
+
+  test('does not let a stale adBlockEnabled override an already-migrated protectionLevel', () => {
+    fs.writeFileSync(store.DATA_FILE, JSON.stringify({ settings: { adBlockEnabled: false, protectionLevel: 'strict' } }), 'utf-8');
+    const data = store.load();
+    assert.equal(data.settings.protectionLevel, 'strict');
+  });
+
+  test('defaults to protectionLevel:standard for a fresh install with neither field', () => {
+    const data = store.load();
+    assert.equal(data.settings.protectionLevel, 'standard');
   });
 
   test('corrupt JSON falls back to defaults and backs up the bad file instead of losing data silently', () => {

@@ -52,12 +52,27 @@
       <button id="tb-mute-all" title="Silenciar todo" data-i18n-title="topbar.muteAll">🔇</button>
 
       <div class="menu-wrap">
-        <button id="tb-shield" class="shield-btn" title="Bloqueador de anuncios (clic derecho: ver detalle)" data-i18n-title="topbar.adblock">
+        <button id="tb-shield" class="shield-btn" title="Protección de rastreo" data-i18n-title="topbar.protection">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/></svg>
           <span id="tb-shield-count" class="shield-count" title="Ver qué se bloqueó" data-i18n-title="topbar.adblockViewLog"></span>
         </button>
+        <div id="protection-menu" class="dropdown-menu hidden">
+          <div class="protection-option" data-level="off">
+            <span data-i18n="protection.off">Desactivada</span>
+          </div>
+          <div class="protection-option" data-level="standard">
+            <span data-i18n="protection.standard">Estándar</span>
+          </div>
+          <div class="protection-option" data-level="strict">
+            <span data-i18n="protection.strict">Estricta</span>
+          </div>
+        </div>
         <div id="shield-menu" class="dropdown-menu hidden"></div>
       </div>
+
+      <button id="tb-screenshot" title="Capturar pantalla" data-i18n-title="topbar.screenshot">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 8a2 2 0 0 1 2-2h1l1.5-2h7L17 6h1a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8z"/><circle cx="12" cy="13" r="3.5"/></svg>
+      </button>
 
       <div class="menu-wrap">
         <button id="btn-zoom-menu" class="menu-btn" title="Zoom" data-i18n-title="topbar.zoom">
@@ -339,10 +354,25 @@
             </div>
             <div class="settings-row">
               <div>
-                <div data-i18n="settings.adblockTitle">Bloqueador de anuncios y rastreadores</div>
-                <div class="settings-hint" data-i18n="settings.adblockHint">Bloquea publicidad, analíticas y rastreadores conocidos en todas las cuentas — activado por defecto.</div>
+                <div data-i18n="settings.protectionTitle">Protección de rastreo</div>
+                <div class="settings-hint" data-i18n="settings.protectionHint">Nivel de bloqueo de anuncios, analíticas y rastreadores en todas las cuentas.</div>
               </div>
-              <label class="switch"><input type="checkbox" id="set-adblock" /><span class="slider"></span></label>
+              <select id="set-protection-level">
+                <option value="off" data-i18n="protection.off">Desactivada</option>
+                <option value="standard" data-i18n="protection.standard">Estándar</option>
+                <option value="strict" data-i18n="protection.strict">Estricta</option>
+              </select>
+            </div>
+            <div class="settings-row">
+              <div>
+                <div data-i18n="settings.autoEcoTitle">Modo Eco automático</div>
+                <div class="settings-hint" data-i18n="settings.autoEcoHint">Activa el Modo Eco solo en cuentas que llevan varios minutos sin estar en foco (no afecta a la cuenta activa, ni a las que ya tienen Modo Eco manual).</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="set-auto-eco-enabled" /><span class="slider"></span></label>
+            </div>
+            <div class="settings-row" id="set-auto-eco-minutes-row">
+              <span data-i18n="settings.autoEcoMinutes">Minutos sin foco antes de activarlo</span>
+              <input type="number" id="set-auto-eco-minutes" min="1" max="60" style="width:60px;" />
             </div>
             <div class="settings-row">
               <div>

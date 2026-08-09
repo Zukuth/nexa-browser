@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('api', {
   setLayout: (mode) => ipcRenderer.invoke('layout:set', { mode }),
   reloadAccount: (id) => ipcRenderer.invoke('account:reload', { id }),
   reloadAccountHard: (id) => ipcRenderer.invoke('account:reloadHard', { id }),
+  captureScreenshot: (id) => ipcRenderer.invoke('account:captureScreenshot', { id }),
   reopenLastClosed: () => ipcRenderer.invoke('accounts:reopenLastClosed'),
   findInPage: (id, text, opts) => ipcRenderer.send('account:findInPage', { id, text, ...opts }),
   stopFindInPage: (id) => ipcRenderer.send('account:stopFindInPage', { id }),

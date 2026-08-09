@@ -472,6 +472,30 @@ html, body {
   color: var(--accent);
 }
 
+.protection-option {
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.protection-option:hover {
+  background: rgba(255,255,255,0.05);
+}
+
+.protection-option.active {
+  color: var(--accent);
+  background: rgba(79,140,255,0.12);
+}
+
+.shield-btn.open {
+  color: var(--accent);
+  background: rgba(79,140,255,0.15);
+}
+
 #sidebar {
   position: fixed;
   top: 0;

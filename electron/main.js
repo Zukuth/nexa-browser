@@ -222,9 +222,26 @@ function recordAdBlockEntry(accountId, entry) {
   diagnostics.pushCapped(log, entry, AD_BLOCK_LOG_CAP);
 }
 
+// Three levels instead of a blind on/off, matching the shape of Firefox's
+// Enhanced Tracking Protection (Estándar/Estricto) rather than a single
+// checkbox: 'off' blocks nothing; 'standard' is the previous behavior
+// (known ad/tracker hosts, subresources only — the top-level navigation
+// itself is exempt so a listed host typed directly into the address bar
+// still loads); 'strict' additionally blocks a listed host used AS the
+// navigation target, plus every resourceType 'ping' request regardless of
+// host — Chromium's classification for navigator.sendBeacon()/<a ping>,
+// which in practice carries cross-site tracking pings almost exclusively,
+// not content a user would ever notice missing. That's the same shape as
+// ETP Strict: a whole extra tracking category, not just a longer domain
+// list.
 function applyAdBlock(ses, accountId) {
   ses.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, callback) => {
-    if (data.settings.adBlockEnabled === false || details.resourceType === 'mainFrame') {
+    const level = data.settings.protectionLevel || 'standard';
+    if (level === 'off') {
+      callback({});
+      return;
+    }
+    if (details.resourceType === 'mainFrame' && level !== 'strict') {
       callback({});
       return;
     }
@@ -235,7 +252,8 @@ function applyAdBlock(ses, accountId) {
       callback({});
       return;
     }
-    if (isBlockedHost(hostname)) {
+    const blocked = isBlockedHost(hostname) || (level === 'strict' && details.resourceType === 'ping');
+    if (blocked) {
       blockedCounts.set(accountId, (blockedCounts.get(accountId) || 0) + 1);
       recordAdBlockEntry(accountId, {
         url: details.url,
@@ -1607,6 +1625,68 @@ function disableEcoMode(wc) {
   ).catch(() => {});
 }
 
+// "Modo Eco automático" (browser-inspired idea #1, off by default) —
+// auto-applies enableEcoMode() to any open account once it's gone
+// autoEco.minutes without being data.settings.activeAccountId, layered ON
+// TOP of (never instead of) the per-account manual ecoMode toggle: an
+// account with manual eco already on is left alone here, and this never
+// writes to account.ecoMode itself, so the persisted manual preference and
+// this runtime-only auto-throttle never fight each other.
+//
+// Polls every 5s instead of hooking every one of the ~15 scattered
+// `data.settings.activeAccountId = ...` assignment sites elsewhere in this
+// file — cheap (a Set/Map lookup per open account, no I/O) and still gives
+// snappy re-focus behavior: eco drops within one tick of clicking back into
+// an account, not after the full `minutes` threshold.
+const AUTO_ECO_POLL_MS = 5000;
+const autoEcoInactiveSince = new Map(); // accountId -> Date.now() when it was last seen active
+const autoEcoApplied = new Set(); // accountId currently auto-throttled by this loop
+
+function startAutoEcoLoop() {
+  setInterval(() => {
+    const cfg = data.settings.autoEco || {};
+    const activeId = data.settings.activeAccountId;
+    const thresholdMs = Math.max(1, cfg.minutes || 30) * 60 * 1000;
+    const openIds = new Set();
+
+    for (const account of data.accounts) {
+      if (account.closed) continue;
+      const wc = views.get(account.id);
+      if (!wc || wc.isDestroyed()) continue;
+      openIds.add(account.id);
+
+      const isActive = account.id === activeId;
+      if (isActive) {
+        autoEcoInactiveSince.delete(account.id);
+      } else if (!autoEcoInactiveSince.has(account.id)) {
+        autoEcoInactiveSince.set(account.id, Date.now());
+      }
+
+      const inactiveMs = autoEcoInactiveSince.has(account.id) ? Date.now() - autoEcoInactiveSince.get(account.id) : 0;
+      const shouldAutoEco = !isActive && !!cfg.enabled && !account.ecoMode && inactiveMs >= thresholdMs;
+
+      if (shouldAutoEco && !autoEcoApplied.has(account.id)) {
+        enableEcoMode(wc);
+        autoEcoApplied.add(account.id);
+      } else if (!shouldAutoEco && autoEcoApplied.has(account.id)) {
+        // account.ecoMode true means manual eco took over — leave the page
+        // throttled, just stop tracking it as an auto-applied one.
+        if (!account.ecoMode) disableEcoMode(wc);
+        autoEcoApplied.delete(account.id);
+      }
+    }
+
+    // Drop bookkeeping for accounts that closed since the last tick, so
+    // these maps don't grow forever across the app's lifetime.
+    for (const id of [...autoEcoInactiveSince.keys()]) {
+      if (!openIds.has(id)) autoEcoInactiveSince.delete(id);
+    }
+    for (const id of [...autoEcoApplied]) {
+      if (!openIds.has(id)) autoEcoApplied.delete(id);
+    }
+  }, AUTO_ECO_POLL_MS);
+}
+
 // Real per-tab FPS counter — measures the actual page's own render loop
 // (whatever it's doing with requestAnimationFrame, including Modo Eco's
 // throttle if that account has it on), not nexa-browser's own chrome FPS
@@ -2850,6 +2930,34 @@ ipcMain.handle('accounts:reopenLastClosed', () => {
   return data;
 });
 
+// Point 7 of the browser-inspired feature list (Firefox's built-in
+// Screenshot tool) — captures exactly what the account's own <webview> is
+// currently showing via wc.capturePage() (no extra permissions needed, it's
+// the same webContents that already renders the page) and writes it
+// straight to disk as a PNG. Saved next to the user's other Nexa downloads
+// (data.settings.downloadsFolder) when one is configured, falling back to
+// the OS Pictures folder in a dedicated subfolder otherwise — mirrors how
+// handleDownloads() already resolves a save location.
+ipcMain.handle('account:captureScreenshot', async (_e, { id }) => {
+  const wc = views.get(id);
+  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  try {
+    const image = await wc.capturePage();
+    const folder = data.settings.downloadsFolder || path.join(app.getPath('pictures'), 'Nexa Browser');
+    fs.mkdirSync(folder, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filePath = path.join(folder, `nexa-screenshot-${stamp}.png`);
+    fs.writeFileSync(filePath, image.toPNG());
+    try {
+      new Notification({ title: 'Nexa Browser', body: `Captura guardada: ${filePath}` }).show();
+    } catch { /* Notification unsupported/unavailable — non-fatal, the file is already saved */ }
+    return { ok: true, path: filePath };
+  } catch (err) {
+    console.error('[screenshot] failed to capture/save', err);
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+});
+
 ipcMain.on('account:findInPage', (_e, payload) => {
   if (!payload) return;
   const { id, text, forward, findNext } = payload;
@@ -3219,7 +3327,8 @@ const SETTINGS_UPDATE_WHITELIST = new Set([
   'startWithWindows',
   'reopenLastSpace',
   'hardwareAcceleration',
-  'adBlockEnabled',
+  'protectionLevel',
+  'autoEco',
   'defaultStartUrl',
   'supportPaypalUrl',
   'defaultZoom',
@@ -3235,6 +3344,8 @@ ipcMain.handle('settings:update', (_e, fields) => {
     if (!SETTINGS_UPDATE_WHITELIST.has(key)) continue;
     if (key === 'pokeIdleAlerts' && (typeof fields[key] !== 'object' || fields[key] === null)) continue;
     if (key === 'pokeIdleMarketPrefs' && (typeof fields[key] !== 'object' || fields[key] === null)) continue;
+    if (key === 'protectionLevel' && !['off', 'standard', 'strict'].includes(fields[key])) continue;
+    if (key === 'autoEco' && (typeof fields[key] !== 'object' || fields[key] === null)) continue;
     if (key === 'supportPaypalUrl' && fields[key]) {
       try {
         const parsed = new URL(String(fields[key]).trim());
@@ -4940,6 +5051,7 @@ app.whenReady().then(() => {
   startPokeIdleAlertLoop();
   startMarketAlertLoop();
   startAutoOptimizeLoop();
+  startAutoEcoLoop();
   startFreezeDetectorLoop();
   // Wired unconditionally (cheap, idempotent) — refreshPowerBlockerNeed()
   // itself no-ops unless settings.stability.backgroundKeepalive is on, so
