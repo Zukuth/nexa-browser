@@ -23,62 +23,74 @@
 // doesn't provably eliminate) the race condition inherent to injecting
 // after page load instead of before it, which was CDP's original
 // justification. Idempotent via window.__nexaFrameCapture.
-function frameCaptureScript() {
-  return `(function() {
-    if (window.__nexaFrameCapture) return;
-    window.__nexaFrameCapture = true;
-    window.__nexaFrameQueue = window.__nexaFrameQueue || [];
-    const push = (data, socket) => {
-      try {
-        window.__nexaFrameQueue.push({ t: Date.now(), data: String(data) });
-        // Piggybacks the game's own socket reference (needed to send our
-        // own outgoing frames — family-get, pokes-get, depot moves,
-        // teleport) onto this same, already-proven-reliable capture path
-        // instead of the separate send-only patch in main.js's
-        // gameSocketCaptureScript. That one only grabs a reference when the
-        // PAGE itself calls .send(), which real accounts confirmed live can
-        // go quiet on for a while (sitting connected but idle, or right
-        // after an internal reconnect) — leaving every outgoing frame we
-        // send failing as "socket del juego no disponible" even though the
-        // account was clearly connected. Incoming messages, by contrast,
-        // arrive constantly and reliably on every account (this exact
-        // mechanism is what the 136/136 · 240/240 · 382/382 frame-parity
-        // checks were run against), so grabbing the reference here as well
-        // covers the idle-client gap.
-        if (socket) window.__nexaGameSocket = socket;
-      } catch (e) {}
-    };
-    const proto = WebSocket.prototype;
-    const originalAddEventListener = proto.addEventListener;
-    proto.addEventListener = function(type, listener, options) {
-      if (type === 'message' && typeof listener === 'function') {
-        const wrapped = function(event) {
-          push(event && event.data, this);
-          return listener.apply(this, arguments);
-        };
-        return originalAddEventListener.call(this, type, wrapped, options);
-      }
-      return originalAddEventListener.call(this, type, listener, options);
-    };
-    // Some code assigns ws.onmessage = fn directly instead of
-    // addEventListener — cover that path too via the property setter.
-    const onmessageDescriptor = Object.getOwnPropertyDescriptor(proto, 'onmessage');
-    if (onmessageDescriptor && onmessageDescriptor.set) {
-      Object.defineProperty(proto, 'onmessage', {
-        configurable: true,
-        set(fn) {
-          const wrapped = typeof fn === 'function' ? function(event) {
+// Written as `if (!already) { ...setup... }` on purpose, NOT an early
+// `if (already) return;` guard — reassertAndDrainScript() below runs this
+// same body immediately followed by the drain, in the SAME function scope.
+// An early `return` there would exit before ever reaching that drain once
+// __nexaFrameCapture was already true (i.e. every tick after the first),
+// silently stopping all telemetry for that account. Confirmed live: that
+// exact bug shipped once already — pokes/family requests kept "sending"
+// fine but their response frame never arrived because the queue had
+// stopped being drained, timing out `waitForFrame` every single time.
+const FRAME_CAPTURE_BODY = `
+    if (!window.__nexaFrameCapture) {
+      window.__nexaFrameCapture = true;
+      window.__nexaFrameQueue = window.__nexaFrameQueue || [];
+      const push = (data, socket) => {
+        try {
+          window.__nexaFrameQueue.push({ t: Date.now(), data: String(data) });
+          // Piggybacks the game's own socket reference (needed to send our
+          // own outgoing frames — family-get, pokes-get, depot moves,
+          // teleport) onto this same, already-proven-reliable capture path
+          // instead of the separate send-only patch in main.js's
+          // gameSocketCaptureScript. That one only grabs a reference when the
+          // PAGE itself calls .send(), which real accounts confirmed live can
+          // go quiet on for a while (sitting connected but idle, or right
+          // after an internal reconnect) — leaving every outgoing frame we
+          // send failing as "socket del juego no disponible" even though the
+          // account was clearly connected. Incoming messages, by contrast,
+          // arrive constantly and reliably on every account (this exact
+          // mechanism is what the 136/136 · 240/240 · 382/382 frame-parity
+          // checks were run against), so grabbing the reference here as well
+          // covers the idle-client gap.
+          if (socket) window.__nexaGameSocket = socket;
+        } catch (e) {}
+      };
+      const proto = WebSocket.prototype;
+      const originalAddEventListener = proto.addEventListener;
+      proto.addEventListener = function(type, listener, options) {
+        if (type === 'message' && typeof listener === 'function') {
+          const wrapped = function(event) {
             push(event && event.data, this);
-            return fn.apply(this, arguments);
-          } : fn;
-          onmessageDescriptor.set.call(this, wrapped);
-        },
-        get() {
-          return onmessageDescriptor.get.call(this);
+            return listener.apply(this, arguments);
+          };
+          return originalAddEventListener.call(this, type, wrapped, options);
         }
-      });
+        return originalAddEventListener.call(this, type, listener, options);
+      };
+      // Some code assigns ws.onmessage = fn directly instead of
+      // addEventListener — cover that path too via the property setter.
+      const onmessageDescriptor = Object.getOwnPropertyDescriptor(proto, 'onmessage');
+      if (onmessageDescriptor && onmessageDescriptor.set) {
+        Object.defineProperty(proto, 'onmessage', {
+          configurable: true,
+          set(fn) {
+            const wrapped = typeof fn === 'function' ? function(event) {
+              push(event && event.data, this);
+              return fn.apply(this, arguments);
+            } : fn;
+            onmessageDescriptor.set.call(this, wrapped);
+          },
+          get() {
+            return onmessageDescriptor.get.call(this);
+          }
+        });
+      }
     }
-  })();`;
+`;
+
+function frameCaptureScript() {
+  return `(function() {${FRAME_CAPTURE_BODY}})();`;
 }
 
 // Drains window.__nexaFrameQueue — polled from the main process at a fixed
@@ -95,4 +107,15 @@ function drainFrameQueueScript() {
   })();`;
 }
 
-module.exports = { frameCaptureScript, drainFrameQueueScript };
+// Same self-healing re-assert + drain the 250ms polling loop needs on every
+// tick, folded into ONE executeJavaScript() round-trip instead of two
+// separate ones. See the FRAME_CAPTURE_BODY comment above for the bug this
+// already caught once: the guard here MUST NOT early-return past the drain.
+function reassertAndDrainScript() {
+  return `(function() {${FRAME_CAPTURE_BODY}
+    if (!window.__nexaFrameQueue) return [];
+    return window.__nexaFrameQueue.splice(0);
+  })();`;
+}
+
+module.exports = { frameCaptureScript, drainFrameQueueScript, reassertAndDrainScript };

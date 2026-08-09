@@ -400,6 +400,23 @@ if (forceSoftwareRendering || data.settings.hardwareAcceleration === false) {
 // on it.
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 
+// On a hybrid-graphics machine (a dedicated GPU alongside integrated
+// graphics — common on laptops, but also plenty of desktops with both a
+// discrete card and the CPU's built-in one), Chromium's default GPU
+// selection is not guaranteed to pick the dedicated one. Confirmed live on
+// this exact machine (NVIDIA RTX 2060 + AMD integrated): without this flag,
+// Electron's own app.getGPUInfo('complete') reported
+// glRenderer "ANGLE (AMD ... Radeon(TM) Graphics ...)" — the weaker
+// integrated GPU — even with hardwareAcceleration on. Adding
+// --force_high_performance_gpu (Chromium's own standard switch for exactly
+// this hybrid-graphics case, not an experimental flag) flipped it to
+// glRenderer "ANGLE (NVIDIA ...)" on the same run. Only applied when
+// hardware acceleration is actually enabled — forcing a specific GPU means
+// nothing once rendering is already software-only.
+if (!forceSoftwareRendering && data.settings.hardwareAcceleration !== false) {
+  app.commandLine.appendSwitch('force_high_performance_gpu');
+}
+
 // Vanilla Electron doesn't ship Widevine (it's Google-licensed DRM, not something
 // an open-source build can bundle) — this borrows the CDM binary that a real,
 // already-licensed Chrome or Edge install has on disk, so DRM sites (Netflix,
@@ -1308,6 +1325,29 @@ function syncBackgroundThrottling(wc, url) {
   wc.setBackgroundThrottling(!gameTelemetry.isGameUrl(url));
 }
 
+// Enforces a minimum gap between consecutive 'webview:ready' dispatches —
+// only matters when several accounts attach in a tight burst (e.g. app
+// startup restoring N saved accounts, whose webview elements all get created
+// in the same synchronous forEach in renderer.js's reconcileWebviews()).
+// Without this, every account's real navigation (its actual JS/CSS/images,
+// not the about:blank placeholder) starts within the same instant — a real
+// CPU/network spike confirmed live against sites like slumaworld.com (~30
+// separate JS requests) and baiakidle.com (2 autoplay background videos) on
+// their very first load. A single account opened on its own (not part of a
+// startup burst) has no recent dispatch to stagger against, so `delay`
+// comes out to 0 and it navigates exactly as before — zero added latency
+// outside of a burst.
+const WEBVIEW_READY_STAGGER_MS = 400;
+let lastWebviewReadyAt = 0;
+function scheduleWebviewReady(hostWebContents, accountId) {
+  const now = Date.now();
+  const delay = Math.max(0, lastWebviewReadyAt + WEBVIEW_READY_STAGGER_MS - now);
+  lastWebviewReadyAt = now + delay;
+  setTimeout(() => {
+    if (!hostWebContents.isDestroyed()) hostWebContents.send('webview:ready', accountId);
+  }, delay);
+}
+
 // Wires up a specific account's guest <webview> webContents — called from a
 // 'did-attach-webview' handler once the renderer has actually created the
 // DOM element, instead of main constructing a native WebContentsView itself
@@ -1504,7 +1544,7 @@ function wireAccountWebContents(wc, account, hostWebContents) {
     }
   });
 
-  if (!hostWebContents.isDestroyed()) hostWebContents.send('webview:ready', account.id);
+  scheduleWebviewReady(hostWebContents, account.id);
 }
 
 // Shared by both the main window and any popped-out account window — finds
@@ -4387,13 +4427,40 @@ async function optimizeMemory() {
   return optimizeMemorySafe();
 }
 
-// Auto-optimize: check every 30 min, fire when 24 h have elapsed.
+// A blind 24h timer alone means an account genuinely growing fast (several
+// accounts open a long time) waits up to 24h before getting any relief, even
+// while real memory pressure is already building. app.getAppMetrics() is
+// data Electron already tracks internally per-process — no extra cost to
+// read — so it's used as a second, independent trigger alongside the 24h
+// one, without changing what optimizeMemorySafe() itself does or its
+// per-account shouldSkipOptimize gating.
+const MEMORY_PRESSURE_THRESHOLD_MB = 6000;
+function totalAccountMemoryMb() {
+  try {
+    return app.getAppMetrics().reduce((sum, m) => {
+      const kb = m.memory && typeof m.memory.workingSetSize === 'number' ? m.memory.workingSetSize : 0;
+      return sum + kb / 1024;
+    }, 0);
+  } catch {
+    return 0;
+  }
+}
+
+// Auto-optimize: check every 30 min, fire when 24 h have elapsed OR when
+// real memory pressure crosses MEMORY_PRESSURE_THRESHOLD_MB, whichever
+// comes first.
 function startAutoOptimizeLoop() {
   setInterval(async () => {
     if (optimizeRunning) return;
     const elapsed = Date.now() - lastOptimizeAt;
     if (elapsed >= 24 * 60 * 60 * 1000) {
       console.log('[optimize] 24 h threshold reached — running auto-optimization (safe tier)');
+      await optimizeMemorySafe();
+      return;
+    }
+    const memoryMb = totalAccountMemoryMb();
+    if (memoryMb >= MEMORY_PRESSURE_THRESHOLD_MB) {
+      console.log('[optimize] memory pressure threshold reached (', Math.round(memoryMb), 'MB across all processes) — running auto-optimization early (safe tier)');
       await optimizeMemorySafe();
     }
   }, 30 * 60 * 1000);

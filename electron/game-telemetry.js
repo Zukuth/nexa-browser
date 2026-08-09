@@ -821,14 +821,15 @@ function attachCaptureViaJs(wc, accountId, { onFrame } = {}) {
     // state lost some other way) while this SAME polling loop keeps
     // reading real frames from it just fine — which ruled out the guest
     // page being suspended and pointed at the injection itself being the
-    // gap. Both capture scripts guard themselves (window.__nexaFrameCapture
-    // / window.__nexaWsCapture), so re-running them here is a no-op once
-    // already active — cheap self-healing instead of a single fragile
-    // injection point, at the same 250ms cadence this loop already runs at.
-    try { await wc.executeJavaScript(socketCapture.frameCaptureScript()); } catch {}
+    // gap. The capture script guards itself (window.__nexaFrameCapture), so
+    // re-running it is a no-op once already active. Folded into the SAME
+    // executeJavaScript() call as the drain (reassertAndDrainScript) instead
+    // of a separate one before it, cutting this loop's IPC round-trips per
+    // tick in half — see game-socket-capture.js's FRAME_CAPTURE_BODY comment
+    // for why that guard specifically must NOT early-return past the drain.
     let frames;
     try {
-      frames = await wc.executeJavaScript(socketCapture.drainFrameQueueScript());
+      frames = await wc.executeJavaScript(socketCapture.reassertAndDrainScript());
     } catch {
       return;
     }
