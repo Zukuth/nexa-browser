@@ -16,6 +16,8 @@ const memoryOptimizer = require('./memory-optimizer');
 const { classifyCrash } = require('./crash-classifier');
 const diagnostics = require('./diagnostics');
 const { normalizeAddressInput } = require('./address-bar');
+const log = require('electron-log');
+const { autoUpdater } = require('electron-updater');
 // Catálogo único de traducciones compartido con el renderer — ver el comentario
 // de cabecera en src/i18n-data.js. El proceso main no tiene sandbox, así que
 // requerir un archivo bajo src/ funciona igual que con game-telemetry.js.
@@ -37,6 +39,15 @@ function spellCheckerLanguagesFor(lang) {
   const primary = SPELLCHECK_LOCALES[lang] || 'es-419';
   return primary === 'en-US' ? [primary] : [primary, 'en-US'];
 }
+
+// Redirects every existing console.log/warn/error call (main process) to
+// electron-log's file transport (with rotation) in addition to the terminal —
+// no need to touch the hundreds of call sites already scattered through this
+// file. Log file lives under app.getPath('userData')/logs/main.log.
+log.initialize();
+Object.assign(console, log.functions);
+autoUpdater.logger = log;
+autoUpdater.autoDownload = true;
 
 // Last-resort net: an ipcMain.on (not .handle) listener that throws crashes the
 // whole app with no trace, since Electron only auto-catches .handle rejections.
@@ -5208,6 +5219,14 @@ app.whenReady().then(() => {
     onUnlockScreen: () => refreshPowerBlockerNeed()
   });
   app.setLoginItemSettings({ openAtLogin: !!data.settings.startWithWindows });
+  // No-ops on an unpackaged dev run (electron-updater needs app-update.yml,
+  // which electron-builder only generates for a real packaged install) —
+  // guarded so `npm start` never logs a spurious "update check failed".
+  if (app.isPackaged) {
+    autoUpdater.checkForUpdatesAndNotify().catch((err) => {
+      console.error('[autoUpdater] check failed', err);
+    });
+  }
   createWindow();
   mainWindow.webContents.once('did-finish-load', () => {
     renderLayout();

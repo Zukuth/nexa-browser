@@ -16,6 +16,8 @@
     "test:soak": "node scripts/soak.js"
   },
   "dependencies": {
+    "electron-log": "^5.4.4",
+    "electron-updater": "^6.8.9",
     "extract-zip": "^2.0.1"
   },
   "devDependencies": {
