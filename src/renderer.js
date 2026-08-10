@@ -4871,20 +4871,6 @@ function marketListingSpeciesId(listing) {
   return typeof raw === 'number' && Number.isFinite(raw) ? raw : Number(raw) || null;
 }
 
-function marketCreatureForListing(listing) {
-  const speciesId = marketListingSpeciesId(listing);
-  if (creatureCatalogCache && speciesId != null) {
-    const byId = creatureCatalogCache.find((c) => Number(c.pokeId) === Number(speciesId));
-    if (byId) return byId;
-  }
-  const name = normalizeTextForFilter(marketListingName(listing));
-  if (creatureCatalogCache && name) {
-    const exact = creatureCatalogCache.find((c) => normalizeTextForFilter(c.name) === name);
-    if (exact) return exact;
-  }
-  return null;
-}
-
 function marketListingSprite(listing) {
   if (!listing || typeof listing !== 'object') return null;
   const name = marketListingName(listing);

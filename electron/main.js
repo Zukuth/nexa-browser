@@ -62,7 +62,6 @@ process.on('unhandledRejection', (err) => {
 });
 
 const APP_ICON_PATH = path.join(__dirname, 'assets', 'icon.png');
-const GAME_STATE_RELOAD_TIMEOUT_MS = 12000;
 
 // app.getPath('userData') is derived from package.json's "name" field
 // ("nexa-browser" since the rebrand) — do not change that field again without
@@ -4041,39 +4040,6 @@ async function pulseGameRealtimeConnection(wc) {
   } catch (err) {
     return { ...report, error: String((err && err.message) || err) };
   }
-}
-
-function reloadGamePageForFreshState(wc) {
-  return new Promise((resolve) => {
-    const report = { ok: false, reloaded: false };
-    if (!wc || wc.isDestroyed()) {
-      resolve({ ...report, error: 'webContents no disponible' });
-      return;
-    }
-    let settled = false;
-    const done = (payload) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      wc.removeListener('did-finish-load', onLoad);
-      wc.removeListener('did-fail-load', onFail);
-      resolve(payload);
-    };
-    const onLoad = () => done({ ok: true, reloaded: true });
-    const onFail = (_event, errorCode, errorDescription) => done({
-      ok: false,
-      reloaded: true,
-      error: `${errorCode || ''} ${errorDescription || 'reload fallido'}`.trim()
-    });
-    const timer = setTimeout(() => done({ ok: false, reloaded: true, error: 'timeout esperando recarga del juego' }), GAME_STATE_RELOAD_TIMEOUT_MS);
-    wc.once('did-finish-load', onLoad);
-    wc.once('did-fail-load', onFail);
-    try {
-      wc.reload();
-    } catch (err) {
-      done({ ok: false, reloaded: false, error: String((err && err.message) || err) });
-    }
-  });
 }
 
 ipcMain.handle('gameStats:get', async () => {
