@@ -2809,7 +2809,20 @@ function renderExtensions() {
     removeBtn.textContent = t('settings.remove');
     removeBtn.onclick = () => window.api.removeExtension(ext.id);
 
-    actions.append(toggleLabel, removeBtn);
+    actions.append(toggleLabel);
+    // Only extensions that declare options_page/options_ui.page get this —
+    // opens it in our own window instead of relying on the extension
+    // calling chrome.tabs.create() itself, which Electron doesn't
+    // implement (confirmed against Tampermonkey's Dashboard button, which
+    // otherwise does nothing).
+    if (ext.optionsPage) {
+      const optionsBtn = document.createElement('button');
+      optionsBtn.className = 'ext-options';
+      optionsBtn.textContent = t('settings.extOptions');
+      optionsBtn.onclick = () => window.api.openExtensionOptions(ext.id);
+      actions.append(optionsBtn);
+    }
+    actions.append(removeBtn);
     item.append(icon, info, actions);
     extListEl.appendChild(item);
   });

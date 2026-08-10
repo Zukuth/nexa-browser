@@ -1014,6 +1014,20 @@ function extractExtensionAction(manifest, dir) {
   };
 }
 
+// Chrome's standard hook for a dedicated settings/dashboard page — the
+// BROWSER is supposed to provide the entry point to reach it (a menu item,
+// a button), not the extension itself. Electron doesn't implement
+// chrome.tabs.create at all (confirmed against the official "Chrome
+// Extension Support" doc — create isn't in the supported chrome.tabs
+// method list), which is exactly what breaks Tampermonkey's own "Dashboard"/
+// "Create a new script" buttons (they call tabs.create to open this same
+// page). Reading options_page/options_ui.page directly and giving it our
+// own open path sidesteps that gap entirely — confirmed live against
+// Tampermonkey's real manifest.json (options_page: "options.html").
+function extractExtensionOptionsPage(manifest) {
+  return (manifest.options_ui && manifest.options_ui.page) || manifest.options_page || null;
+}
+
 function readManifest(dir) {
   try {
     const raw = fs.readFileSync(path.join(dir, 'manifest.json'), 'utf-8');
@@ -1070,6 +1084,7 @@ async function finishInstall(id, dir) {
     version: loaded?.version || manifest.version || '',
     description: manifest.description || '',
     action: extractExtensionAction(manifest, dir),
+    optionsPage: extractExtensionOptionsPage(manifest),
     enabled: true
   };
   data.settings.extensions.push(entry);
@@ -3319,6 +3334,50 @@ ipcMain.handle('extensions:openPopup', (_e, { id }) => {
   return { ok: true };
 });
 
+// Opens an extension's own options/dashboard page (options_page or
+// options_ui.page in its manifest) in a real, resizable window — the
+// browser-provided entry point standard extensions expect (a menu item,
+// not a tabs.create() call the extension makes itself). Electron doesn't
+// implement chrome.tabs.create at all, which is exactly what breaks
+// Tampermonkey's own "Dashboard"/"Create a new script" buttons (confirmed
+// live: they call tabs.create to reach this same page). A regular
+// BrowserWindow here — not the small alwaysOnTop popup style above — since
+// an options/dashboard page is meant to be used like a real window, not
+// dismissed on blur.
+const extensionOptionsWindows = new Map();
+ipcMain.handle('extensions:openOptions', (_e, { id }) => {
+  const ext = data.settings.extensions.find((e) => e.id === id);
+  if (!ext) return { ok: false, error: 'Extensión no encontrada' };
+  if (!ext.optionsPage) {
+    return { ok: false, error: 'Esta extensión no declara una página de opciones propia.' };
+  }
+
+  const existing = extensionOptionsWindows.get(id);
+  if (existing && !existing.isDestroyed()) {
+    existing.focus();
+    return { ok: true };
+  }
+
+  const activeId = data.settings.activeAccountId;
+  let wc = activeId ? views.get(activeId) : null;
+  if (!wc || wc.isDestroyed()) {
+    wc = [...views.values()].find((v) => !v.isDestroyed());
+  }
+  if (!wc) return { ok: false, error: 'Abrí al menos una cuenta primero.' };
+
+  const optionsWin = new BrowserWindow({
+    width: 1000,
+    height: 720,
+    title: ext.name,
+    backgroundColor: '#ffffff',
+    webPreferences: { session: wc.session }
+  });
+  extensionOptionsWindows.set(id, optionsWin);
+  optionsWin.on('closed', () => extensionOptionsWindows.delete(id));
+  optionsWin.loadURL(`chrome-extension://${id}/${ext.optionsPage}`);
+  return { ok: true };
+});
+
 ipcMain.handle('extensions:toggle', (_e, { id, enabled }) => {
   const ext = data.settings.extensions.find((e) => e.id === id);
   if (!ext) return data;
@@ -5178,6 +5237,16 @@ app.whenReady().then(() => {
       ext.action = extractExtensionAction(readManifest(ext.path), ext.path);
     } catch {
       ext.action = null;
+    }
+  }
+  // Backfills `.optionsPage` for extensions installed before that field
+  // existed — same reasoning as the `.action` backfill above.
+  for (const ext of data.settings.extensions) {
+    if (ext.optionsPage !== undefined) continue;
+    try {
+      ext.optionsPage = extractExtensionOptionsPage(readManifest(ext.path));
+    } catch {
+      ext.optionsPage = null;
     }
   }
   store.watchDataFile(() => {
