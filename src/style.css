@@ -3395,21 +3395,6 @@ html, body {
   color: #ff6b6b;
 }
 
-.ext-options {
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 11px;
-  padding: 3px 8px;
-}
-
-.ext-options:hover {
-  color: var(--text);
-  border-color: var(--accent);
-}
-
 .switch {
   position: relative;
   display: inline-block;

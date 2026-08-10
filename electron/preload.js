@@ -117,7 +117,6 @@ contextBridge.exposeInMainWorld('api', {
   moveFamilyItem: (id, itemId, quantity, dir) => ipcRenderer.invoke('family:moveItem', { id, itemId, quantity, dir }),
   moveFamilyPoke: (id, pokeId, dir) => ipcRenderer.invoke('family:movePoke', { id, pokeId, dir }),
   openExtensionPopup: (id) => ipcRenderer.invoke('extensions:openPopup', { id }),
-  openExtensionOptions: (id) => ipcRenderer.invoke('extensions:openOptions', { id }),
   exportDiagnosticsReport: () => ipcRenderer.invoke('diagnostics:exportReport'),
   startNetLog: (id) => ipcRenderer.invoke('diagnostics:startNetLog', { id }),
   stopNetLog: () => ipcRenderer.invoke('diagnostics:stopNetLog'),
