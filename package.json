@@ -4,7 +4,7 @@
   "description": "Navegador de escritorio multi-cuenta: abre varias sesiones aisladas del mismo sitio en una sola ventana.",
   "main": "electron/main.js",
   "author": "Nexa Browser",
-  "license": "MIT",
+  "license": "UNLICENSED",
   "private": true,
   "scripts": {
     "start": "node scripts/start.js",

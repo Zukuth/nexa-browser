@@ -1,0 +1,9 @@
+Copyright (c) 2026 Nexa Browser. Todos los derechos reservados.
+
+Este software y su código fuente son propiedad privada. Queda prohibida
+su copia, distribución, modificación, ingeniería inversa o uso, total o
+parcial, sin autorización previa y por escrito del autor.
+
+No se concede ninguna licencia de código abierto sobre este proyecto.
+El campo "license": "UNLICENSED" en package.json refleja esto mismo de
+forma legible por herramientas (npm, GitHub, escáneres de dependencias).
