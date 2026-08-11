@@ -199,3 +199,38 @@ describe('store.save() / load() round trip', () => {
     assert.equal(decrypted[0].password, '');
   });
 });
+
+describe('watchDataFile()', () => {
+  beforeEach(resetDataDir);
+
+  // save() writes a temp file then renameSync()s it over DATA_FILE, which
+  // fires this same fs.watch — regression test for the bug where the app
+  // warned itself about its own save on every persist(), burying any real
+  // external-modification signal in false positives (see the comment on
+  // watchDataFile in store.js for the full story).
+  test('does not fire onChange for this process\'s own save()', async () => {
+    const data = store.load();
+    store.save(data);
+    let fired = false;
+    const watcher = store.watchDataFile(() => { fired = true; });
+    data.settings.theme = 'dark';
+    store.save(data);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    watcher.close();
+    assert.equal(fired, false);
+  });
+
+  test('fires onChange when the file content differs from what this process last saved', async () => {
+    const data = store.load();
+    store.save(data);
+    let fired = false;
+    const watcher = store.watchDataFile(() => { fired = true; });
+    // Bypasses store.save() on purpose — simulates a second instance or a
+    // manual edit, the actual case this watcher exists to catch.
+    const externalJson = JSON.stringify({ ...data, settings: { ...data.settings, theme: 'external-edit' } }, null, 2);
+    fs.writeFileSync(store.DATA_FILE, externalJson, 'utf-8');
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    watcher.close();
+    assert.equal(fired, true);
+  });
+});
