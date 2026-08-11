@@ -1412,6 +1412,17 @@ html, body {
   padding: 20px 0;
 }
 
+.dns-howto {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin-top: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(224, 195, 65, 0.08);
+}
+
 .cmdk-modal {
   width: 560px;
   max-height: 60vh;
