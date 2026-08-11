@@ -40,6 +40,13 @@ function spellCheckerLanguagesFor(lang) {
   return primary === 'en-US' ? [primary] : [primary, 'en-US'];
 }
 
+// Terminal-only console.log, captured before the Object.assign below
+// overwrites the global console — used for the per-page console-message
+// forwarder (see wireAccountWebContents), which is pure page noise (Cloudflare
+// Turnstile debug spam, WebGL/WebGPU warnings from the game's own pages) and
+// would otherwise flood main.log until it's all that's left after rotation.
+const nativeConsoleLog = console.log.bind(console);
+
 // Redirects every existing console.log/warn/error call (main process) to
 // electron-log's file transport (with rotation) in addition to the terminal —
 // no need to touch the hundreds of call sites already scattered through this
@@ -1579,7 +1586,7 @@ function wireAccountWebContents(wc, account, hostWebContents) {
     }
   });
   wc.on('console-message', (_e, level, message, line, sourceId) => {
-    console.log(`[page:${account.id}] ${message} (${sourceId}:${line})`);
+    nativeConsoleLog(`[page:${account.id}] ${message} (${sourceId}:${line})`);
   });
   // A page can destroy its own webContents any time by calling window.close()
   // on itself (normal web behavior, e.g. after a payment/OAuth flow), and the
