@@ -1315,6 +1315,30 @@ html, body {
   width: 420px;
 }
 
+.update-modal {
+  width: 480px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.update-version {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 4px 0 10px;
+}
+
+.update-notes {
+  overflow-y: auto;
+  max-height: 40vh;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
 .dns-modal {
   width: 520px;
   max-height: 80vh;

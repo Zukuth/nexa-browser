@@ -93,6 +93,12 @@ const dnsRunBtn = document.getElementById('dns-run-test');
 const dnsCopyRestoreBtn = document.getElementById('dns-copy-restore');
 const btnCloseDns = document.getElementById('btn-close-dns');
 
+const updateModal = document.getElementById('update-modal');
+const updateVersionEl = document.getElementById('update-version');
+const updateNotesEl = document.getElementById('update-notes');
+const updateLaterBtn = document.getElementById('update-later');
+const updateRestartBtn = document.getElementById('update-restart');
+
 const cmdkModal = document.getElementById('cmdk-modal');
 const cmdkInput = document.getElementById('cmdk-input');
 const cmdkListEl = document.getElementById('cmdk-list');
@@ -2476,6 +2482,23 @@ function closeDnsModal() {
   popModal();
 }
 
+// ---- Update changelog ----
+// Shown once electron-updater finishes downloading an update in the
+// background (main.js's autoUpdater.on('update-downloaded', ...)) — before
+// this, the only signal was the native OS notification from
+// checkForUpdatesAndNotify(), with no way to see what actually changed.
+function openUpdateModal({ version, releaseNotes }) {
+  updateVersionEl.textContent = t('updateModal.version', { version });
+  updateNotesEl.textContent = releaseNotes || t('updateModal.noNotes');
+  updateModal.classList.remove('hidden');
+  pushModal();
+}
+
+function closeUpdateModal() {
+  updateModal.classList.add('hidden');
+  popModal();
+}
+
 // ---- Command palette (Ctrl+K) ----
 
 let cmdkResults = [];
@@ -2698,6 +2721,10 @@ dnsCopyRestoreBtn.addEventListener('click', async () => {
   dnsCopyRestoreBtn.textContent = t('dnsModal.copied');
   setTimeout(() => { dnsCopyRestoreBtn.textContent = t('dnsModal.restore'); }, 1500);
 });
+
+updateLaterBtn.addEventListener('click', closeUpdateModal);
+updateRestartBtn.addEventListener('click', () => window.api.installUpdate());
+window.api.onUpdateDownloaded(openUpdateModal);
 dlOpenFolder.addEventListener('click', () => window.api.openDownloads());
 dlClear.addEventListener('click', async () => {
   await window.api.clearDownloads();

@@ -31,6 +31,8 @@ contextBridge.exposeInMainWorld('api', {
   getDnsApplyCommand: (servers) => ipcRenderer.invoke('dns:getApplyCommand', { servers }),
   getDnsRestoreCommand: () => ipcRenderer.invoke('dns:getRestoreCommand'),
   copyDnsCommand: (command) => ipcRenderer.invoke('dns:copyCommand', { command }),
+  onUpdateDownloaded: (cb) => ipcRenderer.on('update:downloaded', (_e, data) => cb(data)),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
   reopenLastClosed: () => ipcRenderer.invoke('accounts:reopenLastClosed'),
   findInPage: (id, text, opts) => ipcRenderer.send('account:findInPage', { id, text, ...opts }),
   stopFindInPage: (id) => ipcRenderer.send('account:stopFindInPage', { id }),

@@ -5159,6 +5159,13 @@ ipcMain.handle('dns:copyCommand', (_e, { command }) => {
   return { ok: true };
 });
 
+// Closes every window and installs the already-downloaded update — the user
+// only reaches this after seeing what's actually in it (see the
+// update-downloaded listener above and the changelog modal in renderer.js).
+ipcMain.handle('update:install', () => {
+  autoUpdater.quitAndInstall();
+});
+
 // Session partitions (accountPartition's persist:account-<id>) live on disk
 // as <userData>/Partitions/account-<id>/ for as long as Chromium/Electron
 // keeps them, independent of whether the account is still tracked in
@@ -5273,6 +5280,21 @@ app.whenReady().then(() => {
       console.error('[autoUpdater] check failed', err);
     });
   }
+  // Fires once the update finished downloading in the background (still
+  // needs the user to actually restart — checkForUpdatesAndNotify() only
+  // shows a native OS notification for that part). This shows our own
+  // in-app changelog instead of leaving the user to find out what changed
+  // only from that notification, or not at all.
+  autoUpdater.on('update-downloaded', (info) => {
+    if (!mainWindowAlive()) return;
+    const notes = info.releaseNotes;
+    const releaseNotes = typeof notes === 'string'
+      ? notes
+      : Array.isArray(notes)
+        ? notes.map((n) => `## ${n.version}\n${n.note || ''}`).join('\n\n')
+        : '';
+    mainWindow.webContents.send('update:downloaded', { version: info.version, releaseNotes });
+  });
   createWindow();
   mainWindow.webContents.once('did-finish-load', () => {
     renderLayout();
