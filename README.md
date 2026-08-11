@@ -128,6 +128,19 @@ Construido con [Electron](https://www.electronjs.org/) — motor Chromium real, 
 
 ---
 
+## Rendimiento por versión
+
+Medido con el mismo escenario cada vez (3 cuentas recién abiertas, todas en la pantalla de login del juego, 25s de estabilización, `app.getAppMetrics()` real de Electron) — para poder responder "¿mejoramos o empeoramos?" sin tener que reconstruir un benchmark desde cero cada vez.
+
+| Versión | RAM total (3 cuentas) | Procesos | CPU total | Medido |
+|---|---|---|---|---|
+| v0.3.6 | 1595 MB | 12 | 2.6% | 2026-08-10 |
+| dev (post-0.3.7, sin versionar aún) | **1184 MB** (-26%) | 10 | 2.9% | 2026-08-10 |
+
+Antes de publicar la próxima versión, correr este mismo escenario y agregar una fila — evita repetir el trabajo de armar un worktree de la versión vieja para comparar a mano.
+
+---
+
 ## Changelog
 
 ### v0.3.7 — Depot y Familia dejan de fallar con varias cuentas abiertas
