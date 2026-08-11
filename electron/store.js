@@ -197,6 +197,12 @@ function load() {
   }
 }
 
+// Content of the last save() this process made, so watchDataFile can tell its
+// own write (the renameSync below fires fs.watch same as any other change)
+// apart from an actual external edit or a second instance — see the comment
+// on watchDataFile for why a time-based guess isn't good enough here.
+let lastSavedJson = null;
+
 function save(data) {
   // Write to a temp file then rename over the real one — renameSync within the
   // same directory is atomic, so a crash/power-loss mid-save leaves either the
@@ -210,11 +216,19 @@ function save(data) {
   const json = JSON.stringify(toWrite, null, 2);
   fs.writeFileSync(TMP_FILE, json, 'utf-8');
   fs.renameSync(TMP_FILE, DATA_FILE);
+  lastSavedJson = json;
 }
 
 // Watches the data file for external modifications (e.g. a second app instance
 // or a manual edit) and logs a warning so stale in-memory state is visible in
 // the logs. Returns the watcher so the caller can close it on quit.
+//
+// save() above renames a temp file over DATA_FILE, which fires this same
+// fs.watch — a time-based debounce alone can't tell that apart from a real
+// external write (the rename can legitimately take longer than any fixed
+// window under disk/AV load). Comparing against the content save() actually
+// wrote is exact instead of a guess: if the file now matches what this
+// process itself last saved, it's our own rename, not an external change.
 function watchDataFile(onChange) {
   try {
     if (!fs.existsSync(DATA_FILE)) return null;
@@ -222,6 +236,13 @@ function watchDataFile(onChange) {
     const watcher = fs.watch(DATA_FILE, () => {
       clearTimeout(debounce);
       debounce = setTimeout(() => {
+        let current;
+        try {
+          current = fs.readFileSync(DATA_FILE, 'utf-8');
+        } catch {
+          return; // mid-rename read miss — the next watch event will catch the settled file.
+        }
+        if (current === lastSavedJson) return; // our own save(), not an external change.
         console.warn('[store] data file was modified outside this process — in-memory state may be stale');
         if (typeof onChange === 'function') onChange();
       }, 300);
