@@ -158,6 +158,11 @@ contextBridge.exposeInMainWorld('api', {
   // <webview> element after this, so CDP/telemetry attach always wins the
   // race against the real navigation.
   onWebviewReady: (cb) => ipcRenderer.on('webview:ready', (_e, accountId) => cb(accountId)),
+  // Fired whenever an account's page enters/leaves native Picture-in-Picture
+  // (see account-preload.js + wc.ipc.on('nexa-pip-state') in main.js) — lets
+  // positionWebviews() keep that account's <webview> off-screen instead of
+  // display:none while it's not the active panel.
+  onPipState: (cb) => ipcRenderer.on('account:pipState', (_e, data) => cb(data)),
   // Live-follows a divider drag: main reflects the dragged panel's content
   // rect straight back so the renderer can resize that one <webview>
   // element immediately, without waiting for a full panels:geometry

@@ -506,6 +506,19 @@ let panelsGeometry = [];
 // Geometry keeps updating in the background either way; the rebuild is only
 // deferred, and runs once immediately after the drag ends.
 let dragInProgress = false;
+// Set by startSplitDrag/startFreeDrag to their own onUp() for the duration of
+// the drag, cleared when onUp runs normally. A drag's mouseup/mousemove
+// listeners live on `document`, which never fires if the user releases the
+// mouse button outside the OS window (drags off-window and lets go over
+// another app) -- with no mouseup, dragInProgress is stuck `true` forever,
+// and onPanelsGeometry's `if (dragInProgress) return;` silently stops
+// applying every future panels:geometry push. Sidebar highlighting still
+// works (broadcastState is a separate channel), so the only visible symptom
+// is clicking an account highlighting it as active while the panel content
+// never actually swaps -- no exception anywhere, since nothing throws.
+// Releasing the mouse outside the window normally also blurs the window, so
+// that's the recovery hook below actually runs the drag's own cleanup.
+let activeDragCleanup = null;
 let editingSpaceId = null;
 
 // Same rebuild-mid-drag hazard as dragInProgress above, but for the sidebar
@@ -1135,11 +1148,23 @@ function reconcileWebviews() {
 }
 
 // Shows/positions every <webview> the current layout has a cell for, and
-// hides (without removing) every other open account's <webview>.
+// hides (without removing) every other open account's <webview> — except an
+// account with an active Picture-in-Picture session (see onPipState below),
+// which stays off-screen instead of display:none. A hidden guest stops
+// compositing entirely, and the OS-level PiP window freezes/closes the
+// moment its source page stops painting, so switching away from that
+// account can't hide it the normal way while PiP is active.
 function positionWebviews() {
   const visibleIds = new Set(panelsGeometry.map((p) => p.id));
   Array.from(panelWebviewsEl.children).forEach((el) => {
-    if (!visibleIds.has(el.dataset.id)) el.classList.add('hidden-panel');
+    if (visibleIds.has(el.dataset.id)) return;
+    if (el.classList.contains('pip-active')) {
+      el.classList.remove('hidden-panel');
+      el.style.left = '-10000px';
+      el.style.top = '-10000px';
+    } else {
+      el.classList.add('hidden-panel');
+    }
   });
   panelsGeometry.forEach((panel) => {
     const el = document.getElementById('wv-' + panel.id);
@@ -1265,6 +1290,7 @@ function startSplitDrag(e, group, field, pairIndex) {
   function onUp() {
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
+    activeDragCleanup = null;
     dragInProgress = false;
     window.api.showViews();
     renderPanelHeaders(); // catch up on any geometry that arrived mid-drag and was held back
@@ -1272,6 +1298,7 @@ function startSplitDrag(e, group, field, pairIndex) {
     commitSplit(group, field, currentSizes);
   }
 
+  activeDragCleanup = onUp;
   document.addEventListener('mousemove', onMove);
   document.addEventListener('mouseup', onUp);
 }
@@ -1389,6 +1416,7 @@ function startFreeDrag(e, id, mode) {
   function onUp() {
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
+    activeDragCleanup = null;
     dragInProgress = false;
     renderPanelHeaders(); // catch up on any geometry that arrived mid-drag and was held back
     positionWebviews();
@@ -1406,6 +1434,7 @@ function startFreeDrag(e, id, mode) {
     window.api.setFreeRect(id, rect).then(() => window.api.showViews());
   }
 
+  activeDragCleanup = onUp;
   document.addEventListener('mousemove', onMove);
   document.addEventListener('mouseup', onUp);
 }
@@ -6952,6 +6981,19 @@ window.api.onPanelsGeometry((geometry) => {
   positionWebviews();
 });
 
+// Recovery net for the "released the mouse outside the window" hazard
+// described where dragInProgress/activeDragCleanup are declared: a divider
+// or free-panel drag only clears dragInProgress via a `mouseup` on
+// `document`, which never fires if the button comes up outside this window.
+// Losing the drag that way normally also blurs the window (focus moves to
+// whatever the user clicked instead), so running the drag's own onUp() here
+// recovers exactly as if mouseup had fired normally -- same cleanup, same
+// renderPanelHeaders()/positionWebviews() catch-up, just triggered by blur
+// instead of mouseup.
+window.addEventListener('blur', () => {
+  if (activeDragCleanup) activeDragCleanup();
+});
+
 window.api.onWebviewReady((accountId) => {
   const el = document.getElementById('wv-' + accountId);
   if (!el) return;
@@ -6964,6 +7006,13 @@ window.api.onWebviewReady((accountId) => {
 window.api.onAccountLiveRect(({ id, contentRect }) => {
   const el = document.getElementById('wv-' + id);
   if (el) applyContentRect(el, contentRect);
+});
+
+window.api.onPipState(({ id, active }) => {
+  const el = document.getElementById('wv-' + id);
+  if (!el) return;
+  el.classList.toggle('pip-active', active);
+  positionWebviews();
 });
 
 window.api.onOpenSpaceEditor(({ id }) => {

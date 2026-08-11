@@ -543,6 +543,12 @@ data.accounts.forEach((a) => {
 
 /** @type {Map<string, Electron.WebContents>} accountId → the guest <webview>'s webContents */
 const views = new Map();
+// accountIds whose page currently has an active native Picture-in-Picture
+// session (see wireAccountWebContents' 'nexa-pip-state' listener below) — the
+// renderer uses this to keep that account's <webview> painting off-screen
+// instead of display:none while it's not the active panel, since a hidden
+// guest stops compositing entirely and the floating PiP window would freeze.
+const pipActiveAccounts = new Set();
 const poppedOutIds = new Set();
 const poppedOutWindows = new Map();
 // One open popup window per extension at a time, keyed by extension id —
@@ -1592,6 +1598,7 @@ function wireAccountWebContents(wc, account, hostWebContents) {
     // attaches) — that's an expected, intentional teardown, not a real
     // account close, so finalizeAccountClose must not run for it.
     if (views.get(account.id) !== wc) return;
+    pipActiveAccounts.delete(account.id);
     // The whole app quitting destroys every webview the same way a single
     // tab close does — appQuitting distinguishes the two so a normal quit
     // leaves account.closed exactly as it was (open accounts come back open
@@ -1602,6 +1609,16 @@ function wireAccountWebContents(wc, account, hostWebContents) {
       renderLayout();
       broadcastState();
     }
+  });
+
+  // account-preload.js listens for enterpictureinpicture/leavepictureinpicture
+  // on `document` (capture phase catches it regardless of which video fired
+  // it) and forwards the state here — wc.ipc is scoped to this exact guest,
+  // no accountId needs to travel over the channel.
+  wc.ipc.on('nexa-pip-state', (_e, active) => {
+    if (active) pipActiveAccounts.add(account.id);
+    else pipActiveAccounts.delete(account.id);
+    if (mainWindowAlive()) mainWindow.webContents.send('account:pipState', { id: account.id, active });
   });
 
   scheduleWebviewReady(hostWebContents, account.id);
@@ -2064,16 +2081,22 @@ function showPageContextMenu(wc, params) {
       {
         label: mt(lang, 'ctx.pip'),
         click: () => {
+          // requestPictureInPicture() is gated behind a real user gesture —
+          // without the `userGesture` argument here, Chromium sees this
+          // executeJavaScript call as script-initiated, not user-initiated
+          // (the right-click that opened this menu doesn't carry over), and
+          // silently rejects with "Must be handling a user gesture".
           wc.executeJavaScript(
             `(function() {
               var el = document.elementFromPoint(${params.x}, ${params.y});
               var video = el && el.tagName === 'VIDEO' ? el : (el && el.closest ? el.closest('video') : null);
               if (!video) video = document.querySelector('video');
               if (video && document.pictureInPictureEnabled && !video.disablePictureInPicture) {
-                video.requestPictureInPicture().catch(() => {});
+                video.requestPictureInPicture().catch((err) => console.error('[pip] requestPictureInPicture failed:', err.message));
               }
-            })();`
-          ).catch(() => {});
+            })();`,
+            true
+          ).catch((err) => console.error('[pip] executeJavaScript failed:', err));
         }
       },
       { type: 'separator' }

@@ -1,5 +1,16 @@
 const { ipcRenderer } = require('electron');
 
+// Reports Picture-in-Picture state to main (see wc.ipc.on('nexa-pip-state', ...)
+// in wireAccountWebContents) so the renderer can keep this account's <webview>
+// painting off-screen instead of display:none while it's not the active
+// panel — a hidden guest stops compositing entirely, which would freeze or
+// close the floating PiP window the moment the user switches accounts.
+// Capture phase on `document` catches it regardless of which <video> in the
+// page fired it, and works across the isolated-world boundary since this is
+// plain DOM event dispatch, not something contextIsolation blocks.
+document.addEventListener('enterpictureinpicture', () => ipcRenderer.send('nexa-pip-state', true), true);
+document.addEventListener('leavepictureinpicture', () => ipcRenderer.send('nexa-pip-state', false), true);
+
 // Injected into every account WebContentsView (and its popups, e.g. Google OAuth
 // windows) to offer autofill suggestions from passwords imported in Configuración →
 // Contraseñas. It never fills anything automatically — it only shows a dropdown the
