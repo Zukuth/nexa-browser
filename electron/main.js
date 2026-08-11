@@ -12,6 +12,7 @@ const market = require('./market');
 const networkHealth = require('./network-health');
 const powerManager = require('./power-manager');
 const gameConnectionManager = require('./game-connection-manager');
+const dnsTest = require('./dns-test');
 const memoryOptimizer = require('./memory-optimizer');
 const { classifyCrash } = require('./crash-classifier');
 const diagnostics = require('./diagnostics');
@@ -5123,6 +5124,18 @@ ipcMain.handle('diagnostics:stopNetLog', async () => {
   const result = ses ? await networkHealth.stopNetLogCapture(ses) : { ok: false, error: 'sesión ya no disponible' };
   activeNetLogSession = null;
   return result;
+});
+
+// DNS speed test — measures real resolution latency per provider (see
+// dns-test.js). Never touches the OS's actual DNS config; applyCommandFor()
+// only hands the renderer a PowerShell command for the user to run
+// themselves, exactly as decided: Nexa Browser measures, the user applies.
+ipcMain.handle('dns:test', async () => dnsTest.runSpeedTest());
+ipcMain.handle('dns:getApplyCommand', (_e, { servers }) => dnsTest.applyCommandFor(servers));
+ipcMain.handle('dns:getRestoreCommand', () => dnsTest.RESTORE_COMMAND);
+ipcMain.handle('dns:copyCommand', (_e, { command }) => {
+  clipboard.writeText(command);
+  return { ok: true };
 });
 
 // Session partitions (accountPartition's persist:account-<id>) live on disk

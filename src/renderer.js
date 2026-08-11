@@ -55,6 +55,7 @@ const tbDownloads = document.getElementById('tb-downloads');
 const tbSettings = document.getElementById('tb-settings');
 const tbBookmarks = document.getElementById('tb-bookmarks');
 const tbSupport = document.getElementById('tb-support');
+const tbDns = document.getElementById('tb-dns');
 
 const statusSpaceInfo = document.getElementById('status-space-info');
 const statusActiveAccount = document.getElementById('status-active-account');
@@ -85,6 +86,12 @@ const downloadsListEl = document.getElementById('downloads-list');
 const btnCloseDownloads = document.getElementById('btn-close-downloads');
 const dlOpenFolder = document.getElementById('dl-open-folder');
 const dlClear = document.getElementById('dl-clear');
+
+const dnsModal = document.getElementById('dns-modal');
+const dnsResultsEl = document.getElementById('dns-results');
+const dnsRunBtn = document.getElementById('dns-run-test');
+const dnsCopyRestoreBtn = document.getElementById('dns-copy-restore');
+const btnCloseDns = document.getElementById('btn-close-dns');
 
 const cmdkModal = document.getElementById('cmdk-modal');
 const cmdkInput = document.getElementById('cmdk-input');
@@ -2389,6 +2396,86 @@ function closeDownloadsModal() {
   popModal();
 }
 
+// ---- DNS speed test ----
+// Only ever measures. Applying a result is a real OS network-config change,
+// which this app deliberately never does on its own (see dns-test.js) — the
+// "Aplicar" button copies the exact PowerShell command to the clipboard
+// instead, so the user runs it (as Administrator) themselves.
+function dnsColor(ms) {
+  if (ms == null) return 'var(--muted)';
+  if (ms <= 30) return '#3ddc57';
+  if (ms <= 80) return '#e0c341';
+  return '#e05555';
+}
+
+function renderDnsResults(results) {
+  dnsResultsEl.replaceChildren();
+  const bestMs = results.reduce((min, r) => (r.bestMs != null && (min == null || r.bestMs < min) ? r.bestMs : min), null);
+  results.forEach((provider, i) => {
+    const row = document.createElement('div');
+    row.className = 'dns-row' + (provider.bestMs != null && provider.bestMs === bestMs ? ' dns-best' : '');
+
+    const rank = document.createElement('div');
+    rank.className = 'dns-rank';
+    rank.textContent = String(i + 1);
+
+    const info = document.createElement('div');
+    info.className = 'dns-info';
+    const name = document.createElement('div');
+    name.className = 'dns-name';
+    name.textContent = provider.name;
+    const servers = document.createElement('div');
+    servers.className = 'dns-servers';
+    servers.textContent = provider.servers.map((s) => `${s.ip} (${s.ms == null ? t('dnsModal.noResponse') : s.ms + 'ms'})`).join('  ·  ');
+    info.append(name, servers);
+
+    const ms = document.createElement('div');
+    ms.className = 'dns-ms';
+    ms.style.color = dnsColor(provider.bestMs);
+    ms.textContent = provider.bestMs == null ? '—' : provider.bestMs + ' ms';
+
+    const applyBtn = document.createElement('button');
+    applyBtn.className = 'dns-apply';
+    applyBtn.textContent = t('dnsModal.copyCommand');
+    applyBtn.disabled = provider.bestMs == null;
+    applyBtn.onclick = async () => {
+      const ips = provider.servers.map((s) => s.ip);
+      const command = await window.api.getDnsApplyCommand(ips);
+      await window.api.copyDnsCommand(command);
+      applyBtn.textContent = t('dnsModal.copied');
+      setTimeout(() => { applyBtn.textContent = t('dnsModal.copyCommand'); }, 1500);
+    };
+
+    row.append(rank, info, ms, applyBtn);
+    dnsResultsEl.appendChild(row);
+  });
+}
+
+async function runDnsTest() {
+  dnsRunBtn.disabled = true;
+  dnsResultsEl.replaceChildren();
+  const testing = document.createElement('div');
+  testing.className = 'dns-testing';
+  testing.textContent = t('dnsModal.testing');
+  dnsResultsEl.appendChild(testing);
+  try {
+    const results = await window.api.runDnsSpeedTest();
+    renderDnsResults(results);
+  } finally {
+    dnsRunBtn.disabled = false;
+  }
+}
+
+function openDnsModal() {
+  dnsModal.classList.remove('hidden');
+  pushModal();
+}
+
+function closeDnsModal() {
+  dnsModal.classList.add('hidden');
+  popModal();
+}
+
 // ---- Command palette (Ctrl+K) ----
 
 let cmdkResults = [];
@@ -2601,6 +2688,16 @@ btnCloseShortcuts.addEventListener('click', closeShortcutsModal);
 
 tbDownloads.addEventListener('click', openDownloadsModal);
 btnCloseDownloads.addEventListener('click', closeDownloadsModal);
+
+tbDns.addEventListener('click', openDnsModal);
+btnCloseDns.addEventListener('click', closeDnsModal);
+dnsRunBtn.addEventListener('click', runDnsTest);
+dnsCopyRestoreBtn.addEventListener('click', async () => {
+  const command = await window.api.getDnsRestoreCommand();
+  await window.api.copyDnsCommand(command);
+  dnsCopyRestoreBtn.textContent = t('dnsModal.copied');
+  setTimeout(() => { dnsCopyRestoreBtn.textContent = t('dnsModal.restore'); }, 1500);
+});
 dlOpenFolder.addEventListener('click', () => window.api.openDownloads());
 dlClear.addEventListener('click', async () => {
   await window.api.clearDownloads();
