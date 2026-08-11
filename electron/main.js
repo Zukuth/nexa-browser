@@ -1852,15 +1852,25 @@ function injectPingOverlay(wc, visible) {
         if (!location.protocol.startsWith('http')) return;
         const url = location.href;
         const start = performance.now();
+        let ok = false;
         try {
-          await fetch(url, { method: 'HEAD', cache: 'no-store' });
+          ok = (await fetch(url, { method: 'HEAD', cache: 'no-store' })).ok;
         } catch (e) {
+          // network-level failure (offline, blocked) — fall through to GET below.
+        }
+        // res.ok being false (e.g. a 404) isn't a thrown exception — some
+        // sites' SPA routing rejects HEAD on a client-side route like /play
+        // while GET on that same URL succeeds. Without this check the badge
+        // showed the response time of a failed 404 as if it were a real
+        // ping, confirmed live against dragonballidle.online/play.
+        if (!ok) {
           try {
-            await fetch(url, { method: 'GET', cache: 'no-store' });
+            ok = (await fetch(url, { method: 'GET', cache: 'no-store' })).ok;
           } catch (e2) {
-            return; // offline or blocked — leave the last known value showing
+            // offline or blocked — leave the last known value showing.
           }
         }
+        if (!ok) return; // HEAD and GET both failed/non-2xx — don't show a bogus number.
         const ms = Math.round(performance.now() - start);
         badge.textContent = ms + ' ms';
         badge.style.color = nexaPingColor(ms);
