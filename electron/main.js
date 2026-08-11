@@ -437,6 +437,27 @@ if (forceSoftwareRendering || data.settings.hardwareAcceleration === false) {
 // on it.
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 
+// Chromium's own "Intensive Wake Up Throttling" clamps repeated setInterval/
+// chained setTimeout to at most ~once/minute in a page that's been
+// backgrounded for a few minutes — a SEPARATE mechanism from
+// webContents.setBackgroundThrottling() (see syncBackgroundThrottling
+// above), which mainly governs rAF/compositor throttling and does NOT
+// override this one. That's exactly consistent with the reported symptom:
+// an account works fine for a while, then "se pega" and the game shows its
+// own reconnect banner a few hours later, specifically on the account that
+// isn't the visible panel — the game's WebSocket keepalive/ping is a
+// repeated timer, gets clamped to once/minute, the server times the
+// connection out from its side, and the game's own client only then
+// notices and reconnects. These three switches are Chromium's standard,
+// documented way to fully opt a whole app out of every layer of
+// background-tab throttling (timer clamping, renderer backgrounding,
+// occluded-window backgrounding) — not experimental flags, and exactly
+// what several other Electron apps with the same "many always-on
+// background tabs" shape (chat clients, dashboards) apply for this reason.
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+
 // On a hybrid-graphics machine (a dedicated GPU alongside integrated
 // graphics — common on laptops, but also plenty of desktops with both a
 // discrete card and the CPU's built-in one), Chromium's default GPU
