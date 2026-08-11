@@ -1841,6 +1841,14 @@ function injectPingOverlay(wc, visible) {
       badge.style.cssText = 'position:fixed;bottom:6px;right:6px;z-index:2147483647;background:rgba(0,0,0,0.55);color:#3ddc57;font:11px monospace;padding:2px 6px;border-radius:4px;pointer-events:none;display:${visible ? '' : 'none'};';
       badge.textContent = '… ms';
       (document.body || document.documentElement).appendChild(badge);
+      // Some sites' SPA routing 404s on HEAD for a client-side route (e.g.
+      // dragonballidle.online/play — confirmed live: HEAD -> 404, GET -> 200)
+      // while GET on that same URL succeeds. Chromium logs that 404 to the
+      // console itself at the network layer no matter what the JS around it
+      // does, so the very first tick can't avoid it — but remembering the
+      // failure and skipping straight to GET afterwards stops it from
+      // repeating on every single 2s tick for the rest of the page's life.
+      let headUnsupported = false;
       async function measure() {
         // fetch() only supports http(s) — about:blank (every account starts
         // there before its real src loads) and any other scheme throw
@@ -1853,16 +1861,14 @@ function injectPingOverlay(wc, visible) {
         const url = location.href;
         const start = performance.now();
         let ok = false;
-        try {
-          ok = (await fetch(url, { method: 'HEAD', cache: 'no-store' })).ok;
-        } catch (e) {
-          // network-level failure (offline, blocked) — fall through to GET below.
+        if (!headUnsupported) {
+          try {
+            ok = (await fetch(url, { method: 'HEAD', cache: 'no-store' })).ok;
+          } catch (e) {
+            // network-level failure (offline, blocked) — fall through to GET below.
+          }
+          if (!ok) headUnsupported = true;
         }
-        // res.ok being false (e.g. a 404) isn't a thrown exception — some
-        // sites' SPA routing rejects HEAD on a client-side route like /play
-        // while GET on that same URL succeeds. Without this check the badge
-        // showed the response time of a failed 404 as if it were a real
-        // ping, confirmed live against dragonballidle.online/play.
         if (!ok) {
           try {
             ok = (await fetch(url, { method: 'GET', cache: 'no-store' })).ok;
