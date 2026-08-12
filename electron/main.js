@@ -56,6 +56,16 @@ log.initialize();
 Object.assign(console, log.functions);
 autoUpdater.logger = log;
 autoUpdater.autoDownload = true;
+// The NSIS differential updater shells out to a PowerShell helper script to
+// apply the incremental patch — confirmed live: on a machine where the
+// PowerShell execution policy blocks unsigned scripts, that step fails
+// silently ("no está firmado digitalmente... no se puede ejecutar este
+// script") and the update never gets past download, so 'update-downloaded'
+// (and our changelog modal) never fires. Disabling differential downloads
+// makes every update a full re-download instead of an incremental patch —
+// slower and more bandwidth, but it skips that PowerShell step entirely.
+// Reliability over savings for an app this size.
+autoUpdater.disableDifferentialDownload = true;
 
 // Last-resort net: an ipcMain.on (not .handle) listener that throws crashes the
 // whole app with no trace, since Electron only auto-catches .handle rejections.
