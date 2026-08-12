@@ -128,6 +128,22 @@ Construido con [Electron](https://www.electronjs.org/) — motor Chromium real, 
 
 ---
 
+## Herramientas nuevas (v0.3.8)
+
+### 📸 Captura de pantalla por cuenta
+
+![Captura de pantalla](docs/screenshots/screenshot-capture.png)
+
+Un clic en el ícono de cámara de la barra guarda un PNG real de la cuenta activa en `Imágenes/Nexa Browser/` — útil para dejar registro de un drop raro, un error puntual del juego, o simplemente mostrarle algo a alguien sin tener que usar una herramienta externa de captura. No requiere permisos adicionales del sistema; usa `webContents.capturePage()` de Electron directamente sobre esa cuenta.
+
+### 🌐 Test de velocidad de DNS
+
+![Test de velocidad de DNS](docs/screenshots/dns-speed-test.png)
+
+Mide en vivo la latencia real de tu red contra Cloudflare, Quad9 (con y sin seguridad), Google, OpenDNS, AdGuard y CleanBrowsing — y los ordena de más rápido a más lento. Nació de un caso real: cambiar de DNS bajó el ping a un sitio de 400ms a 98ms (mejor ruteo hacia el proveedor que aloja ese juego). Por diseño, la herramienta **solo mide** — nunca toca la configuración de red de tu PC por su cuenta. El botón "Copiar comando" te da el comando exacto de PowerShell para aplicar el DNS elegido vos mismo, como Administrador.
+
+---
+
 ## Rendimiento por versión
 
 Medido con el mismo escenario cada vez (3 cuentas recién abiertas, todas en la pantalla de login del juego, 25s de estabilización, `app.getAppMetrics()` real de Electron) — para poder responder "¿mejoramos o empeoramos?" sin tener que reconstruir un benchmark desde cero cada vez.
@@ -135,7 +151,10 @@ Medido con el mismo escenario cada vez (3 cuentas recién abiertas, todas en la 
 | Versión | RAM total (3 cuentas) | Procesos | CPU total | Medido |
 |---|---|---|---|---|
 | v0.3.6 | 1595 MB | 12 | 2.6% | 2026-08-10 |
-| dev (post-0.3.7, sin versionar aún) | **1184 MB** (-26%) | 10 | 2.9% | 2026-08-10 |
+| dev (post-0.3.7, sin versionar aún) | 1184 MB (-26%) | 10 | 2.9% | 2026-08-10 |
+| **v0.3.8** | 1686 MB | 12 | 3.1% | 2026-08-11 |
+
+**Por qué subió la RAM en 0.3.8 en vez de bajar más:** trade-off consciente, no una regresión — los tres flags que agregamos para que las cuentas en segundo plano dejen de desconectarse (ver Changelog) le dicen a Chromium que no les baje prioridad a esas cuentas para nada, así que retiene más memoria en vez de recortarla agresivamente. Estabilidad primero.
 
 Antes de publicar la próxima versión, correr este mismo escenario y agregar una fila — evita repetir el trabajo de armar un worktree de la versión vieja para comparar a mano.
 
