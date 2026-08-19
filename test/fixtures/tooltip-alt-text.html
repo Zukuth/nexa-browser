@@ -1,0 +1,14 @@
+<!doctype html>
+<!-- Exercises extractPageTextScript's title=/alt= coverage (see
+     translate.js) — deliberately has exactly ONE text-node paragraph plus
+     ONE title tooltip plus ONE image alt, so a test can assert the
+     translated fragment count is 3, not just >0, proving the attributes
+     were actually picked up and not just the paragraph. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Tooltip and alt text fixture</title></head>
+<body>
+  <p>Welcome to the game.</p>
+  <button title="Open your inventory">Inventory</button>
+  <img src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" alt="A rare item icon" />
+</body>
+</html>

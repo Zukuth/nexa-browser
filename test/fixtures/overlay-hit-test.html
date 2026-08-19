@@ -1,0 +1,22 @@
+<!doctype html>
+<!-- Reproduces the SAME class of bug confirmed live against
+     dragonballidle.online (a Phaser/WebGL game): a full-viewport overlay
+     that wins document.elementFromPoint's native hit test everywhere,
+     even directly on top of real translatable text — without needing an
+     actual game canvas to trigger it. The overlay has no visible content
+     of its own (nothing to click BUT the paragraph, visually), so a click
+     landing on the overlay instead of the paragraph is a pure hit-testing
+     artifact, exactly like the real bug. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Overlay hit-test fixture</title>
+<style>
+  body { margin: 0; }
+  #target { position: fixed; top: 40px; left: 40px; width: 300px; height: 80px; margin: 0; padding: 0; line-height: 80px; }
+  #overlay { position: fixed; inset: 0; background: transparent; z-index: 999; }
+</style>
+</head>
+<body>
+  <p id="target">Bem-vindo ao torneio de artes marciais desta temporada.</p>
+  <div id="overlay"></div>
+</body>
+</html>

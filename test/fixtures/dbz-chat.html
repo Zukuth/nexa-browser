@@ -1,0 +1,37 @@
+<!doctype html>
+<!-- Mirrors the REAL DOM structure confirmed live against
+     dragonballidle.online/play's chat panel (via CDP inspection of an
+     actual logged-in session, not guessed): a .msgs container holding
+     .msg rows, each with a .who button (clan tag + "Name [level]:") and a
+     separate .txt span for the message body. See CHAT_SITE_SELECTORS in
+     translate.js. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>DBZ Idle chat fixture</title></head>
+<body>
+  <div class="msgs">
+    <div class="msg">
+      <span class="time">15:34:39</span>
+      <button class="who"><i class="tag-nome">ALFA</i>UserA [90]:</button>
+      <span class="txt">Alguém sabe onde fica a masmorra do torneio de artes marciais hoje?</span>
+    </div>
+    <div class="msg">
+      <span class="time">15:35:01</span>
+      <button class="who"><i class="tag-nome">BETA</i>UserB [45]:</button>
+      <span class="txt">Кто-нибудь знает, где находится подземелье турнира боевых искусств сегодня?</span>
+    </div>
+    <div class="msg">
+      <span class="time">15:35:20</span>
+      <button class="who"><i class="tag-nome">ALFA</i>UserA [91]:</button>
+      <span class="txt">Fica perto do templo, sobe a escada até o topo da montanha.</span>
+    </div>
+    <!-- French — franc detects this reliably, but Bergamot has no fr model
+         at all (see isSupportedLanguage in translate.js), so this message
+         must be safely skipped instead of aborting the other three. -->
+    <div class="msg">
+      <span class="time">15:36:00</span>
+      <button class="who"><i class="tag-nome">GAMA</i>UserC [12]:</button>
+      <span class="txt">Je cherche un groupe pour le donjon du tournoi d'arts martiaux ce soir.</span>
+    </div>
+  </div>
+</body>
+</html>

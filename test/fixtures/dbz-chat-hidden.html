@@ -1,0 +1,20 @@
+<!doctype html>
+<!-- Same real markup as dbz-chat.html, but with the whole .msgs container
+     collapsed to zero height — mirrors how both real games actually
+     minimize their chat panel (CSS-only, the messages stay in the DOM).
+     Exercises extractChatMessagesScript's early "hidden" bail-out: this
+     must report items:[] without doing any translation work. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>DBZ Idle chat fixture (minimized)</title>
+<style>.msgs { display: none; }</style>
+</head>
+<body>
+  <div class="msgs">
+    <div class="msg">
+      <span class="time">15:34:39</span>
+      <button class="who"><i class="tag-nome">ALFA</i>UserA [90]:</button>
+      <span class="txt">Alguém sabe onde fica a masmorra do torneio de artes marciais hoje?</span>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,58 @@
+<!doctype html>
+<!--
+  Mock "game" page for testing translate.js against something closer to a
+  real game's DOM than a static page: periodic re-renders via textContent
+  and innerHTML, exactly the two patterns that silently orphan a translated
+  text node (see extractPageTextScript/applyTranslatedTextScript in
+  electron/translate.js — both track live Text node references, and both
+  DOM APIs below destroy-and-recreate the text node under the hood instead
+  of mutating it in place).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: sans-serif; background: #1a1d24; color: #eee; padding: 24px; }
+  .panel { background: #22262f; border: 1px solid #333; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .gold { font-size: 20px; font-weight: bold; color: #ffd23f; }
+  .shop-item { padding: 8px; border-bottom: 1px solid #333; }
+  .static-note { color: #9aa; font-size: 13px; }
+</style>
+</head>
+<body>
+  <h1 id="title">Welcome to the game</h1>
+  <p class="static-note" id="static-text">This paragraph never changes after load — a normal translated node, no re-render involved.</p>
+
+  <div class="panel">
+    <div class="gold" id="gold-counter">Gold: 100</div>
+  </div>
+
+  <div class="panel">
+    <h2>Shop</h2>
+    <div id="shop-list"></div>
+  </div>
+
+  <script>
+    // Case 1: in-place text update via .textContent — replaces the child
+    // Text node under the hood, orphaning whatever node translate.js was
+    // tracking for this element. Mimics a live stat counter.
+    let gold = 100;
+    setInterval(() => {
+      gold += 10;
+      document.getElementById('gold-counter').textContent = 'Gold: ' + gold;
+    }, 1200);
+
+    // Case 2: full subtree re-render via innerHTML — the classic
+    // React/Vue-style "just redraw this component" pattern. Same node count
+    // each time, but every text node is a brand new object.
+    const items = ['Health Potion', 'Iron Sword', 'Leather Shield'];
+    function renderShop() {
+      document.getElementById('shop-list').innerHTML = items
+        .map((name, i) => `<div class="shop-item" data-i="${i}">${name} — ${10 + i * 5} gold</div>`)
+        .join('');
+    }
+    renderShop();
+    setInterval(renderShop, 2500);
+  </script>
+</body>
+</html>

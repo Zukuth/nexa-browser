@@ -1,0 +1,146 @@
+diff --git a/node_modules/@browsermt/bergamot-translator/translator.js b/node_modules/@browsermt/bergamot-translator/translator.js
+index f27c076..f495ff4 100644
+--- a/node_modules/@browsermt/bergamot-translator/translator.js
++++ b/node_modules/@browsermt/bergamot-translator/translator.js
+@@ -1,3 +1,25 @@
++import {readFile as __bergamotReadFile, writeFile as __bergamotWriteFile, mkdir as __bergamotMkdir} from 'node:fs/promises';
++import {join as __bergamotJoin} from 'node:path';
++import {tmpdir as __bergamotTmpdir} from 'node:os';
++import {createHash as __bergamotCreateHash} from 'node:crypto';
++
++// On-disk cache for downloaded model/lex/vocab files (this is the real
++// download path — TranslatorBacking.fetch() below — confirmed live: the
++// worker script has its own fetch() override too, but that one only ever
++// handles the WASM binary itself, never the language model files). Keyed by
++// URL hash since these are versioned/immutable once published, so there's
++// no invalidation to do, only "have we fetched this exact URL before".
++// Turns every translation after the first one on a machine from
++// "re-download ~20-30MB" into "read a local file". Uses the OS temp dir
++// rather than Electron's userData because this module has no access to
++// app.getPath() (translator.js runs standalone, not electron-aware), but
++// os.tmpdir() persists across app restarts in practice on Windows.
++const __bergamotCacheDir = __bergamotJoin(__bergamotTmpdir(), 'nexa-bergamot-cache');
++const __bergamotCacheReady = __bergamotMkdir(__bergamotCacheDir, { recursive: true }).catch(() => {});
++function __bergamotCachePath(url) {
++    return __bergamotJoin(__bergamotCacheDir, __bergamotCreateHash('sha1').update(url).digest('hex'));
++}
++
+ /**
+  * @typedef {Object} TranslationRequest
+  * @property {String} from
+@@ -346,6 +368,15 @@ export class CancelledError extends Error {}
+      * @returns {Promise<ArrayBuffer>}
+      */
+     async fetch(url, checksum, extra) {
++        await __bergamotCacheReady;
++        const cachePath = __bergamotCachePath(url);
++        try {
++            const cached = await __bergamotReadFile(cachePath);
++            return cached.buffer.slice(cached.byteOffset, cached.byteOffset + cached.byteLength);
++        } catch {
++            // Not cached yet — fall through to a real download below.
++        }
++
+         // Rig up a timeout cancel signal for our fetch
+         const controller = new AbortController();
+         const abort = () => controller.abort();
+@@ -374,8 +405,38 @@ export class CancelledError extends Error {}
+             // `fetch()` to verify the download using subresource integrity
+             const response = await fetch(url, options);
+ 
+-            // Finish downloading (or crash due to timeout)
+-            return await response.arrayBuffer();
++            // Streamed instead of a single response.arrayBuffer() so a slow
++            // connection (the real case this exists for — a user reported
++            // ~1 minute on the very first, uncached download) can report
++            // real progress instead of the UI sitting frozen the whole
++            // time. globalThis.__nexaDownloadProgress is an optional hook
++            // set by translate.js right before a translator loads a new
++            // language pair; harmless no-op if nothing set it.
++            const total = Number(response.headers.get('content-length')) || 0;
++            let loaded = 0;
++            const chunks = [];
++            if (response.body && typeof response.body.getReader === 'function') {
++                const reader = response.body.getReader();
++                for (;;) {
++                    const { done, value } = await reader.read();
++                    if (done) break;
++                    chunks.push(value);
++                    loaded += value.length;
++                    if (typeof globalThis.__nexaDownloadProgress === 'function') {
++                        globalThis.__nexaDownloadProgress(url, loaded, total);
++                    }
++                }
++            } else {
++                chunks.push(new Uint8Array(await response.arrayBuffer()));
++                loaded = chunks[0].length;
++            }
++            const nodeBuffer = Buffer.concat(chunks.map((c) => Buffer.from(c)));
++            __bergamotWriteFile(cachePath, nodeBuffer).catch(() => {});
++            // Real ArrayBuffer, not a Node Buffer — matches what
++            // response.arrayBuffer() (the original, unpatched code path)
++            // would have returned, since callers downstream may not treat
++            // a Buffer/Uint8Array the same way.
++            return nodeBuffer.buffer.slice(nodeBuffer.byteOffset, nodeBuffer.byteOffset + nodeBuffer.byteLength);
+ 
+         } finally {
+             if (timeout)
+diff --git a/node_modules/@browsermt/bergamot-translator/worker/translator-worker.js b/node_modules/@browsermt/bergamot-translator/worker/translator-worker.js
+index 24ff29a..b10f975 100644
+--- a/node_modules/@browsermt/bergamot-translator/worker/translator-worker.js
++++ b/node_modules/@browsermt/bergamot-translator/worker/translator-worker.js
+@@ -2,6 +2,13 @@
+  * Wrapper around the dirty bits of Bergamot's WASM bindings.
+  */
+ 
++import {parentPort as __bergamotParentPort} from 'node:worker_threads';
++import {readFileSync as __bergamotReadFileSync} from 'node:fs';
++import {readFile as __bergamotReadFile} from 'node:fs/promises';
++import {join as __bergamotJoin, dirname as __bergamotDirname} from 'node:path';
++import {fileURLToPath as __bergamotFileURLToPath} from 'node:url';
++const __dirname = __bergamotDirname(__bergamotFileURLToPath(import.meta.url));
++
+ // Global because importScripts is global.
+ var Module = {};
+ 
+@@ -17,8 +24,7 @@ if (typeof self === 'undefined') {
+         #port;
+ 
+         constructor() {
+-            const {parentPort} = require(/* webpackIgnore: true */ 'node:worker_threads');
+-            this.#port = parentPort;
++            this.#port = __bergamotParentPort;
+         }
+ 
+         /**
+@@ -42,10 +48,8 @@ if (typeof self === 'undefined') {
+          * @param {...string} scripts - Paths to scripts to import in that order
+          */
+         importScripts(...scripts) {
+-            const {readFileSync} = require(/* webpackIgnore: true */ 'node:fs');
+-            const {join} = require(/* webpackIgnore: true */ 'node:path');
+             for (let pathname of scripts) {
+-                const script = readFileSync(join(__dirname, pathname), {encoding: 'utf-8'});
++                const script = __bergamotReadFileSync(__bergamotJoin(__dirname, pathname), {encoding: 'utf-8'});
+                 eval.call(global, script);
+             }
+         }
+@@ -59,8 +63,7 @@ if (typeof self === 'undefined') {
+          */
+         async fetch(url, options) {
+             if (url.protocol === 'file:') {
+-                const {readFile} = require(/* webpackIgnore: true */ 'node:fs/promises');
+-                const buffer = await readFile(url.pathname);
++                const buffer = await __bergamotReadFile(__bergamotFileURLToPath(url));
+                 const blob = new Blob([buffer]);
+                 return new Response(blob, {
+                     status: 200,
+@@ -76,7 +79,7 @@ if (typeof self === 'undefined') {
+         }
+ 
+         get location() {
+-            return new URL(`file://${__filename}`);
++            return new URL(import.meta.url);
+         }
+     }
+ }
