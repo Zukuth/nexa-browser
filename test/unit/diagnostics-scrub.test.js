@@ -124,4 +124,33 @@ describe('buildReport', () => {
     assert.deepEqual(report.adBlockLog, []);
     assert.deepEqual(report.memoryStats, []);
   });
+
+  test('accountId never appears verbatim in an exported report, even though the file promises account identifiers never leak', () => {
+    const report = buildReport({
+      accountConnectionStates: [{ accountId: 'real-uuid-a1', state: 'HEALTHY' }],
+      networkSnapshots: [{ accountId: 'real-uuid-a1', dnsResolved: true }],
+      adBlockLog: [{ url: 'https://ads.example.com/x', accountId: 'real-uuid-b2' }]
+    });
+    const serialized = JSON.stringify(report);
+    assert.ok(!serialized.includes('real-uuid-a1'));
+    assert.ok(!serialized.includes('real-uuid-b2'));
+  });
+
+  test('the same accountId gets the same pseudonym everywhere it appears in one report, so different sections can still be correlated', () => {
+    const report = buildReport({
+      accountConnectionStates: [{ accountId: 'real-uuid-a1', state: 'HEALTHY' }],
+      networkSnapshots: [{ accountId: 'real-uuid-a1', dnsResolved: true }]
+    });
+    assert.equal(report.accountConnectionStates[0].accountId, report.networkSnapshots[0].accountId);
+  });
+
+  test('different accountIds get different, distinguishable pseudonyms within the same report', () => {
+    const report = buildReport({
+      accountConnectionStates: [
+        { accountId: 'real-uuid-a1', state: 'HEALTHY' },
+        { accountId: 'real-uuid-b2', state: 'RECOVERING' }
+      ]
+    });
+    assert.notEqual(report.accountConnectionStates[0].accountId, report.accountConnectionStates[1].accountId);
+  });
 });

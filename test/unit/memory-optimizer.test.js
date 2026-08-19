@@ -1,7 +1,12 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { shouldSkipOptimize, DEFAULT_MEMORY_GROWTH_THRESHOLD_MB } = require('../../electron/memory-optimizer');
+const {
+  shouldSkipOptimize,
+  DEFAULT_MEMORY_GROWTH_THRESHOLD_MB,
+  systemMemoryPressureHigh,
+  DEFAULT_SYSTEM_FREE_THRESHOLD_PCT
+} = require('../../electron/memory-optimizer');
 
 describe('shouldSkipOptimize', () => {
   test('skips when a purchase is in flight, regardless of everything else', () => {
@@ -50,5 +55,37 @@ describe('shouldSkipOptimize', () => {
     assert.doesNotThrow(() => shouldSkipOptimize());
     const result = shouldSkipOptimize();
     assert.equal(typeof result.skip, 'boolean');
+  });
+});
+
+describe('systemMemoryPressureHigh', () => {
+  test('true when free memory is below the threshold percentage of total', () => {
+    assert.equal(systemMemoryPressureHigh({ freeMb: 1000, totalMb: 10000, thresholdPct: 0.15 }), true);
+  });
+
+  test('false when free memory is at/above the threshold percentage of total', () => {
+    assert.equal(systemMemoryPressureHigh({ freeMb: 2000, totalMb: 10000, thresholdPct: 0.15 }), false);
+  });
+
+  test('uses the default 30% threshold when none is provided', () => {
+    assert.equal(systemMemoryPressureHigh({ freeMb: 2000, totalMb: 10000 }), true);
+    assert.equal(systemMemoryPressureHigh({ freeMb: 4000, totalMb: 10000 }), false);
+    assert.equal(DEFAULT_SYSTEM_FREE_THRESHOLD_PCT, 0.3);
+  });
+
+  test('scales with total RAM instead of using a fixed free-MB number', () => {
+    // 15GB free on a 64GB machine is only 23.4% free (pressured), while 3GB
+    // free on an 8GB machine is 37.5% free (not pressured) — more raw free
+    // MB on the 8GB machine but comfortably fine relative to its total. A
+    // fixed free-MB threshold would get this backwards.
+    assert.equal(systemMemoryPressureHigh({ freeMb: 15000, totalMb: 64000 }), true);
+    assert.equal(systemMemoryPressureHigh({ freeMb: 3000, totalMb: 8000 }), false);
+  });
+
+  test('returns false instead of throwing on missing or invalid input', () => {
+    assert.doesNotThrow(() => systemMemoryPressureHigh());
+    assert.equal(systemMemoryPressureHigh(), false);
+    assert.equal(systemMemoryPressureHigh({ freeMb: 100 }), false); // no totalMb
+    assert.equal(systemMemoryPressureHigh({ freeMb: 100, totalMb: 0 }), false); // avoid divide-by-zero
   });
 });

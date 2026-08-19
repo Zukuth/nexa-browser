@@ -23,7 +23,32 @@ function shouldSkipOptimize({
   return { skip: false, reason: null };
 }
 
+// Firefox-style trigger: react to how much RAM the whole machine has left,
+// not just what our own processes are using. The pre-existing MB threshold
+// in main.js (totalAccountMemoryMb() >= MEMORY_PRESSURE_THRESHOLD_MB) only
+// sees our own footprint — a user with another heavy app (a video editor, a
+// game) eating the machine's RAM never trips it, even though the system is
+// genuinely under pressure. This is a second, independent early-trigger
+// alongside that one and the 24h timer, not a replacement — whichever fires
+// first wins. Percentage-based (not a fixed free-MB number) so it scales
+// sensibly across machines with very different total RAM.
+// 30%, not 15% — chosen for users with less RAM than a typical dev machine
+// (this app targets everyone running 2+ game accounts at once, not just
+// high-RAM setups): on an 8GB machine 30% free is still only ~2.4GB, a
+// realistic point where several open accounts really are worth relieving,
+// while 15% would've meant waiting until just ~1.2GB free on that same
+// machine — too close to the edge for users with less headroom to begin
+// with.
+const DEFAULT_SYSTEM_FREE_THRESHOLD_PCT = 0.3;
+
+function systemMemoryPressureHigh({ freeMb, totalMb, thresholdPct = DEFAULT_SYSTEM_FREE_THRESHOLD_PCT } = {}) {
+  if (typeof freeMb !== 'number' || typeof totalMb !== 'number' || totalMb <= 0) return false;
+  return freeMb / totalMb < thresholdPct;
+}
+
 module.exports = {
   DEFAULT_MEMORY_GROWTH_THRESHOLD_MB,
-  shouldSkipOptimize
+  shouldSkipOptimize,
+  DEFAULT_SYSTEM_FREE_THRESHOLD_PCT,
+  systemMemoryPressureHigh
 };

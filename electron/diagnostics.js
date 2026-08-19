@@ -29,6 +29,35 @@ function scrubString(value) {
   return value.replace(EMAIL_PATTERN, '[email redactado]');
 }
 
+// accountId is this app's own internal random UUID (see accounts:add in
+// main.js), not the user's real game username/email — but the file's own
+// stated promise above is that account identifiers never leak, and the raw
+// UUID persists across every report this app ever exports, which is still
+// worth not handing out verbatim (e.g. correlating it against a future
+// support request that DOES include real identifying info). Pseudonymized
+// consistently within a single report (same UUID -> same "cuenta-N" label
+// every time it appears) instead of a flat redaction, so different sections
+// of the SAME report (connection state vs. adblock log) can still be
+// correlated by account — a flat REDACTED for every accountId would make
+// that correlation impossible and the report far less useful for debugging.
+function pseudonymizeAccountIds(input, labelByAccountId, keyHint) {
+  if (input == null) return input;
+  if (Array.isArray(input)) return input.map((item) => pseudonymizeAccountIds(item, labelByAccountId, keyHint));
+  if (typeof input === 'object') {
+    const out = {};
+    for (const [key, value] of Object.entries(input)) {
+      if (key === 'accountId' && typeof value === 'string') {
+        if (!labelByAccountId.has(value)) labelByAccountId.set(value, `cuenta-${labelByAccountId.size + 1}`);
+        out[key] = labelByAccountId.get(value);
+        continue;
+      }
+      out[key] = pseudonymizeAccountIds(value, labelByAccountId, key);
+    }
+    return out;
+  }
+  return input;
+}
+
 function scrubReport(input, keyHint) {
   if (input == null) return input;
   if (Array.isArray(input)) return input.map((item) => scrubReport(item, keyHint));
@@ -67,7 +96,7 @@ function buildReport({ accountConnectionStates = [], networkSnapshots = [], adBl
     adBlockLog,
     memoryStats
   };
-  return scrubReport(raw);
+  return scrubReport(pseudonymizeAccountIds(raw, new Map()));
 }
 
 // Pure ring-buffer push, extracted so the ad-block diagnostic log's cap
