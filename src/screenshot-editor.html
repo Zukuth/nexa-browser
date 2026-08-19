@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none';" />
+<title>Editar captura</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #111318; color: #e6e8ee; font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; }
+  #toolbar { display: flex; align-items: center; gap: 4px; padding: 8px; background: #181b22; border-bottom: 1px solid #262a33; -webkit-app-region: drag; }
+  #toolbar button { -webkit-app-region: no-drag; background: transparent; border: 1px solid #262a33; color: #e6e8ee; border-radius: 6px; width: 34px; height: 34px; font-size: 15px; cursor: pointer; }
+  #toolbar button:hover { background: rgba(255,255,255,0.08); }
+  #toolbar button.active { border-color: #4f8cff; color: #4f8cff; }
+  #toolbar .sep { width: 1px; height: 22px; background: #262a33; margin: 0 4px; }
+  #toolbar .spacer { flex: 1; }
+  #toolbar .primary { background: #4f8cff; border-color: #4f8cff; color: #fff; font-size: 12px; width: auto; padding: 0 12px; font-weight: 600; }
+  #toolbar .hint { font-size: 11px; color: #8890a0; -webkit-app-region: no-drag; }
+  #canvas-wrap { position: absolute; top: 51px; left: 0; right: 0; bottom: 0; overflow: auto; display: flex; align-items: flex-start; justify-content: center; padding: 16px; box-sizing: border-box; }
+  canvas { cursor: crosshair; box-shadow: 0 0 0 1px #262a33; }
+</style>
+</head>
+<body>
+  <div id="toolbar">
+    <button id="tool-crop" title="Recortar región (arrastrar para seleccionar)">✂</button>
+    <button id="tool-arrow" title="Flecha">➜</button>
+    <button id="tool-text" title="Texto">T</button>
+    <div class="sep"></div>
+    <button id="tool-undo" title="Deshacer">↩</button>
+    <span class="hint" id="hint"></span>
+    <div class="spacer"></div>
+    <button id="btn-cancel" title="Cancelar">✕</button>
+    <button id="btn-save" class="primary">Guardar</button>
+  </div>
+  <div id="canvas-wrap">
+    <canvas id="canvas"></canvas>
+  </div>
+<script src="screenshot-editor.js"></script>
+</body>
+</html>
