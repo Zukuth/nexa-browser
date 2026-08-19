@@ -51,13 +51,6 @@ function matchupFor(atkType, defType1, defType2) {
   return amplify(base);
 }
 
-// Confirmed in the game's own Poképedia · Combate: a wild hits ~1.8x harder
-// than in a normal fight (on top of its 5x HP).
-const WILD_DMG_MULT = 1.8;
-function riskDmgFor(movePower, risk) {
-  return (movePower != null && risk != null) ? Math.round(movePower * risk * WILD_DMG_MULT) : null;
-}
-
 // Per-stat IV ("growth" in the reference tool's own terms) ranges 1-32, not
 // the official games' 0-31 — total IV range is 6-192, not 186. The Quality
 // exponent is NOT flat across stats — verified by comparing against another
@@ -160,7 +153,6 @@ module.exports = {
   typeMult,
   amplify,
   matchupFor,
-  riskDmgFor,
   QUALITY_EXP,
   GROWTH_MIN,
   GROWTH_MAX,
