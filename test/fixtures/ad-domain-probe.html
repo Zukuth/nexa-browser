@@ -1,0 +1,14 @@
+<!doctype html>
+<!--
+  Loads a resource from a well-known ad/tracking domain to verify the real
+  adblock engine (see applyAdBlock in main.js) actually intercepts it —
+  onBeforeRequest cancels the request before any real network connection is
+  attempted, so this doesn't depend on doubleclick.net being reachable.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>Ad domain probe</title></head>
+<body>
+  <p>Ad domain probe page.</p>
+  <img id="ad-probe" src="https://doubleclick.net/ads/probe.gif" width="1" height="1" onerror="document.title='probe-errored'">
+</body>
+</html>
