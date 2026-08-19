@@ -22,7 +22,7 @@ function safeWrite(stream, chunk) {
 function launch(args, useTempProfile) {
   const child = spawn(electronPath, args, {
     cwd: appRoot,
-    env: { ...process.env, NEXA_FORCE_SOFTWARE: '1' },
+    env: process.env,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: false
   });
@@ -47,20 +47,7 @@ function launch(args, useTempProfile) {
   child.on('exit', (code, signal) => {
     if (!useTempProfile && lockErrorPattern.test(stderr)) {
       console.error('[launcher] perfil bloqueado, relanzando con perfil temporal limpio');
-      launch(
-        [
-          appRoot,
-          '--disable-gpu',
-          '--disable-software-rasterizer',
-          '--disable-gpu-compositing',
-          '--in-process-gpu',
-          '--disable-features=UseSkiaRenderer,Vulkan,CanvasOopRasterization',
-          '--use-gl=swiftshader',
-          '--use-angle=swiftshader',
-          `--user-data-dir=${tempProfileDir}`
-        ],
-        true
-      );
+      launch([appRoot, `--user-data-dir=${tempProfileDir}`], true);
       return;
     }
 
@@ -69,16 +56,10 @@ function launch(args, useTempProfile) {
   });
 }
 
-launch(
-  [
-    appRoot,
-    '--disable-gpu',
-    '--disable-software-rasterizer',
-    '--disable-gpu-compositing',
-    '--in-process-gpu',
-    '--disable-features=UseSkiaRenderer,Vulkan,CanvasOopRasterization',
-    '--use-gl=swiftshader',
-    '--use-angle=swiftshader'
-  ],
-  false
-);
+// GPU/hardware-acceleration flags are NOT forced here — electron/main.js
+// already decides that itself from data.settings.hardwareAcceleration
+// (defaults to real GPU rendering) and from NEXA_FORCE_SOFTWARE=1 for anyone
+// who explicitly needs a software-rendering fallback. Forcing swiftshader
+// unconditionally on every `npm start` used to pin the main process at
+// 100%+ CPU continuously (confirmed live) for no documented reason.
+launch([appRoot], false);
