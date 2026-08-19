@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none';" />
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; background: #1b1f2a; color: #eef1f7; padding: 16px; box-sizing: border-box; user-select: none; }
+    #msg { font-size: 13px; margin-bottom: 14px; line-height: 1.4; }
+    #host { font-weight: 600; }
+    .row { display: flex; gap: 8px; justify-content: flex-end; }
+    button { padding: 8px 14px; border-radius: 6px; border: none; cursor: pointer; font-size: 13px; }
+    #allow { background: #3d8bfd; color: #fff; }
+    #deny { background: #333a4a; color: #eef1f7; }
+    label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #aab2c5; margin-bottom: 10px; }
+  </style>
+</head>
+<body>
+  <div id="msg"></div>
+  <label><input type="checkbox" id="remember" checked /> <span id="rememberLabel"></span></label>
+  <div class="row">
+    <button id="deny" type="button"></button>
+    <button id="allow" type="button"></button>
+  </div>
+  <script src="permission-prompt.js"></script>
+</body>
+</html>
