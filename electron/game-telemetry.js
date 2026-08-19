@@ -177,21 +177,39 @@ function resolveFrameWaiters(accountId, type) {
   const waiters = pendingFrameWaiters.get(key);
   if (!waiters) return;
   pendingFrameWaiters.delete(key);
-  for (const done of waiters) done();
+  for (const done of waiters) done(true);
 }
 
+// Resolves with `true` when a real server frame arrived, `false` when the
+// timeout fired instead — callers must not treat a timed-out wait as a
+// confirmed success (an in-flight depot/family move whose frame never came
+// back is NOT confirmed to have happened, even though the request was sent).
 function waitForFrame(accountId, type, timeoutMs = 4000) {
   return new Promise((resolve) => {
+    const key = `${accountId}:${type}`;
     let settled = false;
-    const done = () => {
+    let timer;
+    // A waiter that times out (network hiccup, server just never pushed
+    // this one) used to resolve fine but leave its own closure sitting in
+    // the Set forever — only resolveFrameWaiters (a REAL frame arriving)
+    // ever cleared it, so a long session with a few timed-out sell/depot/
+    // family requests could accumulate stale entries indefinitely. Now the
+    // waiter removes itself the moment it settles, whichever way that
+    // happens, and drops the key entirely once its Set is empty.
+    const done = (confirmed) => {
       if (settled) return;
       settled = true;
-      resolve();
+      clearTimeout(timer);
+      const waiters = pendingFrameWaiters.get(key);
+      if (waiters) {
+        waiters.delete(done);
+        if (waiters.size === 0) pendingFrameWaiters.delete(key);
+      }
+      resolve(!!confirmed);
     };
-    const key = `${accountId}:${type}`;
     if (!pendingFrameWaiters.has(key)) pendingFrameWaiters.set(key, new Set());
     pendingFrameWaiters.get(key).add(done);
-    setTimeout(done, timeoutMs);
+    timer = setTimeout(() => done(false), timeoutMs);
   });
 }
 
@@ -215,6 +233,16 @@ function getOrCreateState(accountId) {
 function removeState(accountId) {
   stateByAccount.delete(accountId);
   attachedAccounts.delete(accountId);
+  // A waiter left pending in pendingFrameWaiters when its timeout fires
+  // isn't removed from the Set — only a real frame arriving for that exact
+  // key clears it (see resolveFrameWaiters). For a still-open account that
+  // self-heals naturally since frames keep arriving; for a permanently
+  // removed account, no frame of that type will ever arrive again, so any
+  // already-timed-out (but never-cleared) closures for it would otherwise
+  // sit in this Map for the rest of the app's lifetime.
+  for (const key of pendingFrameWaiters.keys()) {
+    if (key.startsWith(`${accountId}:`)) pendingFrameWaiters.delete(key);
+  }
 }
 
 // Fetched once (shared across every account — it's the same game server for
@@ -803,6 +831,28 @@ function adjustWallet(accountId, { currency, delta }) {
 // out of the page's main world.
 const jsCaptureIntervals = new Map();
 
+// Adaptive polling: the 250ms base tick (jsCaptureIntervals' setInterval)
+// stays fixed — cheap, it's just a main-process JS timer, no IPC of its own.
+// What actually costs something is the executeJavaScript() round-trip inside
+// each tick, so THAT'S what backs off during a genuinely quiet stretch
+// (several consecutive ticks with nothing in the frame queue — normal for an
+// account parked/idle-farming with nothing happening right now), and snaps
+// back to every tick the moment a real frame shows up again. Tied to queue
+// activity, not to whether the account is the visible panel — a backgrounded
+// account that's actively farming still gets polled at full speed, only
+// genuinely quiet accounts (visible or not) slow down.
+const POLL_IDLE_STREAK_THRESHOLD = 8; // ~2s of consecutive empty ticks before backing off
+const POLL_IDLE_SKIP_TICKS = 4; // once backed off, effective ~1s interval (4 * 250ms)
+const pollAdaptiveState = new Map(); // accountId -> { tickCount, emptyStreak }
+
+function shouldPollTick(tickCount, emptyStreak, {
+  idleStreakThreshold = POLL_IDLE_STREAK_THRESHOLD,
+  idleSkipTicks = POLL_IDLE_SKIP_TICKS
+} = {}) {
+  const skip = emptyStreak >= idleStreakThreshold ? idleSkipTicks : 1;
+  return tickCount % skip === 0;
+}
+
 function attachCaptureViaJs(wc, accountId, { onFrame } = {}) {
   if (jsCaptureIntervals.has(accountId)) return;
   const socketCapture = require('./game-socket-capture');
@@ -812,8 +862,12 @@ function attachCaptureViaJs(wc, accountId, { onFrame } = {}) {
   ensureCreatureCatalog();
 
   wc.executeJavaScript(socketCapture.frameCaptureScript()).catch(() => {});
+  const adaptive = { tickCount: 0, emptyStreak: 0 };
+  pollAdaptiveState.set(accountId, adaptive);
   const intervalId = setInterval(async () => {
     if (wc.isDestroyed()) { detachCaptureViaJs(accountId); return; }
+    adaptive.tickCount += 1;
+    if (!shouldPollTick(adaptive.tickCount, adaptive.emptyStreak)) return;
     // Re-asserted on every tick, not just once at attach time. Confirmed
     // live with 2+ accounts open: an account that isn't the currently
     // visible one can end up with the one-time injection above never having
@@ -833,6 +887,7 @@ function attachCaptureViaJs(wc, accountId, { onFrame } = {}) {
     } catch {
       return;
     }
+    adaptive.emptyStreak = (frames && frames.length) ? 0 : adaptive.emptyStreak + 1;
     for (const frame of frames || []) {
       state.lastFrameTs = Date.now();
       let msg;
@@ -857,6 +912,7 @@ function detachCaptureViaJs(accountId) {
   const intervalId = jsCaptureIntervals.get(accountId);
   if (intervalId) clearInterval(intervalId);
   jsCaptureIntervals.delete(accountId);
+  pollAdaptiveState.delete(accountId);
   attachedAccounts.delete(accountId);
 }
 
@@ -974,10 +1030,15 @@ module.exports = {
   getItemCatalogArray,
   waitForNextPokes,
   waitForFrame,
+  resolveFrameWaiters,
   // exported for unit testing
   rarityFromQuality,
   parseWalletAmount,
   applyFrame,
   computeRates,
-  emptyLive
+  _pendingFrameWaiterCount: (accountId, type) => pendingFrameWaiters.get(`${accountId}:${type}`)?.size || 0,
+  emptyLive,
+  shouldPollTick,
+  POLL_IDLE_STREAK_THRESHOLD,
+  POLL_IDLE_SKIP_TICKS
 };
