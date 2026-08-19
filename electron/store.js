@@ -33,10 +33,21 @@ function migrateLegacyDataFile() {
 // carried through as-is rather than blocking a save or losing data.
 const ENC_PREFIX = 'enc:v1:';
 
+let warnedPlaintextFallback = false;
 function encryptPassword(plain) {
   if (typeof plain !== 'string' || !plain) return plain;
   try {
-    if (!safeStorage.isEncryptionAvailable()) return plain;
+    if (!safeStorage.isEncryptionAvailable()) {
+      // Silent before this — a user on a system where the OS keychain isn't
+      // available (a locked-down environment, etc.) had no way to know their
+      // saved passwords were sitting on disk in plain text. Once per process
+      // is enough; this isn't expected to flip mid-session.
+      if (!warnedPlaintextFallback) {
+        warnedPlaintextFallback = true;
+        console.warn('[store] safeStorage encryption is not available on this system — saved passwords will be stored in plain text');
+      }
+      return plain;
+    }
     return ENC_PREFIX + safeStorage.encryptString(plain).toString('base64');
   } catch {
     return plain;
@@ -63,16 +74,47 @@ function decryptStoredPasswords(passwords) {
   return (passwords || []).map((p) => ({ ...p, password: decryptPassword(p.password) }));
 }
 
+// Per-account proxy credentials (account.proxy.username/.password) went
+// through no encryption at all — every saved password does, via the same
+// safeStorage round-trip, but this field was added later and missed it,
+// so proxy passwords sat on disk in plain text in data.json. Reuses the
+// exact same encrypt/decrypt boundary as the passwords array: called once,
+// after app.whenReady(), same as decryptStoredPasswords above.
+function decryptAccountProxies(accounts) {
+  return (accounts || []).map((a) => (
+    a && a.proxy && a.proxy.password
+      ? { ...a, proxy: { ...a.proxy, password: decryptPassword(a.proxy.password) } }
+      : a
+  ));
+}
+
 const DEFAULT_DATA = {
   spaces: [
     { id: 'default', name: 'General', color: '#4f8cff', icon: 'grid', defaultUrl: 'https://poke.idleworld.online/login', defaultLayout: 'single' }
   ],
   accounts: [],
+  // Collapsible sub-groups of accounts within a single Space (browser-inspired
+  // idea #11 — Edge's collapsible vertical-tab groups). Each group belongs to
+  // exactly one space via spaceId; an account opts into a group via its own
+  // groupId field (null/absent = ungrouped, rendered at the top of the
+  // sidebar same as before this existed).
+  groups: [],
   bookmarks: [],
   passwords: [],
   history: [],
   downloads: [],
   marketPurchases: [],
+  // Lifetime ad/tracker-blocking counters — unlike adBlockLog in main.js
+  // (an in-memory, 500-entry-capped ring buffer per account that resets on
+  // every restart), this survives restarts so the dashboard can show a real
+  // "blocked since install" total the way ABP/uBlock do. byHost is capped
+  // to the top 200 hostnames by count (see pruneAdBlockStatsByHost in
+  // main.js) so a long-running install can't grow this file unbounded.
+  adBlockStats: {
+    total: 0,
+    byCategory: { ads: 0, tracking: 0, social: 0, analytics: 0, other: 0 },
+    byHost: {}
+  },
   settings: {
     // 'system' sigue la preferencia del SO (prefers-color-scheme); 'dark'/'light'
     // fuerzan el tema explícitamente, elegido por el usuario en Configuración.
@@ -95,6 +137,50 @@ const DEFAULT_DATA = {
     extensions: [],
     maximizedAccountId: null,
     protectionLevel: 'standard', // 'off' | 'standard' | 'strict' — see applyAdBlock() in main.js
+    // Hostnames the user explicitly paused ad/tracker blocking for (network
+    // AND cosmetic), independent of protectionLevel — same "pause on this
+    // site" concept ABP/uBlock expose, toggled from the shield dropdown.
+    // Subdomains match their registered domain, same rule as ADBLOCK_ALLOWLIST
+    // in main.js.
+    adBlockPausedSites: [],
+    // Which filter-list categories build the ad-blocking engine — same
+    // subscription-picker concept as Adblock Plus's "Filter lists" tab.
+    // 'ads'/'tracking' on by default matches the previous single bundled
+    // list (fromPrebuiltAdsAndTracking); 'cookies' (auto-dismiss cookie
+    // banners) and 'annoyances' (social widgets, newsletter overlays) are
+    // new capabilities so they default off — auto-clicking through a
+    // banner is exactly the kind of thing that could silently break a
+    // game's own consent flow, opt-in only. See FILTER_LIST_CATEGORIES in
+    // main.js for the actual list URLs per category.
+    adBlockFilterLists: { ads: true, tracking: true, cookies: false, annoyances: false },
+    // Simple 3-position intensity preset shown as a slider in the shield
+    // popup — 'normal' is the recommended everyday default (adds
+    // cookie-notice auto-dismiss on top of the old 'standard' baseline).
+    // See ADBLOCK_MODE_PRESETS in main.js for exactly what each maps to
+    // (protectionLevel + adBlockFilterLists); moving the slider writes both
+    // at once. Independent of the master on/off toggle (protectionLevel
+    // 'off') — turning protection back on re-applies whichever mode was
+    // last selected here.
+    adBlockMode: 'normal', // 'standard' | 'normal' | 'super'
+    // Hostnames force-blocked outright (network AND the top-level
+    // navigation itself), regardless of protectionLevel/adBlockMode — the
+    // "Force Block Page" concept from the reference design, opposite of
+    // adBlockPausedSites. Checked first, before any other adblock logic, in
+    // applyAdBlock() in main.js.
+    adBlockManualBlocklist: [],
+    // User-authored filter rules in real Adblock Plus/uBlock Origin syntax
+    // (network rules like `||example.com^`, cosmetic hides like
+    // `example.com##.ad-slot`) — one rule per array entry. Populated either
+    // by hand from the dashboard's "Reglas personalizadas" textarea, or
+    // automatically by the element picker (see electron/element-picker.js),
+    // which appends a `hostname##selector` cosmetic rule per picked element.
+    adBlockCustomRules: [],
+    // Remembered per-site decisions for the "promptable" web permissions
+    // (camera/mic, notifications, geolocation) — { [hostname]: { [permission]:
+    // 'allow'|'deny' } }. Populated when the user answers the live prompt
+    // window with "remember this decision" checked (see promptSitePermission
+    // in main.js); revocable from Configuración > Permisos.
+    sitePermissions: {},
     // "Modo Eco automático" (off by default) — auto-throttles an account's
     // rAF once it's gone `minutes` without being the focused panel, on top
     // of (never instead of) the per-account manual ecoMode toggle. See
@@ -106,6 +192,16 @@ const DEFAULT_DATA = {
     showFpsOverlay: true,
     showPingOverlay: true,
     hardwareAcceleration: true,
+    // Set true the first time translate:page ever succeeds for this user —
+    // gates the startup model preload in main.js so a fresh install never
+    // silently downloads a ~20MB language model in the background before
+    // the user has ever touched the translate button once.
+    hasUsedTranslate: false,
+    // Opt-in: keeps the translation memory (see translationCache in
+    // translate.js) on disk across app restarts instead of losing it every
+    // time the app closes. Off by default — a fresh install shouldn't
+    // silently start writing files nobody asked for.
+    translateMemoryPersist: false,
     pokeIdleAlerts: {
       enabled: true,
       shiny: true,
@@ -178,6 +274,13 @@ function load() {
     // doesn't end up with that field as `undefined`.
     merged.settings.stability = { ...DEFAULT_DATA.settings.stability, ...((parsed.settings && parsed.settings.stability) || {}) };
     merged.settings.autoEco = { ...DEFAULT_DATA.settings.autoEco, ...((parsed.settings && parsed.settings.autoEco) || {}) };
+    merged.settings.adBlockFilterLists = { ...DEFAULT_DATA.settings.adBlockFilterLists, ...((parsed.settings && parsed.settings.adBlockFilterLists) || {}) };
+    merged.adBlockStats = {
+      ...DEFAULT_DATA.adBlockStats,
+      ...(parsed.adBlockStats || {}),
+      byCategory: { ...DEFAULT_DATA.adBlockStats.byCategory, ...((parsed.adBlockStats && parsed.adBlockStats.byCategory) || {}) },
+      byHost: (parsed.adBlockStats && parsed.adBlockStats.byHost) || {}
+    };
     // Passwords are decrypted later via decryptStoredPasswords(), once
     // app.whenReady() has resolved — see the comment on that function.
     return merged;
@@ -211,7 +314,12 @@ function save(data) {
   // the rest of the app keeps using in memory.
   const toWrite = {
     ...data,
-    passwords: (data.passwords || []).map((p) => ({ ...p, password: encryptPassword(p.password) }))
+    passwords: (data.passwords || []).map((p) => ({ ...p, password: encryptPassword(p.password) })),
+    accounts: (data.accounts || []).map((a) => (
+      a && a.proxy && a.proxy.password
+        ? { ...a, proxy: { ...a.proxy, password: encryptPassword(a.proxy.password) } }
+        : a
+    ))
   };
   const json = JSON.stringify(toWrite, null, 2);
   fs.writeFileSync(TMP_FILE, json, 'utf-8');
@@ -255,4 +363,12 @@ function watchDataFile(onChange) {
   }
 }
 
-module.exports = { load, save, decryptStoredPasswords, watchDataFile, DATA_FILE };
+function isPasswordEncryptionAvailable() {
+  try {
+    return safeStorage.isEncryptionAvailable();
+  } catch {
+    return false;
+  }
+}
+
+module.exports = { load, save, decryptStoredPasswords, decryptAccountProxies, watchDataFile, DATA_FILE, isPasswordEncryptionAvailable };

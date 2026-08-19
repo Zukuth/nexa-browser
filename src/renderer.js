@@ -29,6 +29,13 @@ const btnToggleAll = document.getElementById('btn-toggle-all');
 const addressInput = document.getElementById('input-address');
 const panelHeadersEl = document.getElementById('panel-headers');
 const panelWebviewsEl = document.getElementById('panel-webviews');
+// accountId -> 'connecting' | 'loading', only while that panel's <webview>
+// is actively navigating — read by renderPanelHeaders() to show a small
+// phase badge instead of a generic spinner, so a slow connection reads as
+// "still working" through named phases rather than an ambiguous blank wait.
+// Host-UI-only: never touches the webview's own timers/throttling, so it
+// has zero effect on how fast a backgrounded game account keeps farming.
+const panelLoadingPhase = new Map();
 const railSpacesEl = document.getElementById('rail-spaces');
 const btnAddSpace = document.getElementById('btn-add-space');
 const spaceNameEl = document.getElementById('space-name');
@@ -50,15 +57,18 @@ const tbMuteAll = document.getElementById('tb-mute-all');
 const tbShield = document.getElementById('tb-shield');
 const tbShieldCount = document.getElementById('tb-shield-count');
 const tbScreenshot = document.getElementById('tb-screenshot');
+const tbMiniplayer = document.getElementById('tb-miniplayer');
 const tbFullscreen = document.getElementById('tb-fullscreen');
 const tbDownloads = document.getElementById('tb-downloads');
 const tbSettings = document.getElementById('tb-settings');
 const tbBookmarks = document.getElementById('tb-bookmarks');
 const tbSupport = document.getElementById('tb-support');
 const tbDns = document.getElementById('tb-dns');
+const tbTranslate = document.getElementById('tb-translate');
 
 const statusSpaceInfo = document.getElementById('status-space-info');
 const statusActiveAccount = document.getElementById('status-active-account');
+const statusUpdateProgress = document.getElementById('status-update-progress');
 const statusCpu = document.getElementById('status-cpu');
 const statusRam = document.getElementById('status-ram');
 const statusTime = document.getElementById('status-time');
@@ -87,11 +97,20 @@ const btnCloseDownloads = document.getElementById('btn-close-downloads');
 const dlOpenFolder = document.getElementById('dl-open-folder');
 const dlClear = document.getElementById('dl-clear');
 
+
 const dnsModal = document.getElementById('dns-modal');
 const dnsResultsEl = document.getElementById('dns-results');
 const dnsRunBtn = document.getElementById('dns-run-test');
 const dnsCopyRestoreBtn = document.getElementById('dns-copy-restore');
 const btnCloseDns = document.getElementById('btn-close-dns');
+
+const translateModal = document.getElementById('translate-modal');
+const translateModalTitle = document.getElementById('translate-modal-title');
+const translateProgressFill = document.getElementById('translate-progress-fill');
+const translateProgressLabel = document.getElementById('translate-progress-label');
+const translateDownloadHint = document.getElementById('translate-download-hint');
+const translateErrorEl = document.getElementById('translate-error');
+const btnCloseTranslate = document.getElementById('btn-close-translate');
 
 const updateModal = document.getElementById('update-modal');
 const updateVersionEl = document.getElementById('update-version');
@@ -232,8 +251,6 @@ const calcStatInputs = {
 const btnLayoutMenu = document.getElementById('btn-layout-menu');
 const layoutMenu = document.getElementById('layout-menu');
 const layoutOptions = document.querySelectorAll('.layout-option');
-const protectionMenu = document.getElementById('protection-menu');
-const protectionOptions = document.querySelectorAll('.protection-option');
 const btnZoomMenu = document.getElementById('btn-zoom-menu');
 const zoomMenu = document.getElementById('zoom-menu');
 
@@ -347,8 +364,10 @@ const setReopenSpace = document.getElementById('set-reopen-space');
 const setProtectionLevel = document.getElementById('set-protection-level');
 const setAutoEcoEnabled = document.getElementById('set-auto-eco-enabled');
 const setAutoEcoMinutes = document.getElementById('set-auto-eco-minutes');
+const ecoSavingsHint = document.getElementById('eco-savings-hint');
 const setShowFpsOverlay = document.getElementById('set-show-fps');
 const setShowPingOverlay = document.getElementById('set-show-ping');
+const setTranslateMemoryPersist = document.getElementById('set-translate-memory-persist');
 const setHwAccel = document.getElementById('set-hw-accel');
 const setExportSpaces = document.getElementById('set-export-spaces');
 const setImportSpaces = document.getElementById('set-import-spaces');
@@ -363,6 +382,7 @@ const setAskDownload = document.getElementById('set-ask-download');
 const verApp = document.getElementById('ver-app');
 const verElectron = document.getElementById('ver-electron');
 const verChrome = document.getElementById('ver-chrome');
+const verUpdateStatus = document.getElementById('ver-update-status');
 
 const extInput = document.getElementById('ext-input');
 const extInstallBtn = document.getElementById('ext-install');
@@ -519,6 +539,17 @@ let panelsGeometry = [];
 // Geometry keeps updating in the background either way; the rebuild is only
 // deferred, and runs once immediately after the drag ends.
 let dragInProgress = false;
+// CSS transitions on panel rects (see .layout-animated in style.css) make
+// opening/closing an account slide instead of jump — but the exact same
+// transition would fight a live divider/free-panel drag, easing every
+// per-frame rect update instead of tracking the mouse instantly. Toggling
+// this class off for the duration of any drag keeps the two features from
+// interfering: smooth animated layout changes when panels are added or
+// removed, zero added latency while the user is actively dragging.
+function setDragInProgress(value) {
+  dragInProgress = value;
+  document.body.classList.toggle('layout-animated', !value);
+}
 // Set by startSplitDrag/startFreeDrag to their own onUp() for the duration of
 // the drag, cleared when onUp runs normally. A drag's mouseup/mousemove
 // listeners live on `document`, which never fires if the user releases the
@@ -606,6 +637,18 @@ function escapeHtmlClient(s) {
   return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// Guards a numeric-looking field from the game's own remote API (level,
+// stats, power, IV totals — never developer-controlled) against being
+// interpolated into a template literal as-is: a crafted non-numeric string
+// there could inject markup the same way an unescaped id/name would.
+// escapeHtmlClient() above handles arbitrary text; this is the equivalent
+// for the "should always be a plain number" case, where the correct
+// behavior is a safe display fallback, not HTML-escaping a string that was
+// never supposed to be a string.
+function numOr(value, fallback = '?') {
+  return Number.isFinite(value) ? value : fallback;
+}
+
 // 'system' = sin atributo, sigue prefers-color-scheme (ver style.css);
 // 'dark'/'light' fuerzan el tema explícitamente.
 function applyTheme(theme) {
@@ -689,6 +732,7 @@ function applyLanguage(lang) {
     renderPlugins();
     renderPasswords();
     renderNetworkTab();
+    renderPermissionsTab();
   }
   if (!shortcutsModal.classList.contains('hidden')) renderShortcutsList();
   if (!bookmarksModal.classList.contains('hidden')) renderBookmarksList();
@@ -714,6 +758,7 @@ function formatDuration(ms) {
 
 function render() {
   reconcileWebviews();
+  updateTranslateButton();
   // Positions any <webview> just created above. Needed here too (not just
   // in onPanelsGeometry) because panels:geometry can arrive before the
   // account list does at startup — if it does, positionWebviews() runs
@@ -738,9 +783,11 @@ function render() {
   spaceNameEl.textContent = space?.name || '';
 
   const spaceAccounts = currentSpaceAccounts();
+  const spaceAccountIndex = new Map(spaceAccounts.map((a, i) => [a.id, i]));
   if (!listDragInProgress) {
   listEl.innerHTML = '';
-  spaceAccounts.forEach((account, i) => {
+  function buildAccountItem(account) {
+    const i = spaceAccountIndex.get(account.id);
     const item = document.createElement('div');
     item.className = 'account-item'
       + (account.id === state.settings.activeAccountId ? ' active' : '')
@@ -856,7 +903,42 @@ function render() {
       e.preventDefault();
       window.api.showAccountMenu(account.id);
     };
-    listEl.appendChild(item);
+    return item;
+  }
+
+  // Collapsible sub-groups within this space (browser-inspired idea #11) —
+  // ungrouped accounts render first exactly as before this existed, then
+  // each group as a header followed by its accounts, hidden while collapsed.
+  const spaceGroups = (state.groups || []).filter((g) => g.spaceId === space?.id);
+  const groupedAccounts = new Map(spaceGroups.map((g) => [g.id, []]));
+  const ungroupedAccounts = [];
+  spaceAccounts.forEach((account) => {
+    if (account.groupId && groupedAccounts.has(account.groupId)) groupedAccounts.get(account.groupId).push(account);
+    else ungroupedAccounts.push(account);
+  });
+
+  ungroupedAccounts.forEach((account) => listEl.appendChild(buildAccountItem(account)));
+  spaceGroups.forEach((group) => {
+    const accountsInGroup = groupedAccounts.get(group.id);
+    const header = document.createElement('div');
+    header.className = 'account-group-header';
+    const caret = document.createElement('span');
+    caret.className = 'group-caret';
+    caret.textContent = group.collapsed ? '▸' : '▾';
+    const name = document.createElement('span');
+    name.className = 'group-name';
+    name.textContent = group.name;
+    const count = document.createElement('span');
+    count.className = 'group-count';
+    count.textContent = String(accountsInGroup.length);
+    header.append(caret, name, count);
+    header.onclick = () => window.api.toggleGroupCollapsed(group.id);
+    header.oncontextmenu = (e) => {
+      e.preventDefault();
+      window.api.showGroupMenu(group.id);
+    };
+    listEl.appendChild(header);
+    if (!group.collapsed) accountsInGroup.forEach((account) => listEl.appendChild(buildAccountItem(account)));
   });
   }
 
@@ -891,7 +973,6 @@ function render() {
   const protectionLevel = state.settings.protectionLevel || 'standard';
   tbShield.classList.toggle('muted', protectionLevel !== 'off');
   tbShield.title = t('js.protection' + protectionLevel[0].toUpperCase() + protectionLevel.slice(1));
-  protectionOptions.forEach((opt) => opt.classList.toggle('active', opt.dataset.level === protectionLevel));
   const activeBlocked = active ? metrics[active.id]?.blocked || 0 : 0;
   tbShieldCount.textContent = activeBlocked > 0 ? String(activeBlocked) : '';
 
@@ -1014,6 +1095,14 @@ function renderPanelHeaders() {
     const name = document.createElement('div');
     name.className = 'panel-name';
     name.textContent = panel.name;
+
+    const loadPhase = panelLoadingPhase.get(panel.id);
+    if (loadPhase) {
+      const phaseBadge = document.createElement('span');
+      phaseBadge.className = 'panel-load-phase';
+      phaseBadge.textContent = t(loadPhase === 'connecting' ? 'js.phaseConnecting' : 'js.phaseLoading');
+      name.appendChild(phaseBadge);
+    }
 
     const urlInput = document.createElement('input');
     urlInput.className = 'panel-url';
@@ -1157,6 +1246,23 @@ function reconcileWebviews() {
     // main confirms that's done.
     wv.src = 'about:blank';
     panelWebviewsEl.appendChild(wv);
+
+    // Named phases instead of a plain spinner: "Conectando…" while waiting
+    // on the network/server, "Cargando…" once the page's own DOM exists but
+    // scripts/assets are still coming in. Purely cosmetic — reading these
+    // events doesn't change how the webview itself loads or throttles.
+    wv.addEventListener('did-start-loading', () => {
+      panelLoadingPhase.set(account.id, 'connecting');
+      renderPanelHeaders();
+    });
+    wv.addEventListener('dom-ready', () => {
+      if (!panelLoadingPhase.has(account.id)) return;
+      panelLoadingPhase.set(account.id, 'loading');
+      renderPanelHeaders();
+    });
+    wv.addEventListener('did-stop-loading', () => {
+      if (panelLoadingPhase.delete(account.id)) renderPanelHeaders();
+    });
   });
 }
 
@@ -1242,7 +1348,7 @@ function renderDividersForGroup(group, field) {
 function startSplitDrag(e, group, field, pairIndex) {
   e.preventDefault();
   e.stopPropagation();
-  dragInProgress = true;
+  setDragInProgress(true);
   // A <webview> is real, hit-testable content — without this, a mousemove
   // that crosses over one mid-drag gets captured by the guest instead of
   // reaching this function's own document-level mousemove listener,
@@ -1272,6 +1378,24 @@ function startSplitDrag(e, group, field, pairIndex) {
   const startY = e.clientY;
   const minPx = 140;
 
+  // mousemove fires far more often than the display can repaint (sometimes
+  // 100+ times/sec) — sending window.api.setLiveRect for both panels on
+  // every single event means that many IPC round-trips to main.js per
+  // second, most of which the compositor was never going to show anyway.
+  // Batching to one flush per animation frame keeps the drag visually just
+  // as smooth (the divider line and headers still update synchronously
+  // below) while cutting the actual IPC traffic to the display's real
+  // refresh rate.
+  let pendingRects = null;
+  let rafId = null;
+  function flushLiveRect() {
+    rafId = null;
+    if (!pendingRects) return;
+    window.api.setLiveRect(group[pairIndex].id, pendingRects.rectA);
+    window.api.setLiveRect(group[pairIndex + 1].id, pendingRects.rectB);
+    pendingRects = null;
+  }
+
   function onMove(ev) {
     const delta = isWidth ? ev.clientX - startX : ev.clientY - startY;
     let a = startSizes[pairIndex] + delta;
@@ -1294,8 +1418,8 @@ function startSplitDrag(e, group, field, pairIndex) {
       dividerEl.style.top = rectB.y - SPLIT_GAP / 2 - 5 + 'px';
     }
 
-    window.api.setLiveRect(group[pairIndex].id, rectA);
-    window.api.setLiveRect(group[pairIndex + 1].id, rectB);
+    pendingRects = { rectA, rectB };
+    if (rafId === null) rafId = requestAnimationFrame(flushLiveRect);
     if (headerA) { headerA.style.left = rectA.x + 'px'; headerA.style.top = rectA.y + 'px'; headerA.style.width = rectA.width + 'px'; headerA.style.height = headerH + 'px'; }
     if (headerB) { headerB.style.left = rectB.x + 'px'; headerB.style.top = rectB.y + 'px'; headerB.style.width = rectB.width + 'px'; headerB.style.height = headerH + 'px'; }
   }
@@ -1303,8 +1427,9 @@ function startSplitDrag(e, group, field, pairIndex) {
   function onUp() {
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
+    if (rafId !== null) { cancelAnimationFrame(rafId); flushLiveRect(); }
     activeDragCleanup = null;
-    dragInProgress = false;
+    setDragInProgress(false);
     window.api.showViews();
     renderPanelHeaders(); // catch up on any geometry that arrived mid-drag and was held back
     positionWebviews();
@@ -1385,7 +1510,7 @@ function startFreeDrag(e, id, mode) {
   e.stopPropagation();
   const panel = panelsGeometry.find((p) => p.id === id);
   if (!panel) return;
-  dragInProgress = true;
+  setDragInProgress(true);
   const bounds = getContentBounds();
   window.api.hideViews();
 
@@ -1430,7 +1555,7 @@ function startFreeDrag(e, id, mode) {
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
     activeDragCleanup = null;
-    dragInProgress = false;
+    setDragInProgress(false);
     renderPanelHeaders(); // catch up on any geometry that arrived mid-drag and was held back
     positionWebviews();
     const finalX = parseFloat(activeGhost.style.left);
@@ -1509,6 +1634,18 @@ btnAddSpace.addEventListener('click', () => {
   window.api.addSpace({ name: `Espacio ${state.spaces.length + 1}`, color, icon });
 });
 btnEditSpace.addEventListener('click', () => openSpaceModal(currentSpace()));
+
+window.api.onPromptNewGroup(async ({ accountId, spaceId }) => {
+  const name = prompt(t('groupPrompt.name'));
+  if (!name || !name.trim()) return;
+  const group = await window.api.createGroup(spaceId, name.trim());
+  if (group && group.id) window.api.setAccountGroup(accountId, group.id);
+});
+
+window.api.onPromptRenameGroup(({ groupId, currentName }) => {
+  const name = prompt(t('groupPrompt.name'), currentName || '');
+  if (name && name.trim()) window.api.renameGroup(groupId, name.trim());
+});
 btnCancelSpace.addEventListener('click', closeSpaceModal);
 btnCollapseSidebar.addEventListener('click', () => window.api.toggleSidebar());
 
@@ -2034,34 +2171,6 @@ layoutOptions.forEach((opt) => {
   });
 });
 
-// ---- Protection level dropdown ----
-// Replaces the old blind on/off toggle — clicking the shield icon itself now
-// opens a 3-way level picker (Desactivada/Estándar/Estricta), matching how
-// Firefox's shield icon opens an ETP level panel instead of a single
-// checkbox. The count badge keeps its own separate click target (below)
-// for the blocked-log dropdown, unchanged.
-
-tbShield.addEventListener('click', (e) => {
-  e.stopPropagation();
-  closeAllMenus({ keepProtection: true });
-  if (shieldMenu && !shieldMenu.classList.contains('hidden')) shieldMenu.classList.add('hidden');
-  const opening = protectionMenu.classList.contains('hidden');
-  protectionMenu.classList.toggle('hidden', !opening);
-  tbShield.classList.toggle('open', opening);
-  if (opening) window.api.hideViews();
-  else window.api.showViews();
-});
-
-protectionOptions.forEach((opt) => {
-  opt.addEventListener('click', (e) => {
-    e.stopPropagation();
-    window.api.updateSettings({ protectionLevel: opt.dataset.level });
-    protectionMenu.classList.add('hidden');
-    tbShield.classList.remove('open');
-    window.api.showViews();
-  });
-});
-
 // ---- Zoom dropdown ----
 
 function renderZoomMenu() {
@@ -2108,7 +2217,7 @@ btnZoomMenu.addEventListener('click', (e) => {
   else window.api.showViews();
 });
 
-function closeAllMenus({ keepZoom, keepLayout, keepProtection } = {}) {
+function closeAllMenus({ keepZoom, keepLayout } = {}) {
   if (!keepLayout && !layoutMenu.classList.contains('hidden')) {
     layoutMenu.classList.add('hidden');
     btnLayoutMenu.classList.remove('open');
@@ -2117,61 +2226,427 @@ function closeAllMenus({ keepZoom, keepLayout, keepProtection } = {}) {
     zoomMenu.classList.add('hidden');
     btnZoomMenu.classList.remove('open');
   }
-  if (!keepProtection && !protectionMenu.classList.contains('hidden')) {
-    protectionMenu.classList.add('hidden');
-    tbShield.classList.remove('open');
-  }
 }
 
 document.addEventListener('click', () => {
-  const wasOpen = !layoutMenu.classList.contains('hidden') || !zoomMenu.classList.contains('hidden') || !protectionMenu.classList.contains('hidden');
+  const wasOpen = !layoutMenu.classList.contains('hidden') || !zoomMenu.classList.contains('hidden');
   closeAllMenus({});
   if (wasOpen) window.api.showViews();
   if (shieldMenu && !shieldMenu.classList.contains('hidden')) {
     shieldMenu.classList.add('hidden');
+    tbShield.classList.remove('open');
     window.api.showViews();
   }
 });
 
-// ---- Shield "what got blocked" dropdown ----
-// The count badge alone ("N blocked") never said WHAT — this fetches the
-// account's adBlockLog ring buffer (already collected for the diagnostics
-// export, Etapa 8) on demand, only while the panel is actually open.
+// ---- Shield popup (Cyber-Shield design) ----
+// One unified popup replaces what used to be three separate pieces: the
+// off/standard/strict level-picker dropdown, the compact "what got
+// blocked" dropdown, and the full-page adblock dashboard modal. Everything
+// lives here now — status + master on/off, the 3-mode intensity slider,
+// per-page stats, per-site pause/force-block, quick whitelist, and custom
+// filter rules — sized as a dropdown rather than a full page.
 const shieldMenu = document.getElementById('shield-menu');
+const ADBLOCK_MODES = ['standard', 'normal', 'super'];
+const ADVANCED_FILTER_LIST_KEYS = ['ads', 'tracking', 'cookies', 'annoyances'];
+const ADVANCED_FILTER_LIST_LABELS = {
+  ads: 'js.adblockListAds',
+  tracking: 'js.adblockListTracking',
+  cookies: 'js.adblockListCookies',
+  annoyances: 'js.adblockListAnnoyances'
+};
 
-async function renderShieldMenu() {
-  const active = activeAccount();
-  shieldMenu.innerHTML = '';
-  if (!active) {
-    shieldMenu.innerHTML = `<div class="settings-hint" style="padding:8px;">${t('js.adblockNoActiveAccount')}</div>`;
-    return;
-  }
-  const log = await window.api.getAdBlockLog(active.id);
-  if (!log || log.length === 0) {
-    shieldMenu.innerHTML = `<div class="settings-hint" style="padding:8px;">${t('js.adblockNothingBlockedYet')}</div>`;
-    return;
-  }
-  log.forEach((entry) => {
-    const row = document.createElement('div');
-    row.className = 'shield-log-row';
-    const time = new Date(entry.timestamp).toLocaleTimeString();
-    row.innerHTML = `<span class="shield-log-host">${escapeHtmlClient(entry.hostname)}</span><span class="shield-log-time">${time}</span>`;
-    shieldMenu.appendChild(row);
-  });
+function shieldModeLabel(mode) {
+  return t('js.adblockMode' + mode.charAt(0).toUpperCase() + mode.slice(1));
 }
 
-tbShieldCount.addEventListener('click', (e) => {
-  e.stopPropagation();
-  closeAllMenus({});
-  const opening = shieldMenu.classList.contains('hidden');
-  shieldMenu.classList.toggle('hidden', !opening);
-  if (opening) {
-    window.api.hideViews();
-    renderShieldMenu();
+// Shared by the whitelist and custom-rules sections below — both are a text
+// input + "+" button, submit on click or Enter, that clears the input and
+// re-renders the whole popup after `onAdd` resolves. `hidden` starts the
+// row collapsed (the custom-rules row toggles open via its own "+ Nueva
+// regla" button instead of always showing).
+function createAddInputRow({ placeholder, hidden, onAdd }) {
+  const row = document.createElement('div');
+  row.className = 'shield-input-row' + (hidden ? ' hidden' : '');
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = placeholder;
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.textContent = '+';
+  const submit = async () => {
+    const val = input.value.trim();
+    if (!val) return;
+    await onAdd(val);
+    input.value = '';
+    renderShieldPopup();
+  };
+  addBtn.addEventListener('click', (e) => { e.stopPropagation(); submit(); });
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') submit();
+  });
+  input.addEventListener('click', (e) => e.stopPropagation());
+  row.append(input, addBtn);
+  return { row, input };
+}
+
+async function renderShieldPopup() {
+  const active = activeAccount();
+  shieldMenu.innerHTML = '';
+  const popup = await window.api.getAdBlockPopupData(active ? active.id : null);
+
+  // Hero: shield icon + Protected/Unprotected + master toggle
+  const hero = document.createElement('div');
+  hero.className = 'shield-hero';
+  const heroIcon = document.createElement('div');
+  heroIcon.className = 'shield-hero-icon' + (popup.masterEnabled ? ' active' : '');
+  heroIcon.innerHTML = '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/></svg>';
+  const heroText = document.createElement('div');
+  heroText.className = 'shield-hero-status';
+  heroText.textContent = popup.masterEnabled ? t('js.adblockProtected') : t('js.adblockUnprotected');
+  hero.append(heroIcon, heroText);
+  shieldMenu.appendChild(hero);
+
+  // Engine health banner — only shown while the filter engine isn't ready
+  // yet (a few seconds on first-ever launch) or genuinely failed to load
+  // (e.g. no network for the very first filter-list fetch). Silent in the
+  // normal case so it doesn't clutter the popup every time it's opened.
+  const engineStatus = popup.engineStatus;
+  if (engineStatus && engineStatus.status !== 'ready') {
+    const banner = document.createElement('div');
+    banner.className = 'shield-engine-banner' + (engineStatus.status === 'failed' ? ' error' : '');
+    banner.textContent = engineStatus.status === 'failed'
+      ? t('js.adblockEngineFailed', { error: engineStatus.lastError || '' })
+      : t('js.adblockEngineLoading');
+    shieldMenu.appendChild(banner);
+  }
+
+  const toggleRow = document.createElement('div');
+  toggleRow.className = 'shield-toggle-row';
+  const toggleLabel = document.createElement('span');
+  toggleLabel.textContent = t('js.adblockSystemStatus');
+  const toggleSwitch = document.createElement('button');
+  toggleSwitch.type = 'button';
+  toggleSwitch.className = 'shield-switch' + (popup.masterEnabled ? ' on' : '');
+  toggleSwitch.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    await window.api.setAdBlockMasterEnabled(!popup.masterEnabled);
+    renderShieldPopup();
+  });
+  toggleRow.append(toggleLabel, toggleSwitch);
+  shieldMenu.appendChild(toggleRow);
+
+  // Mode slider — Estándar / Normal / Súper Bloqueo
+  const modeSlider = document.createElement('div');
+  modeSlider.className = 'shield-mode-slider';
+  ADBLOCK_MODES.forEach((mode) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'shield-mode-btn' + (popup.mode === mode && popup.modeMatchesPreset ? ' active' : '');
+    btn.textContent = shieldModeLabel(mode);
+    btn.disabled = !popup.masterEnabled;
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await window.api.setAdBlockMode(mode);
+      renderShieldPopup();
+    });
+    modeSlider.appendChild(btn);
+  });
+  shieldMenu.appendChild(modeSlider);
+
+  // Stats row
+  const statsRow = document.createElement('div');
+  statsRow.className = 'shield-stats-row';
+  [
+    [popup.blockedOnPage, 'js.adblockBlockedOnPage'],
+    [popup.totalSinceInstall, 'js.adblockTotalSinceInstall']
+  ].forEach(([value, labelKey]) => {
+    const card = document.createElement('div');
+    card.className = 'shield-stat-card';
+    const num = document.createElement('div');
+    num.className = 'shield-stat-number';
+    num.textContent = String(value);
+    const label = document.createElement('div');
+    label.className = 'shield-stat-label';
+    label.textContent = t(labelKey);
+    card.append(num, label);
+    statsRow.appendChild(card);
+  });
+  shieldMenu.appendChild(statsRow);
+
+  // Top blocked hosts — already computed server-side for every popup open
+  // (getAdBlockPopupData's topHosts/byCategory), but had no consumer here
+  // until now. Shown only when there's at least one, right below the raw
+  // counters above.
+  if (popup.topHosts && popup.topHosts.length > 0) {
+    const topHostsSection = document.createElement('div');
+    topHostsSection.className = 'shield-section';
+    const topHostsTitle = document.createElement('div');
+    topHostsTitle.className = 'shield-section-title';
+    topHostsTitle.textContent = t('js.adblockTopHosts');
+    topHostsSection.appendChild(topHostsTitle);
+    const topHostsList = document.createElement('div');
+    topHostsList.className = 'shield-list';
+    popup.topHosts.slice(0, 5).forEach(({ hostname, count }) => {
+      const row = document.createElement('div');
+      row.className = 'shield-list-row';
+      const name = document.createElement('span');
+      name.textContent = hostname;
+      const num = document.createElement('span');
+      num.className = 'shield-list-count';
+      num.textContent = String(count);
+      row.append(name, num);
+      topHostsList.appendChild(row);
+    });
+    topHostsSection.appendChild(topHostsList);
+    shieldMenu.appendChild(topHostsSection);
+  }
+
+  // Current page — pause (whitelist) / force-block, only when there's an
+  // actual hostname to act on.
+  if (popup.hostname) {
+    const pageSection = document.createElement('div');
+    pageSection.className = 'shield-section';
+    const title = document.createElement('div');
+    title.className = 'shield-section-title';
+    title.textContent = t('js.adblockCurrentPage');
+    const host = document.createElement('div');
+    host.className = 'shield-current-host';
+    host.textContent = popup.hostname;
+    pageSection.append(title, host);
+
+    const btnRow = document.createElement('div');
+    btnRow.className = 'shield-page-actions';
+
+    const blockBtn = document.createElement('button');
+    blockBtn.type = 'button';
+    blockBtn.className = 'shield-btn-primary' + (popup.blocked ? ' active' : '');
+    blockBtn.textContent = popup.blocked ? t('js.adblockUnblockSite') : t('js.adblockForceBlockPage');
+    blockBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await window.api.toggleAdBlockSiteBlock(popup.hostname);
+      renderShieldPopup();
+    });
+
+    const pauseBtn = document.createElement('button');
+    pauseBtn.type = 'button';
+    pauseBtn.className = 'shield-btn-secondary';
+    pauseBtn.disabled = popup.staticallyAllowed;
+    pauseBtn.title = popup.staticallyAllowed ? t('js.adblockStaticallyAllowed', { host: popup.hostname }) : '';
+    pauseBtn.textContent = popup.paused ? t('js.adblockResume') : t('js.adblockPauseHere');
+    pauseBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await window.api.toggleAdBlockSitePause(popup.hostname);
+      renderShieldPopup();
+    });
+
+    btnRow.append(blockBtn, pauseBtn);
+    pageSection.appendChild(btnRow);
+    shieldMenu.appendChild(pageSection);
+  }
+
+  // Quick whitelist — free-text add, not just the current site
+  const wlSection = document.createElement('div');
+  wlSection.className = 'shield-section';
+  const wlTitle = document.createElement('div');
+  wlTitle.className = 'shield-section-title';
+  wlTitle.textContent = t('js.adblockQuickWhitelist');
+  wlSection.appendChild(wlTitle);
+
+  const { row: wlInputRow } = createAddInputRow({
+    placeholder: 'example.com',
+    onAdd: (val) => window.api.toggleAdBlockSitePause(val.toLowerCase().replace(/^https?:\/\//, '').split('/')[0])
+  });
+  wlSection.appendChild(wlInputRow);
+
+  const wlList = document.createElement('div');
+  wlList.className = 'shield-list';
+  if (!popup.pausedSites || popup.pausedSites.length === 0) {
+    const hint = document.createElement('div');
+    hint.className = 'settings-hint';
+    hint.textContent = t('js.adblockNoPausedSites');
+    wlList.appendChild(hint);
   } else {
-    window.api.showViews();
+    popup.pausedSites.forEach((hostname) => {
+      const row = document.createElement('div');
+      row.className = 'shield-list-row';
+      const span = document.createElement('span');
+      span.textContent = hostname;
+      const rm = document.createElement('button');
+      rm.type = 'button';
+      rm.className = 'shield-list-remove';
+      rm.textContent = '×';
+      rm.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await window.api.toggleAdBlockSitePause(hostname);
+        renderShieldPopup();
+      });
+      row.append(span, rm);
+      wlList.appendChild(row);
+    });
+  }
+  wlSection.appendChild(wlList);
+  shieldMenu.appendChild(wlSection);
+
+  // Custom filters — each non-empty rule as its own toggleable/deletable
+  // row. A rule "disabled" by the toggle is just prefixed with '! ' (real
+  // Adblock Plus/uBlock comment syntax), same array the engine already
+  // reads — no separate on/off bookkeeping needed.
+  const rulesSection = document.createElement('div');
+  rulesSection.className = 'shield-section';
+  const rulesHeader = document.createElement('div');
+  rulesHeader.className = 'shield-section-header';
+  const rulesTitle = document.createElement('div');
+  rulesTitle.className = 'shield-section-title';
+  rulesTitle.textContent = t('js.adblockCustomFilters');
+  const newRuleBtn = document.createElement('button');
+  newRuleBtn.type = 'button';
+  newRuleBtn.className = 'shield-new-rule-btn';
+  newRuleBtn.textContent = '+ ' + t('js.adblockNewRule');
+  rulesHeader.append(rulesTitle, newRuleBtn);
+  rulesSection.appendChild(rulesHeader);
+
+  const rules = (popup.customRules || []).filter((r) => r.trim());
+  async function saveRules(nextRules) {
+    await window.api.setAdBlockCustomRules(nextRules.join('\n'));
+    renderShieldPopup();
+  }
+
+  const { row: rulesInputRow, input: rulesInput } = createAddInputRow({
+    placeholder: 'dominio.com##.selector',
+    hidden: true,
+    onAdd: (val) => saveRules([...rules, val])
+  });
+  newRuleBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    rulesInputRow.classList.toggle('hidden');
+    if (!rulesInputRow.classList.contains('hidden')) rulesInput.focus();
+  });
+  rulesSection.appendChild(rulesInputRow);
+
+  const rulesList = document.createElement('div');
+  rulesList.className = 'shield-rules-list';
+  if (rules.length === 0) {
+    const hint = document.createElement('div');
+    hint.className = 'settings-hint';
+    hint.textContent = t('js.adblockNoCustomRules');
+    rulesList.appendChild(hint);
+  } else {
+    rules.forEach((rule, idx) => {
+      const isDisabled = rule.trim().startsWith('!');
+      const row = document.createElement('div');
+      row.className = 'shield-rule-card';
+      const code = document.createElement('code');
+      code.className = 'shield-rule-text';
+      code.textContent = isDisabled ? rule.replace(/^!\s*/, '') : rule;
+      const rowActions = document.createElement('div');
+      rowActions.className = 'shield-rule-actions';
+      const toggle = document.createElement('input');
+      toggle.type = 'checkbox';
+      toggle.checked = !isDisabled;
+      toggle.addEventListener('click', (e) => e.stopPropagation());
+      toggle.addEventListener('change', async () => {
+        const next = [...rules];
+        next[idx] = toggle.checked ? rule.replace(/^!\s*/, '') : '! ' + rule.replace(/^!\s*/, '');
+        await saveRules(next);
+      });
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'shield-rule-delete';
+      del.textContent = '×';
+      del.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await saveRules(rules.filter((_, i) => i !== idx));
+      });
+      rowActions.append(toggle, del);
+      row.append(code, rowActions);
+      rulesList.appendChild(row);
+    });
+  }
+  rulesSection.appendChild(rulesList);
+  shieldMenu.appendChild(rulesSection);
+
+  // Advanced — individual filter-list categories, for fine-tuning beyond
+  // what the 3-mode slider offers. Collapsed by default so it doesn't
+  // compete with the simpler controls above for a casual user.
+  const advSection = document.createElement('div');
+  advSection.className = 'shield-section';
+  const advToggle = document.createElement('button');
+  advToggle.type = 'button';
+  advToggle.className = 'shield-advanced-toggle';
+  advToggle.textContent = '▸ ' + t('js.adblockAdvanced');
+  const advBody = document.createElement('div');
+  advBody.className = 'shield-advanced-body hidden';
+  ADVANCED_FILTER_LIST_KEYS.forEach((key) => {
+    const row = document.createElement('label');
+    row.className = 'shield-advanced-row';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = !!(popup.filterLists && popup.filterLists[key]);
+    checkbox.addEventListener('click', (e) => e.stopPropagation());
+    checkbox.addEventListener('change', async () => {
+      checkbox.disabled = true;
+      await window.api.setAdBlockFilterLists({ [key]: checkbox.checked });
+      checkbox.disabled = false;
+    });
+    const label = document.createElement('span');
+    label.textContent = t(ADVANCED_FILTER_LIST_LABELS[key]);
+    row.append(checkbox, label);
+    advBody.appendChild(row);
+  });
+  advToggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    advBody.classList.toggle('hidden');
+    advToggle.textContent = (advBody.classList.contains('hidden') ? '▸ ' : '▾ ') + t('js.adblockAdvanced');
+  });
+  advSection.append(advToggle, advBody);
+  shieldMenu.appendChild(advSection);
+
+  // Element picker quick action
+  if (active) {
+    const pickerBtn = document.createElement('button');
+    pickerBtn.type = 'button';
+    pickerBtn.className = 'shield-picker-btn';
+    pickerBtn.textContent = '🎯 ' + t('ctx.blockElement');
+    pickerBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      shieldMenu.classList.add('hidden');
+      tbShield.classList.remove('open');
+      window.api.showViews();
+      await window.api.pickAdBlockElement(active.id);
+    });
+    shieldMenu.appendChild(pickerBtn);
+  }
+}
+
+function openShieldPopup() {
+  closeAllMenus({});
+  shieldMenu.classList.remove('hidden');
+  tbShield.classList.add('open');
+  window.api.hideViews();
+  renderShieldPopup();
+}
+
+function closeShieldPopup() {
+  shieldMenu.classList.add('hidden');
+  tbShield.classList.remove('open');
+  window.api.showViews();
+}
+
+// tb-shield-count is a child <span> inside #tb-shield — clicking it bubbles
+// into this same handler, so one listener covers both the icon and the
+// count badge.
+tbShield.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (!shieldMenu.classList.contains('hidden')) {
+    closeShieldPopup();
+  } else {
+    openShieldPopup();
   }
 });
+
+shieldMenu.addEventListener('click', (e) => e.stopPropagation());
 
 // ---- Toolbar ----
 
@@ -2219,7 +2694,166 @@ tbFullscreen.addEventListener('click', () => window.api.toggleFullscreen());
 tbScreenshot.addEventListener('click', async () => {
   const active = activeAccount();
   if (!active) return;
-  await window.api.captureScreenshot(active.id);
+  const result = await window.api.openScreenshotEditor(active.id);
+  if (result && !result.ok) alert(t('js.screenshotEditorError', { message: result.error || '?' }));
+});
+
+// Picture-in-Picture from the toolbar (no click point to go on, unlike the
+// right-click menu item) — see electron/pip-player.js for why this builds
+// on the native requestPictureInPicture() + Media Session API (real
+// skip-back/skip-forward buttons on the OS's own PiP window) instead of a
+// fully custom window: the custom-window approach self-closed within
+// milliseconds every time when opened from inside a <webview>, confirmed
+// live via direct process logs.
+tbMiniplayer?.addEventListener('click', async () => {
+  const active = activeAccount();
+  if (!active) return;
+  const result = await window.api.openMiniPlayer(active.id);
+  if (!result || result.ok) return;
+  if (result.error === 'no-video') alert(t('js.miniplayerNoVideo'));
+  else alert(t('js.miniplayerError', { message: result.error || '?' }));
+});
+
+// On-device translation (Bergamot, see electron/translate.js) — tracked
+// per-account since each webview keeps its own DOM. Not persisted across
+// reloads/navigations on purpose: a stale "translated" flag after the page
+// changes underneath it just makes the next restore a harmless no-op (see
+// translate.js's restorePageTextScript), so we don't need to hook every
+// navigation event to keep this in sync.
+const translatedAccounts = new Set();
+
+function updateTranslateButton() {
+  const active = activeAccount();
+  const isTranslated = !!active && translatedAccounts.has(active.id);
+  // Deliberately its own class, not the shared .active/--accent one other
+  // toolbar toggles (mute, shield) use — the neon green here means
+  // specifically "this page is translated", nothing else.
+  tbTranslate.classList.toggle('translated', isTranslated);
+  tbTranslate.title = t(isTranslated ? 'topbar.translateActive' : 'topbar.translate');
+}
+
+// Fires when main.js auto-reapplies translation after a real navigation
+// (e.g. a login redirect) for an account that had it on before — see
+// translationEnabled in main.js. Keeps the neon-green icon in sync with
+// state the click handler below never directly caused.
+window.api.onTranslateAutoApplied(({ id }) => {
+  translatedAccounts.add(id);
+  updateTranslateButton();
+});
+
+window.api.onTranslateProgress(({ id, done, total }) => {
+  if (id !== translatingAccountId || !total) return;
+  translateModalTitle.textContent = t('translateModal.title');
+  translateDownloadHint.classList.add('hidden');
+  const pct = Math.round((done / total) * 100);
+  translateProgressFill.style.width = pct + '%';
+  translateProgressLabel.textContent = pct + '%';
+});
+
+// Only fires while a language pair's model is downloading for the very
+// first time (see translate.js's onDownloadProgress) — real MB/MB, not a
+// guess, so a user on slow internet sees why it's taking a while instead of
+// a modal that just sits at 0% (confirmed this was a real complaint).
+// Every later translation for that same pair skips this entirely since the
+// model is cached to disk after the first download.
+//
+// Not gated to translatingAccountId anymore — right-click "Traducir este
+// texto" and chat auto-translate both need a model download exactly as
+// often as the main toolbar button does, but neither of them opens this
+// modal themselves. If a download starts for an account we're not already
+// tracking, that means one of those OTHER flows triggered it, so this
+// opens the same modal on its own rather than the download silently
+// happening with zero visible feedback. autoOpenedTranslateModal marks
+// that WE opened it (vs. the user's own toolbar click) so
+// onTranslateDownloadFinished below knows it's safe to close automatically.
+let autoOpenedTranslateModal = false;
+window.api.onTranslateDownloadProgress(({ id, loaded, total }) => {
+  if (id !== translatingAccountId) {
+    if (translatingAccountId) return; // a real user-initiated translate is already in flight for a different account — don't steal its modal
+    translatingAccountId = id;
+    autoOpenedTranslateModal = true;
+    openTranslateModal();
+  }
+  translateModalTitle.textContent = t('translateModal.downloading');
+  translateDownloadHint.classList.remove('hidden');
+  if (total) {
+    const pct = Math.round((loaded / total) * 100);
+    translateProgressFill.style.width = pct + '%';
+    translateProgressLabel.textContent = pct + '%';
+    translateDownloadHint.textContent = `${(loaded / 1024 / 1024).toFixed(1)} / ${(total / 1024 / 1024).toFixed(1)} MB`;
+  } else {
+    translateDownloadHint.textContent = `${(loaded / 1024 / 1024).toFixed(1)} MB`;
+  }
+});
+
+// Fires once the download(s) that triggered the auto-open above finish —
+// main.js only sends this after a translateBatch call that actually
+// reported a download (see downloadHappened in translateSelectionAt/
+// translateChatMessages), never for a normal already-cached translation,
+// so this can't accidentally close a modal the user's own toolbar click
+// opened for an unrelated reason.
+window.api.onTranslateDownloadFinished(({ id }) => {
+  if (id === translatingAccountId && autoOpenedTranslateModal) {
+    autoOpenedTranslateModal = false;
+    setTimeout(() => { if (translatingAccountId === id) closeTranslateModal(); }, 400);
+  }
+});
+
+let translatingAccountId = null;
+
+function openTranslateModal() {
+  translateModalTitle.textContent = t('translateModal.title');
+  translateProgressFill.style.width = '0%';
+  translateProgressLabel.textContent = '0%';
+  translateDownloadHint.classList.add('hidden');
+  translateDownloadHint.textContent = '';
+  translateErrorEl.classList.add('hidden');
+  translateErrorEl.textContent = '';
+  btnCloseTranslate.classList.add('hidden');
+  translateModal.classList.remove('hidden');
+}
+
+function closeTranslateModal() {
+  translateModal.classList.add('hidden');
+  translatingAccountId = null;
+  autoOpenedTranslateModal = false;
+}
+
+btnCloseTranslate.addEventListener('click', closeTranslateModal);
+
+tbTranslate.addEventListener('click', async () => {
+  const active = activeAccount();
+  if (!active || tbTranslate.disabled) return;
+  tbTranslate.disabled = true;
+  try {
+    if (translatedAccounts.has(active.id)) {
+      await window.api.restorePage(active.id);
+      translatedAccounts.delete(active.id);
+    } else {
+      translatingAccountId = active.id;
+      openTranslateModal();
+      // Detects the page's own language (see extractPageTextScript's use of
+      // <html lang>) and always translates INTO whichever language Nexa's
+      // own interface is currently set to — that's the language the user
+      // reads, so it's the only sensible default target.
+      const targetLang = (state.settings.language || 'es').slice(0, 2);
+      const result = await window.api.translatePage(active.id, targetLang);
+      if (result?.ok) {
+        translatedAccounts.add(active.id);
+        translateProgressFill.style.width = '100%';
+        translateProgressLabel.textContent = '100%';
+        setTimeout(() => { if (translatingAccountId === active.id) closeTranslateModal(); }, 400);
+      } else {
+        translateErrorEl.textContent = t('translateModal.error') + (result?.error ? `: ${result.error}` : '');
+        translateErrorEl.classList.remove('hidden');
+        btnCloseTranslate.classList.remove('hidden');
+        console.error('[translate] failed', result?.error);
+      }
+    }
+  } finally {
+    tbTranslate.disabled = false;
+    updateTranslateButton();
+  }
 });
 
 // ---- Bookmarks modal ----
@@ -2724,7 +3358,14 @@ dnsCopyRestoreBtn.addEventListener('click', async () => {
 
 updateLaterBtn.addEventListener('click', closeUpdateModal);
 updateRestartBtn.addEventListener('click', () => window.api.installUpdate());
-window.api.onUpdateDownloaded(openUpdateModal);
+window.api.onUpdateDownloaded((data) => {
+  statusUpdateProgress.classList.add('hidden');
+  openUpdateModal(data);
+});
+window.api.onUpdateDownloadProgress(({ percent }) => {
+  statusUpdateProgress.classList.remove('hidden');
+  statusUpdateProgress.textContent = `⬇ ${t('status.updating')} ${Math.round(percent)}%`;
+});
 dlOpenFolder.addEventListener('click', () => window.api.openDownloads());
 dlClear.addEventListener('click', async () => {
   await window.api.clearDownloads();
@@ -2827,6 +3468,18 @@ addressInput.addEventListener('keydown', (e) => {
 addressInput.addEventListener('input', () => showSuggestions(addressInput, 'address'));
 addressInput.addEventListener('blur', () => setTimeout(hideSuggestions, 100));
 
+// Every real browser selects the whole URL when the address bar gains
+// focus, so typing immediately replaces it — confirmed live this one
+// didn't: a plain mouse click just placed the caret at the click position
+// like a normal <input>, leaving the rest of the URL in place, so typing
+// silently inserted characters into the middle of it instead of replacing
+// anything (looked exactly like "the address bar won't let me type"). The
+// setTimeout defers past the click's own native caret-placement for this
+// same event cycle, so our full-text selection is what actually wins.
+addressInput.addEventListener('focus', () => {
+  setTimeout(() => addressInput.select(), 0);
+});
+
 // ---- Settings modal ----
 
 function openSettingsModal() {
@@ -2845,6 +3498,7 @@ function openSettingsModal() {
   setAutoEcoMinutes.value = String((s.autoEco && s.autoEco.minutes) || 30);
   setShowFpsOverlay.checked = s.showFpsOverlay !== false;
   setShowPingOverlay.checked = s.showPingOverlay !== false;
+  setTranslateMemoryPersist.checked = !!s.translateMemoryPersist;
   setHwAccel.checked = s.hardwareAcceleration !== false;
   setDefaultUrl.value = s.defaultStartUrl || 'https://www.google.com';
   if (setSupportPaypalUrl) setSupportPaypalUrl.value = s.supportPaypalUrl || '';
@@ -2857,6 +3511,21 @@ function openSettingsModal() {
   verApp.textContent = versions.app;
   verElectron.textContent = versions.electron;
   verChrome.textContent = versions.chrome;
+  if (verUpdateStatus) {
+    window.api.getUpdateStatus().then((s) => {
+      const labelKey = {
+        idle: 'settings.updateStatusIdle',
+        checking: 'settings.updateStatusChecking',
+        'up-to-date': 'settings.updateStatusUpToDate',
+        downloading: 'settings.updateStatusDownloading',
+        downloaded: 'settings.updateStatusDownloaded',
+        error: 'settings.updateStatusError'
+      }[s.state] || 'settings.updateStatusIdle';
+      verUpdateStatus.textContent = s.state === 'error' && s.lastError
+        ? `${t(labelKey)} (${s.lastError})`
+        : t(labelKey);
+    });
+  }
 
   extError.classList.add('hidden');
   extInput.value = '';
@@ -2864,14 +3533,43 @@ function openSettingsModal() {
   renderPlugins();
   renderPasswords();
   renderNetworkTab();
+  renderPermissionsTab();
 
   settingsModal.classList.remove('hidden');
   if (wasHidden) pushModal();
+  refreshEcoSavingsHint();
+  if (!ecoSavingsInterval) ecoSavingsInterval = setInterval(refreshEcoSavingsHint, 5000);
 }
 
 function closeSettingsModal() {
   settingsModal.classList.add('hidden');
   popModal();
+  if (ecoSavingsInterval) {
+    clearInterval(ecoSavingsInterval);
+    ecoSavingsInterval = null;
+  }
+}
+
+// Real measured CPU%, not an estimate — see eco:getSavings in main.js,
+// which compares each auto-eco'd account's actual CPU reading right before
+// throttling kicked in against its latest reading now.
+let ecoSavingsInterval = null;
+async function refreshEcoSavingsHint() {
+  if (settingsModal.classList.contains('hidden')) return;
+  try {
+    const s = await window.api.getEcoSavings();
+    if (!s.throttledCount) {
+      ecoSavingsHint.textContent = t('settings.autoEcoSavingsNone');
+    } else if (s.savingsPercent == null) {
+      ecoSavingsHint.textContent = t('settings.autoEcoSavingsMeasuring').replace('{n}', s.throttledCount);
+    } else {
+      ecoSavingsHint.textContent = t('settings.autoEcoSavingsActive')
+        .replace('{percent}', s.savingsPercent)
+        .replace('{n}', s.sampledCount);
+    }
+  } catch {
+    // Non-fatal — just leave the hint at whatever it last said.
+  }
 }
 
 // Persistent toolbar icon per enabled extension — the settings-modal list
@@ -3013,6 +3711,53 @@ function renderNetworkTab() {
       </div>
     `;
     networkListEl.appendChild(item);
+  });
+}
+
+const PERMISSION_KEYS = ['media', 'notifications', 'geolocation'];
+const permissionsListEl = document.getElementById('permissions-list');
+const permissionsClearAllBtn = document.getElementById('permissions-clear-all');
+
+permissionsClearAllBtn?.addEventListener('click', async () => {
+  await window.api.clearAllSitePermissions();
+  renderPermissionsTab();
+});
+
+async function renderPermissionsTab() {
+  if (!permissionsListEl) return;
+  const sitePermissions = await window.api.getSitePermissions();
+  const hostnames = Object.keys(sitePermissions || {}).sort();
+  permissionsListEl.innerHTML = '';
+  if (permissionsClearAllBtn) permissionsClearAllBtn.classList.toggle('hidden', hostnames.length === 0);
+  if (hostnames.length === 0) {
+    permissionsListEl.innerHTML = `<div class="settings-hint">${t('permissions.empty')}</div>`;
+    return;
+  }
+  hostnames.forEach((hostname) => {
+    PERMISSION_KEYS.forEach((permission) => {
+      const decision = sitePermissions[hostname][permission];
+      if (!decision) return;
+      const item = document.createElement('div');
+      item.className = 'ext-item';
+      const info = document.createElement('div');
+      info.className = 'ext-info';
+      const name = document.createElement('div');
+      name.className = 'ext-name';
+      name.textContent = hostname;
+      const desc = document.createElement('div');
+      desc.className = 'ext-desc';
+      desc.textContent = `${t(`permission.${permission}`)} — ${t(decision === 'allow' ? 'permissions.allow' : 'permissions.deny')}`;
+      info.append(name, desc);
+      const revokeBtn = document.createElement('button');
+      revokeBtn.type = 'button';
+      revokeBtn.textContent = t('permissions.revoke');
+      revokeBtn.addEventListener('click', async () => {
+        await window.api.revokeSitePermission(hostname, permission);
+        renderPermissionsTab();
+      });
+      item.append(info, revokeBtn);
+      permissionsListEl.appendChild(item);
+    });
   });
 }
 
@@ -3326,7 +4071,7 @@ function dropsTableHtml(lootBreakdown) {
   }
   const rows = lootBreakdown.map((d) => {
     const icon = d.icon
-      ? `<img class="poke-drop-icon" loading="lazy" src="${d.icon}" onerror="this.style.visibility='hidden'" alt="" />`
+      ? `<img class="poke-drop-icon" loading="lazy" src="${escapeHtmlClient(d.icon)}" onerror="this.style.visibility='hidden'" alt="" />`
       : '<span class="poke-drop-icon poke-drop-icon-empty"></span>';
     return `<tr><td><div class="poke-hunt-row-name">${icon}${escapeHtmlClient(d.name)}</div></td><td>×${formatCompactNumber(d.qty)}</td><td>$${formatCompactNumber(d.value)}</td></tr>`;
   }).join('');
@@ -3471,7 +4216,7 @@ function populateShopAccountDropdown() {
 function shopItemCardHtml(kind, item) {
   const icon = item.iconUrl || item.icon;
   return `
-    <div class="poke-shop-card" data-kind="${kind}" data-id="${item.id}" data-name="${escapeHtmlClient(item.name)}" data-price="${item.priceGold}">
+    <div class="poke-shop-card" data-kind="${kind}" data-id="${escapeHtmlClient(String(item.id))}" data-name="${escapeHtmlClient(item.name)}" data-price="${Number(item.priceGold) || 0}">
       <img class="poke-shop-icon" loading="lazy" src="${escapeHtmlClient(icon || '')}" onerror="this.style.visibility='hidden'" alt="" />
       <div class="poke-shop-main">
         <div class="poke-shop-name">${escapeHtmlClient(item.name)}</div>
@@ -3502,7 +4247,7 @@ async function renderShop({ forceRefresh } = {}) {
     shopWrapEl.innerHTML = `<div class="settings-hint poke-skeleton-hint">${t('pokeIdle.shopLoading')}</div>`;
     const result = await window.api.getShop(accountId);
     if (!result || !result.ok) {
-      shopWrapEl.innerHTML = `<div class="settings-hint">${t('pokeIdle.shopLoadError', { message: (result && (result.error || result.status)) || '?' })}</div>`;
+      shopWrapEl.innerHTML = `<div class="settings-hint">${escapeHtmlClient(t('pokeIdle.shopLoadError', { message: (result && (result.error || result.status)) || '?' }))}</div>`;
       return;
     }
     shopCatalogCache = result;
@@ -3671,13 +4416,13 @@ function sellhubItemCardHtml(entry, locked) {
   const checked = sellhubSelectedItemIds.has(entry.itemId);
   return `
     <div class="poke-sell-card${locked ? ' poke-sell-locked' : ''}">
-      <input type="checkbox" data-item-id="${entry.itemId}" ${checked ? 'checked' : ''} ${locked ? 'disabled' : ''} />
+      <input type="checkbox" data-item-id="${escapeHtmlClient(String(entry.itemId))}" ${checked ? 'checked' : ''} ${locked ? 'disabled' : ''} />
       <img class="poke-sell-icon" loading="lazy" src="${escapeHtmlClient(entry.icon || '')}" onerror="this.style.visibility='hidden'" alt="" />
       <div class="poke-sell-main">
         <div class="poke-sell-name">${escapeHtmlClient(entry.name)}</div>
         <div class="poke-sell-meta">×${formatCompactNumber(entry.quantity)} · $${formatCompactNumber(entry.npcPrice || 0)} ${t('pokeIdle.sellhubEach')}</div>
       </div>
-      <button type="button" class="poke-sell-lock-btn${locked ? ' active' : ''}" data-lock-item-id="${entry.itemId}" title="${t('pokeIdle.sellLockToggle')}">${locked ? '🔒' : '🔓'}</button>
+      <button type="button" class="poke-sell-lock-btn${locked ? ' active' : ''}" data-lock-item-id="${escapeHtmlClient(String(entry.itemId))}" title="${t('pokeIdle.sellLockToggle')}">${locked ? '🔒' : '🔓'}</button>
     </div>
   `;
 }
@@ -3771,7 +4516,7 @@ function sellhubPokeCardHtml(p, locked) {
       <img class="poke-sell-icon" loading="lazy" src="${escapeHtmlClient(pokeSpriteUrl(p.speciesId, p.name) || '')}" onerror="window.pokeSpriteFallback(this,'')" alt="" />
       <div class="poke-sell-main">
         <div class="poke-sell-name">${escapeHtmlClient(p.name || '?')} ${p.team ? '<em>' + t('pokeIdle.sellhubOnTeam') + '</em>' : ''}</div>
-        <div class="poke-sell-meta">Lv.${p.level ?? '?'} ${rarity ? '· ' + escapeHtmlClient(rarity) : ''} ${p.ivTotal != null ? '· IV ' + formatCompactNumber(p.ivTotal) : ''} ${p.sellValue != null ? '· $' + formatCompactNumber(p.sellValue) : ''}</div>
+        <div class="poke-sell-meta">Lv.${numOr(p.level)} ${rarity ? '· ' + escapeHtmlClient(rarity) : ''} ${p.ivTotal != null ? '· IV ' + formatCompactNumber(p.ivTotal) : ''} ${p.sellValue != null ? '· $' + formatCompactNumber(p.sellValue) : ''}</div>
       </div>
       <button type="button" class="poke-sell-lock-btn${locked ? ' active' : ''}" data-lock-poke-id="${escapeHtmlClient(String(p.id))}" title="${t('pokeIdle.sellLockToggle')}">${locked ? '🔒' : '🔓'}</button>
     </div>
@@ -3936,10 +4681,8 @@ sellConfirmBtn?.addEventListener('click', async () => {
 // {inventory,depot,maxSlots} in its own response — no separate refresh
 // needed); pokemon move over the game's own WebSocket
 // (poke-store/poke-withdraw), same mechanism as mass-sell's pokes-get wait.
-// Family depot intentionally NOT implemented — the account used to verify
-// this had no family (`family:null` in the live capture), so there was
-// nothing to confirm the family move endpoints against; adding it later
-// needs a live test with an account that's actually in one.
+// Family depot: implemented below (family-items/family-pokemon tabs,
+// renderDepotFamily) — confirmed live against a real account in a family.
 let depotActiveTab = 'items';
 let depotCache = null; // { inventory, depot, maxSlots }
 let depotBusy = false;
@@ -3989,7 +4732,7 @@ depotFamilyPokemonSearchEl?.addEventListener('input', () => renderDepotFamily())
 
 function depotItemRowHtml(entry, dir) {
   return `
-    <div class="poke-depot-row" data-item-id="${entry.id}" data-dir="${dir}">
+    <div class="poke-depot-row" data-item-id="${escapeHtmlClient(String(entry.id))}" data-dir="${dir}">
       <img class="poke-sell-icon" loading="lazy" src="${escapeHtmlClient(entry.icon || '')}" onerror="this.style.visibility='hidden'" alt="" />
       <div class="poke-sell-main">
         <div class="poke-sell-name">${escapeHtmlClient(entry.name)}</div>
@@ -4013,7 +4756,7 @@ async function renderDepotItems({ forceRefresh } = {}) {
     depotStorageWrapEl.innerHTML = '';
     const result = await window.api.getDepot(accountId);
     if (!result || !result.ok) {
-      depotBackpackWrapEl.innerHTML = `<div class="settings-hint">${t('pokeIdle.sellhubError', { message: (result && result.error) || '?' })}</div>`;
+      depotBackpackWrapEl.innerHTML = `<div class="settings-hint">${escapeHtmlClient(t('pokeIdle.sellhubError', { message: (result && result.error) || '?' }))}</div>`;
       return;
     }
     depotCache = result;
@@ -4063,7 +4806,7 @@ function depotPokeRowHtml(p, dir) {
       <img class="poke-sell-icon" loading="lazy" src="${escapeHtmlClient(pokeSpriteUrl(p.speciesId, p.name) || '')}" onerror="window.pokeSpriteFallback(this,'')" alt="" />
       <div class="poke-sell-main">
         <div class="poke-sell-name">${escapeHtmlClient(p.name || '?')}</div>
-        <div class="poke-sell-meta">Lv.${p.level ?? '?'} ${rarity ? '· ' + escapeHtmlClient(rarity) : ''} ${p.ivTotal != null ? '· IV ' + formatCompactNumber(p.ivTotal) : ''}</div>
+        <div class="poke-sell-meta">Lv.${numOr(p.level)} ${rarity ? '· ' + escapeHtmlClient(rarity) : ''} ${p.ivTotal != null ? '· IV ' + formatCompactNumber(p.ivTotal) : ''}</div>
       </div>
       <span class="poke-depot-arrow">${dir === 'store' ? '→' : '←'}</span>
     </div>
@@ -4095,7 +4838,7 @@ async function renderDepotPokemon({ forceRefresh } = {}) {
   }
   const collection = gs.collection || [];
   if (fetchError && !collection.length) {
-    const msg = `<div class="settings-hint">${t('pokeIdle.sellhubError', { message: fetchError })}</div>`;
+    const msg = `<div class="settings-hint">${escapeHtmlClient(t('pokeIdle.sellhubError', { message: fetchError }))}</div>`;
     depotTeamWrapEl.innerHTML = msg;
     depotBoxWrapEl.innerHTML = msg;
     return;
@@ -4187,11 +4930,11 @@ async function renderDepotFamily({ forceRefresh } = {}) {
     return { id: it.itemId, quantity: it.quantity, name: (meta && meta.name) || `Item #${it.itemId}`, icon: meta && meta.icon };
   }).filter((it) => !itemQuery || normalizeTextForFilter(it.name).includes(itemQuery));
   depotFamilyBackpackWrapEl.innerHTML = inv.length
-    ? inv.map((it) => `<div class="poke-depot-row" data-family-item-id="${it.id}" data-family-qty="${it.quantity}" data-dir="deposit">${depotRowInnerHtml(it, '→')}</div>`).join('')
+    ? inv.map((it) => `<div class="poke-depot-row" data-family-item-id="${escapeHtmlClient(String(it.id))}" data-family-qty="${Number(it.quantity) || 0}" data-dir="deposit">${depotRowInnerHtml(it, '→')}</div>`).join('')
     : `<div class="settings-hint">${t('pokeIdle.sellhubItemsEmpty')}</div>`;
   const famItems = (family.depot.items || []).filter((it) => !itemQuery || normalizeTextForFilter(it.name || '').includes(itemQuery));
   depotFamilyStorageWrapEl.innerHTML = famItems.length
-    ? famItems.map((it) => `<div class="poke-depot-row" data-family-item-id="${it.itemId}" data-family-qty="${it.quantity}" data-dir="withdraw">${depotRowInnerHtml({ ...it, id: it.itemId }, '←')}</div>`).join('')
+    ? famItems.map((it) => `<div class="poke-depot-row" data-family-item-id="${escapeHtmlClient(String(it.itemId))}" data-family-qty="${Number(it.quantity) || 0}" data-dir="withdraw">${depotRowInnerHtml({ ...it, id: it.itemId }, '←')}</div>`).join('')
     : `<div class="settings-hint">${t('pokeIdle.depotStorageEmpty')}</div>`;
 
   const collection = gs.collection || [];
@@ -4222,7 +4965,7 @@ function depotPokeRowInnerHtml(p, arrow) {
     <img class="poke-sell-icon" loading="lazy" src="${escapeHtmlClient(pokeSpriteUrl(p.speciesId, p.name) || '')}" onerror="window.pokeSpriteFallback(this,'')" alt="" />
     <div class="poke-sell-main">
       <div class="poke-sell-name">${escapeHtmlClient(p.name || '?')}</div>
-      <div class="poke-sell-meta">Lv.${p.level ?? '?'} ${rarity ? '· ' + escapeHtmlClient(rarity) : ''} ${p.ivTotal != null ? '· IV ' + formatCompactNumber(p.ivTotal) : ''}</div>
+      <div class="poke-sell-meta">Lv.${numOr(p.level)} ${rarity ? '· ' + escapeHtmlClient(rarity) : ''} ${p.ivTotal != null ? '· IV ' + formatCompactNumber(p.ivTotal) : ''}</div>
     </div>
     <span class="poke-depot-arrow">${arrow}</span>
   `;
@@ -4319,8 +5062,8 @@ function renderPokeIdleNotable() {
     info.className = 'poke-notable-info';
     const quality = typeof c.quality === 'number' ? c.quality.toFixed(3) : '?';
     info.innerHTML = `
-      <div class="poke-notable-name">${c.shiny ? '✨' : ''} ${escapeHtmlClient(c.name || '?')} <span style="color:var(--muted); font-weight:400;">Lv.${c.level ?? '?'}</span></div>
-      <div class="poke-notable-meta">${showAccountName ? escapeHtmlClient(c.accountName) + ' · ' : ''}Quality ${quality} · IV ${c.ivTotal ?? '?'}/192</div>
+      <div class="poke-notable-name">${c.shiny ? '✨' : ''} ${escapeHtmlClient(c.name || '?')} <span style="color:var(--muted); font-weight:400;">Lv.${numOr(c.level)}</span></div>
+      <div class="poke-notable-meta">${showAccountName ? escapeHtmlClient(c.accountName) + ' · ' : ''}Quality ${quality} · IV ${numOr(c.ivTotal)}/192</div>
     `;
 
     const rarity = document.createElement('div');
@@ -4675,9 +5418,9 @@ function renderPokeIdleTeam() {
       header.className = 'poke-team-header';
       header.innerHTML =
         `<span class="poke-team-name">${p.shiny ? '✨ ' : ''}${escapeHtmlClient(p.name || '?')}${p.leader ? ' 👑' : ''}</span>` +
-        `<span class="poke-team-level">Lv.${p.level ?? '?'}${showAccountName ? ' · ' + escapeHtmlClient(displayName(account, ai)) : ''}</span>` +
+        `<span class="poke-team-level">Lv.${numOr(p.level)}${showAccountName ? ' · ' + escapeHtmlClient(displayName(account, ai)) : ''}</span>` +
         typeBadges +
-        `<button type="button" class="poke-team-lock${locked ? ' locked' : ''}" title="${locked ? t('pokeIdle.sellLockRemove') : t('pokeIdle.sellLockAdd')}" data-poke-id="${p.id}" data-account-id="${account.id}">${locked ? '🔒' : '🔓'}</button>`;
+        `<button type="button" class="poke-team-lock${locked ? ' locked' : ''}" title="${locked ? t('pokeIdle.sellLockRemove') : t('pokeIdle.sellLockAdd')}" data-poke-id="${escapeHtmlClient(String(p.id))}" data-account-id="${escapeHtmlClient(String(account.id))}">${locked ? '🔒' : '🔓'}</button>`;
 
       const quality = document.createElement('div');
       quality.className = 'poke-team-quality';
@@ -4698,13 +5441,13 @@ function renderPokeIdleTeam() {
       statGrid.innerHTML = [
         ['ATK', stats.atk], ['DEF', stats.def], ['SpA', stats.spAtk],
         ['SpD', stats.spDef], ['Vel', stats.speed]
-      ].map(([label, value]) => `<div class="poke-stat-cell"><span>${label}</span><span>${value ?? '?'}</span></div>`).join('');
+      ].map(([label, value]) => `<div class="poke-stat-cell"><span>${label}</span><span>${numOr(value)}</span></div>`).join('');
 
       const moves = document.createElement('div');
       moves.className = 'poke-moves';
       const moveList = p.moves || [];
       moves.innerHTML = moveList.length
-        ? moveList.slice(0, 8).map((m) => `<span class="poke-move-chip">${typeBadgeHtml(m.type)}${escapeHtmlClient(m.name)} · ${m.power ?? '?'} <span class="poke-move-lvl">Lv.${m.learnLevel ?? 1}</span></span>`).join('')
+        ? moveList.slice(0, 8).map((m) => `<span class="poke-move-chip">${typeBadgeHtml(m.type)}${escapeHtmlClient(m.name)} · ${numOr(m.power)} <span class="poke-move-lvl">Lv.${numOr(m.learnLevel, 1)}</span></span>`).join('')
         : `<span class="poke-move-chip">${t('pokeIdle.noMoves')}</span>`;
 
       const effBox = document.createElement('div');
@@ -4762,6 +5505,13 @@ let marketSelectedAccountId = null;
 let marketLoadToken = 0;
 let marketAutoRefreshTimer = null;
 let marketLoadInFlight = false;
+// A request that arrives while one is already in flight used to just be
+// dropped silently — auto-refresh and a manual "Actualizar" click landing
+// close together meant the manual click did nothing and nobody knew,
+// leaving stale data on screen with no error or feedback. Now the most
+// recent superseded request's args are remembered and re-run once the
+// current load finishes.
+let marketReloadPending = null;
 let marketPurchaseHistory = [];
 const marketPriceBook = new Map();
 const marketSeenDealIds = new Set();
@@ -5816,8 +6566,20 @@ function renderMarketResults({ resetPage = true } = {}) {
 // browsing page 5+ doesn't silently get yanked back to page 1 on every
 // refresh cycle. false (default) is for genuinely new queries (category
 // switch), where starting over at page 1 is the right call.
-async function loadMarketListings(forceRefresh = false, { preservePage = false } = {}) {
-  if (marketLoadInFlight) return;
+async function loadMarketListings(forceRefresh = false, opts = {}) {
+  if (marketLoadInFlight) {
+    marketReloadPending = { forceRefresh, preservePage: !!opts.preservePage };
+    return;
+  }
+  await loadMarketListingsOnce(forceRefresh, opts);
+  while (marketReloadPending) {
+    const next = marketReloadPending;
+    marketReloadPending = null;
+    await loadMarketListingsOnce(next.forceRefresh, { preservePage: next.preservePage });
+  }
+}
+
+async function loadMarketListingsOnce(forceRefresh = false, { preservePage = false } = {}) {
   const accountId = marketAccountSelect.value;
   if (!accountId) {
     marketListingsCache = [];
@@ -6039,7 +6801,7 @@ async function populateCalcSpeciesDropdown() {
   const catalog = await ensureCreatureCatalogRenderer();
   const sorted = catalog.slice().sort((a, b) => a.name.localeCompare(b.name));
   calcSpeciesEl.innerHTML = `<option value="">${t('pokeIdle.pokemonPlaceholder')}</option>` +
-    sorted.map((c) => `<option value="${c.pokeId}">${escapeHtmlClient(c.name)}</option>`).join('');
+    sorted.map((c) => `<option value="${escapeHtmlClient(String(c.pokeId))}">${escapeHtmlClient(c.name)}</option>`).join('');
 }
 
 let calcSources = [];
@@ -6381,7 +7143,7 @@ async function populateTierFilters() {
   const currentType = tierTypeEl.value;
   const types = Array.from(new Set(catalog.flatMap((c) => [c.type1, c.type2]).filter(Boolean))).sort();
   tierTypeEl.innerHTML = `<option value="">${t('pokeIdle.typeAll')}</option>` +
-    types.map((tp) => `<option value="${tp}">${tp}</option>`).join('');
+    types.map((tp) => `<option value="${escapeHtmlClient(tp)}">${escapeHtmlClient(tp)}</option>`).join('');
   tierTypeEl.value = currentType;
 }
 
@@ -6447,7 +7209,7 @@ function renderTierList() {
   const rows = filtered.map((r) => {
     const c = r.creature;
     const typeBadges = [c.type1, c.type2].filter(Boolean).map(typeBadgeHtml).join(' ');
-    return `<tr data-poke-id="${c.pokeId}" class="poke-tier-row">
+    return `<tr data-poke-id="${escapeHtmlClient(String(c.pokeId))}" class="poke-tier-row">
       <td><span class="poke-tier-chip" style="background:${TIER_COLORS[r.tier]}">${r.tier}</span></td>
       <td><img class="poke-tier-sprite" loading="lazy" src="${pokeSpriteGifUrl(c.pokeId, c.name) || pokeSpriteUrl(c.pokeId, c.name)}" onerror="pokeSpriteFallback(this,'${pokeSpriteUrl(c.pokeId, c.name)}')" alt="" /></td>
       <td>${escapeHtmlClient(c.name)}</td>
@@ -6719,6 +7481,10 @@ setShowFpsOverlay.addEventListener('change', () => {
 
 setShowPingOverlay.addEventListener('change', () => {
   window.api.updateSettings({ showPingOverlay: setShowPingOverlay.checked });
+});
+
+setTranslateMemoryPersist.addEventListener('change', () => {
+  window.api.updateSettings({ translateMemoryPersist: setTranslateMemoryPersist.checked });
 });
 
 setDefaultUrl.addEventListener('change', () => {
@@ -6993,6 +7759,74 @@ window.api.onShortcutOpenSettings(() => {
 // handleAccountShortcut), for when focus is on our own chrome (address bar,
 // sidebar) rather than inside an account's page — that's a separate input
 // context a WebContentsView keydown never reaches.
+// Every entry here is a real, already-wired shortcut from the handler
+// below — this list exists purely so a user can discover them, it doesn't
+// define new behavior. Keep new entries in sync if a shortcut is added.
+const SHORTCUTS_OVERLAY_ENTRIES = [
+  ['Ctrl+1…9', 'js.shortcutSwitchAccount'],
+  ['Ctrl+Tab', 'js.shortcutNextAccount'],
+  ['Ctrl+N', 'js.shortcutNewAccount'],
+  ['Ctrl+Shift+N', 'js.shortcutNewSpace'],
+  ['Ctrl+L', 'js.shortcutAddressBar'],
+  ['Ctrl+K', 'js.shortcutCommandPalette'],
+  ['Ctrl+B', 'js.shortcutSidebar'],
+  ['Ctrl+,', 'js.shortcutSettings'],
+  ['Ctrl+W', 'js.shortcutCloseAccount'],
+  ['Ctrl+Shift+T', 'js.shortcutReopenClosed'],
+  ['Ctrl+R', 'js.shortcutReload'],
+  ['Ctrl+M', 'js.shortcutMute'],
+  ['Ctrl+D', 'js.shortcutBookmark'],
+  ['Ctrl+ +/-/0', 'js.shortcutZoom']
+];
+let shortcutsOverlayEl = null;
+function closeShortcutsOverlay() {
+  if (shortcutsOverlayEl) { shortcutsOverlayEl.remove(); shortcutsOverlayEl = null; }
+}
+function toggleShortcutsOverlay() {
+  if (shortcutsOverlayEl) { closeShortcutsOverlay(); return; }
+  const overlay = document.createElement('div');
+  overlay.className = 'shortcuts-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) closeShortcutsOverlay(); };
+  const card = document.createElement('div');
+  card.className = 'shortcuts-overlay-card';
+  const title = document.createElement('h3');
+  title.textContent = t('js.shortcutsOverlayTitle');
+  card.appendChild(title);
+  const list = document.createElement('div');
+  list.className = 'shortcuts-overlay-list';
+  SHORTCUTS_OVERLAY_ENTRIES.forEach(([keys, labelKey]) => {
+    const row = document.createElement('div');
+    row.className = 'shortcuts-overlay-row';
+    const kbd = document.createElement('kbd');
+    kbd.textContent = keys;
+    const label = document.createElement('span');
+    label.textContent = t(labelKey);
+    row.appendChild(kbd);
+    row.appendChild(label);
+    list.appendChild(row);
+  });
+  card.appendChild(list);
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+  shortcutsOverlayEl = overlay;
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === '?' && !e.ctrlKey && !e.altKey) {
+    const target = e.target;
+    const isTyping = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+    if (!isTyping) {
+      e.preventDefault();
+      toggleShortcutsOverlay();
+      return;
+    }
+  }
+  if (e.key === 'Escape' && shortcutsOverlayEl) {
+    closeShortcutsOverlay();
+    return;
+  }
+});
+
 document.addEventListener('keydown', (e) => {
   const ctrl = e.ctrlKey;
   const shift = e.shiftKey;
@@ -7149,6 +7983,23 @@ window.api.onOpenAccountEditor(({ id }) => {
   if (account) openAccountModal(account);
 });
 
+const PASSWORD_ENCRYPTION_WARNING_DISMISSED_KEY = 'nexa:passwordEncryptionWarningDismissed';
+
+async function checkPasswordEncryptionWarning() {
+  if (localStorage.getItem(PASSWORD_ENCRYPTION_WARNING_DISMISSED_KEY) === '1') return;
+  const available = await window.api.isPasswordEncryptionAvailable();
+  if (available) return;
+  document.getElementById('security-warning-modal').classList.remove('hidden');
+}
+
+document.getElementById('btn-close-security-warning').addEventListener('click', () => {
+  document.getElementById('security-warning-modal').classList.add('hidden');
+});
+document.getElementById('btn-dismiss-security-warning').addEventListener('click', () => {
+  localStorage.setItem(PASSWORD_ENCRYPTION_WARNING_DISMISSED_KEY, '1');
+  document.getElementById('security-warning-modal').classList.add('hidden');
+});
+
 async function init() {
   appMeta = await window.api.getMeta();
   state = await window.api.getState();
@@ -7160,6 +8011,7 @@ async function init() {
   if (currentSpaceAccounts().length === 0) {
     await window.api.quickAddAccount();
   }
+  checkPasswordEncryptionWarning();
 }
 
 setInterval(async () => {

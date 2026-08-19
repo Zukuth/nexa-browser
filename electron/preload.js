@@ -10,8 +10,29 @@ const { contextBridge, ipcRenderer } = require('electron');
 // computed in main.js instead (unsandboxed, requires it fine) and exposed
 // through the pokeFormulas:* IPC channels below.
 
+// Registers an ipcRenderer.on listener and returns an unsubscribe function —
+// none of the onX(cb) methods below used to return one, so a caller had no
+// way to stop listening short of the whole window going away. Not an active
+// leak today (this preload backs the one long-lived main window, wired up
+// once at startup and never re-run), but the app already has other windows
+// with their own shorter lifetimes (screenshot editor, popout) and any
+// future one that reuses this onX pattern — or a hot-reload during dev —
+// would silently pile up duplicate listeners without this. Every call site
+// below already only ever used a single data argument (or none), so one
+// generic wrapper covers all of them instead of hand-rolling 27 near-
+// identical listener/remove pairs.
+function onIpc(channel, cb) {
+  const listener = (_e, ...args) => cb(...args);
+  ipcRenderer.on(channel, listener);
+  return () => ipcRenderer.removeListener(channel, listener);
+}
+
 contextBridge.exposeInMainWorld('api', {
   getState: () => ipcRenderer.invoke('state:get'),
+  isPasswordEncryptionAvailable: () => ipcRenderer.invoke('security:passwordEncryptionAvailable'),
+  getSitePermissions: () => ipcRenderer.invoke('permissions:getSitePermissions'),
+  revokeSitePermission: (hostname, permission) => ipcRenderer.invoke('permissions:revoke', { hostname, permission }),
+  clearAllSitePermissions: () => ipcRenderer.invoke('permissions:clearAll'),
   getVersions: () => ({ app: ipcRenderer.sendSync('app:getVersionSync'), electron: process.versions.electron, chrome: process.versions.chrome }),
   addAccount: (payload) => ipcRenderer.invoke('accounts:add', payload),
   quickAddAccount: () => ipcRenderer.invoke('accounts:quickAdd'),
@@ -27,26 +48,42 @@ contextBridge.exposeInMainWorld('api', {
   reloadAccount: (id) => ipcRenderer.invoke('account:reload', { id }),
   reloadAccountHard: (id) => ipcRenderer.invoke('account:reloadHard', { id }),
   captureScreenshot: (id) => ipcRenderer.invoke('account:captureScreenshot', { id }),
+  openScreenshotEditor: (id) => ipcRenderer.invoke('account:openScreenshotEditor', { id }),
+  openMiniPlayer: (id) => ipcRenderer.invoke('account:openMiniPlayer', { id }),
+  getEcoSavings: () => ipcRenderer.invoke('eco:getSavings'),
+  isAdBlockEngineReady: () => ipcRenderer.invoke('adblock:isEngineReady'),
+  getAdBlockEngineStatus: () => ipcRenderer.invoke('adblock:getEngineStatus'),
   runDnsSpeedTest: () => ipcRenderer.invoke('dns:test'),
   getDnsApplyCommand: (servers) => ipcRenderer.invoke('dns:getApplyCommand', { servers }),
   getDnsRestoreCommand: () => ipcRenderer.invoke('dns:getRestoreCommand'),
   copyDnsCommand: (command) => ipcRenderer.invoke('dns:copyCommand', { command }),
-  onUpdateDownloaded: (cb) => ipcRenderer.on('update:downloaded', (_e, data) => cb(data)),
+  translatePage: (id, to) => ipcRenderer.invoke('translate:page', { id, to }),
+  restorePage: (id) => ipcRenderer.invoke('translate:restore', { id }),
+  translateSelectionAt: (id, x, y) => ipcRenderer.invoke('translate:selectionAt', { id, x, y }),
+  restoreTranslatedSelections: (id) => ipcRenderer.invoke('translate:restoreSelections', { id }),
+  translateChatOnce: (id) => ipcRenderer.invoke('translate:chatOnce', { id }),
+  onTranslateProgress: (cb) => onIpc('translate:progress', cb),
+  onTranslateDownloadProgress: (cb) => onIpc('translate:downloadProgress', cb),
+  onTranslateDownloadFinished: (cb) => onIpc('translate:downloadFinished', cb),
+  onTranslateAutoApplied: (cb) => onIpc('translate:autoApplied', cb),
+  onUpdateDownloaded: (cb) => onIpc('update:downloaded', cb),
+  onUpdateDownloadProgress: (cb) => onIpc('update:downloadProgress', cb),
   installUpdate: () => ipcRenderer.invoke('update:install'),
+  getUpdateStatus: () => ipcRenderer.invoke('update:getStatus'),
   reopenLastClosed: () => ipcRenderer.invoke('accounts:reopenLastClosed'),
   findInPage: (id, text, opts) => ipcRenderer.send('account:findInPage', { id, text, ...opts }),
   stopFindInPage: (id) => ipcRenderer.send('account:stopFindInPage', { id }),
-  onFindbarOpen: (cb) => ipcRenderer.on('findbar:open', (_e, data) => cb(data)),
-  onFindbarClose: (cb) => ipcRenderer.on('findbar:close', (_e, data) => cb(data)),
-  onFindbarResult: (cb) => ipcRenderer.on('findbar:result', (_e, data) => cb(data)),
+  onFindbarOpen: (cb) => onIpc('findbar:open', cb),
+  onFindbarClose: (cb) => onIpc('findbar:close', cb),
+  onFindbarResult: (cb) => onIpc('findbar:result', cb),
   goBack: (id) => ipcRenderer.send('account:goBack', { id }),
   goForward: (id) => ipcRenderer.send('account:goForward', { id }),
   getMeta: () => ipcRenderer.invoke('app:getMeta'),
   getShortcuts: () => ipcRenderer.invoke('shortcuts:list'),
-  onShortcutSelectPanel: (cb) => ipcRenderer.on('shortcut:selectPanel', (_e, data) => cb(data)),
-  onShortcutNextPanel: (cb) => ipcRenderer.on('shortcut:nextPanel', () => cb()),
-  onShortcutFocusAddress: (cb) => ipcRenderer.on('shortcut:focusAddress', () => cb()),
-  onShortcutOpenSettings: (cb) => ipcRenderer.on('shortcut:openSettings', () => cb()),
+  onShortcutSelectPanel: (cb) => onIpc('shortcut:selectPanel', cb),
+  onShortcutNextPanel: (cb) => onIpc('shortcut:nextPanel', cb),
+  onShortcutFocusAddress: (cb) => onIpc('shortcut:focusAddress', cb),
+  onShortcutOpenSettings: (cb) => onIpc('shortcut:openSettings', cb),
   muteAccount: (id, muted) => ipcRenderer.invoke('account:mute', { id, muted }),
   addSpace: (payload) => ipcRenderer.invoke('spaces:add', payload),
   updateSpace: (id, fields) => ipcRenderer.invoke('spaces:update', { id, ...fields }),
@@ -58,6 +95,14 @@ contextBridge.exposeInMainWorld('api', {
   reorderSpaces: (orderedIds) => ipcRenderer.invoke('spaces:reorder', orderedIds),
   clearSession: (id) => ipcRenderer.invoke('account:clearSession', { id }),
   showAccountMenu: (id) => ipcRenderer.send('accounts:contextmenu', { id }),
+  showGroupMenu: (id) => ipcRenderer.send('groups:contextmenu', { id }),
+  createGroup: (spaceId, name) => ipcRenderer.invoke('groups:create', { spaceId, name }),
+  renameGroup: (id, name) => ipcRenderer.invoke('groups:rename', { id, name }),
+  removeGroup: (id) => ipcRenderer.invoke('groups:remove', { id }),
+  toggleGroupCollapsed: (id) => ipcRenderer.invoke('groups:toggleCollapsed', { id }),
+  setAccountGroup: (id, groupId) => ipcRenderer.invoke('accounts:setGroup', { id, groupId }),
+  onPromptNewGroup: (cb) => onIpc('ui:promptNewGroup', cb),
+  onPromptRenameGroup: (cb) => onIpc('ui:promptRenameGroup', cb),
   showSpaceMenu: (id) => ipcRenderer.send('spaces:contextmenu', { id }),
   duplicateSpace: (id) => ipcRenderer.invoke('spaces:duplicate', { id }),
   setFreeRect: (id, rect) => ipcRenderer.invoke('account:setFreeRect', { id, rect }),
@@ -109,6 +154,14 @@ contextBridge.exposeInMainWorld('api', {
   removeExtension: (id) => ipcRenderer.invoke('extensions:remove', { id }),
   getMetrics: () => ipcRenderer.invoke('metrics:get'),
   getAdBlockLog: (id) => ipcRenderer.invoke('adblock:getLog', { id }),
+  toggleAdBlockSitePause: (hostname) => ipcRenderer.invoke('adblock:toggleSitePause', { hostname }),
+  toggleAdBlockSiteBlock: (hostname) => ipcRenderer.invoke('adblock:toggleSiteBlock', { hostname }),
+  setAdBlockMode: (mode) => ipcRenderer.invoke('adblock:setMode', { mode }),
+  setAdBlockMasterEnabled: (enabled) => ipcRenderer.invoke('adblock:setMasterEnabled', { enabled }),
+  getAdBlockPopupData: (id) => ipcRenderer.invoke('adblock:getPopupData', { id }),
+  pickAdBlockElement: (id) => ipcRenderer.invoke('adblock:pickElement', { id }),
+  setAdBlockCustomRules: (text) => ipcRenderer.invoke('adblock:setCustomRules', { text }),
+  setAdBlockFilterLists: (lists) => ipcRenderer.invoke('adblock:setFilterLists', { lists }),
   setFavoriteHunt: (id, huntSlug) => ipcRenderer.invoke('accounts:setFavoriteHunt', { id, huntSlug }),
   teleportToHunt: (id, target) => ipcRenderer.invoke('accounts:teleportToHunt', { id, target }),
   getShop: (id) => ipcRenderer.invoke('shop:get', { id }),
@@ -129,11 +182,11 @@ contextBridge.exposeInMainWorld('api', {
   getStabilityAccountState: (id) => ipcRenderer.invoke('stability:getAccountState', { id }),
   manualReconnectAccount: (id) => ipcRenderer.invoke('stability:manualReconnect', { id }),
   testStabilityNetwork: (id) => ipcRenderer.invoke('stability:testNetwork', { id }),
-  onStabilityUpdate: (cb) => ipcRenderer.on('stability:update', (_e, data) => cb(data)),
+  onStabilityUpdate: (cb) => onIpc('stability:update', cb),
   optimizeMemory: () => ipcRenderer.invoke('memory:optimize'),
   deepCleanMemory: () => ipcRenderer.invoke('memory:deepClean'),
   getOptimizeStatus: () => ipcRenderer.invoke('memory:getOptimizeStatus'),
-  onOptimizeStatusUpdate: (cb) => ipcRenderer.on('memory:optimizeStatus', (_e, s) => cb(s)),
+  onOptimizeStatusUpdate: (cb) => onIpc('memory:optimizeStatus', cb),
   getGameStats: () => ipcRenderer.invoke('gameStats:get'),
   getCreatureCatalog: (forceRefresh = false) => ipcRenderer.invoke('pokeFormulas:getCreatureCatalog', { forceRefresh }),
   getItemCatalog: () => ipcRenderer.invoke('pokeFormulas:getItemCatalog'),
@@ -145,8 +198,8 @@ contextBridge.exposeInMainWorld('api', {
   buyMarketListing: (id, listing) => ipcRenderer.invoke('market:buy', { id, listing }),
   getMarketAlertFeed: () => ipcRenderer.invoke('market:getAlertFeed'),
   dismissMarketAlert: (alertId) => ipcRenderer.invoke('market:dismissAlert', { alertId }),
-  onMarketAlertFeedUpdate: (cb) => ipcRenderer.on('market:alertFeedUpdated', (_e, feed) => cb(feed)),
-  onMarketOpenAlert: (cb) => ipcRenderer.on('market:openAlert', (_e, data) => cb(data)),
+  onMarketAlertFeedUpdate: (cb) => onIpc('market:alertFeedUpdated', cb),
+  onMarketOpenAlert: (cb) => onIpc('market:openAlert', cb),
   getMarketPurchaseHistory: () => ipcRenderer.invoke('market:getPurchaseHistory'),
   addBookmark: (payload) => ipcRenderer.invoke('bookmarks:add', payload),
   removeBookmark: (id) => ipcRenderer.invoke('bookmarks:remove', { id }),
@@ -155,27 +208,27 @@ contextBridge.exposeInMainWorld('api', {
   importPasswords: () => ipcRenderer.invoke('passwords:import'),
   removePassword: (id) => ipcRenderer.invoke('passwords:remove', { id }),
   getPasswords: () => ipcRenderer.invoke('passwords:list'),
-  onStateUpdate: (cb) => ipcRenderer.on('state:update', (_e, data) => cb(data)),
-  onNavUpdate: (cb) => ipcRenderer.on('nav:update', (_e, data) => cb(data)),
-  onPanelsGeometry: (cb) => ipcRenderer.on('panels:geometry', (_e, data) => cb(data)),
+  onStateUpdate: (cb) => onIpc('state:update', cb),
+  onNavUpdate: (cb) => onIpc('nav:update', cb),
+  onPanelsGeometry: (cb) => onIpc('panels:geometry', cb),
   // Fired once per account after main has finished wiring its <webview>'s
   // webContents (session, telemetry, listeners — see wireAccountWebContents
   // in main.js) — the renderer only sets the real `src` on that account's
   // <webview> element after this, so CDP/telemetry attach always wins the
   // race against the real navigation.
-  onWebviewReady: (cb) => ipcRenderer.on('webview:ready', (_e, accountId) => cb(accountId)),
+  onWebviewReady: (cb) => onIpc('webview:ready', cb),
   // Fired whenever an account's page enters/leaves native Picture-in-Picture
   // (see account-preload.js + wc.ipc.on('nexa-pip-state') in main.js) — lets
   // positionWebviews() keep that account's <webview> off-screen instead of
   // display:none while it's not the active panel.
-  onPipState: (cb) => ipcRenderer.on('account:pipState', (_e, data) => cb(data)),
+  onPipState: (cb) => onIpc('account:pipState', cb),
   // Live-follows a divider drag: main reflects the dragged panel's content
   // rect straight back so the renderer can resize that one <webview>
   // element immediately, without waiting for a full panels:geometry
   // broadcast (see account:setLiveRect / 'account:liveRect' in main.js).
-  onAccountLiveRect: (cb) => ipcRenderer.on('account:liveRect', (_e, data) => cb(data)),
-  onOpenSpaceEditor: (cb) => ipcRenderer.on('ui:open-space-editor', (_e, data) => cb(data)),
-  onOpenAccountEditor: (cb) => ipcRenderer.on('ui:open-account-editor', (_e, data) => cb(data)),
+  onAccountLiveRect: (cb) => onIpc('account:liveRect', cb),
+  onOpenSpaceEditor: (cb) => onIpc('ui:open-space-editor', cb),
+  onOpenAccountEditor: (cb) => onIpc('ui:open-account-editor', cb),
   // One-way fire-and-forget (send, not invoke) — the host UI's own error
   // handlers below must never await a round-trip or throw themselves.
   reportError: (info) => ipcRenderer.send('renderer:error', info)

@@ -10,17 +10,46 @@ test.describe('tracking protection levels', () => {
     expect(state.settings.protectionLevel).toBe('standard');
   });
 
-  test('clicking the shield icon opens a level picker, and choosing a level persists it', async ({ page }) => {
+  // 2026-08-17: the old off/standard/strict radio dropdown was replaced by
+  // one consolidated shield popup (Cyber-Shield design) with a 3-position
+  // mode slider — [standard, normal, super], see ADBLOCK_MODE_PRESETS in
+  // main.js. Picking a mode writes protectionLevel + adBlockFilterLists
+  // together and, unlike the old radio menu, does NOT close the popup
+  // (other controls in the same panel — whitelist, custom rules — expect to
+  // stay open after one action).
+  test('clicking the shield icon opens the popup, and choosing a mode persists it', async ({ page }) => {
     await page.locator('#tb-shield').click();
-    await expect(page.locator('#protection-menu')).not.toHaveClass(/hidden/);
+    await expect(page.locator('#shield-menu')).not.toHaveClass(/hidden/);
 
-    await page.locator('.protection-option[data-level="strict"]').click();
+    await page.locator('.shield-mode-btn').nth(2).click(); // 3rd = 'super'
     await expect.poll(async () => {
       const state = await page.evaluate(() => window.api.getState());
       return state.settings.protectionLevel;
     }).toBe('strict');
+    await expect.poll(async () => {
+      const state = await page.evaluate(() => window.api.getState());
+      return state.settings.adBlockMode;
+    }).toBe('super');
 
-    await expect(page.locator('#protection-menu')).toHaveClass(/hidden/);
+    await expect(page.locator('#shield-menu')).not.toHaveClass(/hidden/);
+  });
+
+  test('the master toggle turns protection off and back on, restoring the last mode', async ({ page }) => {
+    await page.evaluate(() => window.api.updateSettings({ protectionLevel: 'standard' }));
+    await page.locator('#tb-shield').click();
+    await expect(page.locator('#shield-menu')).not.toHaveClass(/hidden/);
+
+    await page.locator('.shield-switch').click();
+    await expect.poll(async () => {
+      const state = await page.evaluate(() => window.api.getState());
+      return state.settings.protectionLevel;
+    }).toBe('off');
+
+    await page.locator('.shield-switch').click();
+    await expect.poll(async () => {
+      const state = await page.evaluate(() => window.api.getState());
+      return state.settings.protectionLevel;
+    }).not.toBe('off');
   });
 
   test('the settings modal select reflects and updates the same setting', async ({ page }) => {

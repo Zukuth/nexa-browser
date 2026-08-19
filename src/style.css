@@ -7,6 +7,7 @@
   --text: #e6e8ee;
   --muted: #8890a0;
   --accent: #4f8cff;
+  --neon-green: #39ff88;
 }
 
 :root[data-theme="light"] {
@@ -80,11 +81,21 @@ html, body {
   justify-content: center;
   flex-shrink: 0;
   -webkit-app-region: no-drag;
+  /* transform is what makes :active below feel instant — it's a compositor-
+     only property (no layout/paint), so the press-down feedback shows up
+     the same frame as the click instead of waiting on whatever the actual
+     button action (an IPC round-trip, a page navigation) takes to resolve. */
+  transition: transform 80ms ease, background 100ms ease, color 100ms ease;
 }
 
 .nav-btn:hover {
   color: var(--text);
   background: rgba(255,255,255,0.06);
+}
+
+.nav-btn:active {
+  transform: scale(0.88);
+  background: rgba(255,255,255,0.1);
 }
 
 #input-address {
@@ -116,6 +127,7 @@ html, body {
   height: 26px;
   border-radius: 6px;
   cursor: pointer;
+  transition: transform 80ms ease, background 100ms ease, color 100ms ease;
 }
 
 #toolbar button:hover {
@@ -123,7 +135,13 @@ html, body {
   background: rgba(255,255,255,0.06);
 }
 
-#toolbar button.muted {
+#toolbar button:active {
+  transform: scale(0.88);
+  background: rgba(255,255,255,0.1);
+}
+
+#toolbar button.muted,
+#toolbar button.active {
   color: var(--accent);
 }
 
@@ -391,10 +409,455 @@ html, body {
   background: rgba(79,140,255,0.12);
 }
 
-#shield-menu {
-  width: 260px;
-  max-height: 320px;
+/* ---- Shield popup (Cyber-Shield design, adapted from the Stitch mockup:
+   dark glass cards, safety-green "protected" state, electric-blue accents —
+   scaled down to a toolbar dropdown instead of a full dashboard page). */
+.shield-popup {
+  width: 300px;
+  max-width: calc(100vw - 24px);
+  max-height: 80vh;
   overflow-y: auto;
+  overflow-x: hidden;
+  padding: 14px;
+  gap: 0;
+}
+
+/* #toolbar button (an ID+element rule, higher specificity than any plain
+   class selector) forces every <button> in the app — including these,
+   since #shield-menu nests inside #toolbar — to a fixed 26x26 icon-button
+   box with 14px text, confirmed live as the actual cause of the popup's
+   button text getting clipped/wrapped. This reset ties #toolbar button's
+   specificity and wins on source order (declared later), handing sizing
+   back to each button's own class rule; #shield-menu .shield-switch{width:
+   40px} etc. still win over THIS reset since ID+class beats ID+element. */
+#shield-menu button {
+  width: auto;
+  height: auto;
+  font-size: 12px;
+}
+
+.shield-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0 14px;
+}
+
+.shield-hero-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,255,255,0.06);
+  color: var(--muted);
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.shield-hero-icon.active {
+  background: rgba(57,255,136,0.14);
+  color: var(--neon-green);
+  box-shadow: 0 0 24px rgba(57,255,136,0.25);
+}
+
+.shield-hero-status {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.shield-engine-banner {
+  margin: 0 4px 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  background: rgba(79, 140, 255, 0.12);
+  color: var(--text);
+}
+
+.shield-engine-banner.error {
+  background: rgba(255, 92, 92, 0.14);
+  color: #ff8585;
+}
+
+.shield-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px 14px;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+#shield-menu .shield-switch {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  border-radius: 999px;
+  border: none;
+  background: rgba(255,255,255,0.12);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.2s ease;
+}
+
+#shield-menu .shield-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s ease;
+}
+
+#shield-menu .shield-switch.on {
+  background: var(--accent);
+}
+
+#shield-menu .shield-switch.on::after {
+  transform: translateX(18px);
+}
+
+.shield-mode-slider {
+  display: flex;
+  gap: 4px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px;
+  margin-bottom: 14px;
+  width: 100%;
+}
+
+#shield-menu .shield-mode-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.25;
+  padding: 7px 2px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: normal;
+  word-break: break-word;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+#shield-menu .shield-mode-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+#shield-menu .shield-mode-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.shield-stats-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.shield-stat-card {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  text-align: center;
+}
+
+.shield-stat-number {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.shield-stat-label {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.shield-section {
+  border-top: 1px solid var(--border);
+  padding: 12px 0;
+}
+
+.shield-section-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 8px;
+}
+
+.shield-section-header .shield-section-title {
+  margin-bottom: 0;
+}
+
+#shield-menu .shield-new-rule-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+.shield-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+}
+
+.shield-current-host {
+  font-size: 13px;
+  color: var(--text);
+  word-break: break-all;
+  margin-bottom: 10px;
+}
+
+.shield-page-actions {
+  display: flex;
+  gap: 8px;
+}
+
+#shield-menu .shield-btn-primary,
+#shield-menu .shield-btn-secondary {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+}
+
+#shield-menu .shield-btn-primary {
+  border: 1px solid rgba(255,90,90,0.35);
+  background: rgba(255,90,90,0.12);
+  color: #ff8080;
+}
+
+#shield-menu .shield-btn-primary.active {
+  background: #e05555;
+  border-color: #e05555;
+  color: #fff;
+}
+
+#shield-menu .shield-btn-secondary {
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.05);
+  color: var(--text);
+}
+
+#shield-menu .shield-btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.shield-input-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.shield-input-row.hidden {
+  display: none;
+}
+
+.shield-input-row input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.shield-input-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+#shield-menu .shield-input-row button {
+  width: 30px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.08);
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.shield-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.shield-list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.shield-list-row:hover {
+  background: rgba(255,255,255,0.05);
+}
+
+.shield-list-count {
+  font-weight: 600;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+#shield-menu .shield-list-remove {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+#shield-menu .shield-list-remove:hover {
+  color: #e05555;
+}
+
+#shield-menu .shield-new-rule-btn {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.shield-rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.shield-rule-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.shield-rule-text {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  word-break: break-all;
+  flex: 1;
+}
+
+.shield-rule-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+#shield-menu .shield-rule-delete {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+#shield-menu .shield-rule-delete:hover {
+  color: #e05555;
+}
+
+#shield-menu .shield-advanced-toggle {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  padding: 0;
+}
+
+.shield-advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.shield-advanced-body.hidden {
+  display: none;
+}
+
+.shield-advanced-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+#shield-menu .shield-picker-btn {
+  width: 100%;
+  margin-top: 10px;
+  padding: 9px 0;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.05);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#shield-menu .shield-picker-btn:hover {
+  background: rgba(255,255,255,0.09);
 }
 
 .shield-log-row {
@@ -472,25 +935,6 @@ html, body {
   color: var(--accent);
 }
 
-.protection-option {
-  display: flex;
-  align-items: center;
-  padding: 8px 10px;
-  border-radius: 6px;
-  cursor: pointer;
-  color: var(--text);
-  font-size: 13px;
-}
-
-.protection-option:hover {
-  background: rgba(255,255,255,0.05);
-}
-
-.protection-option.active {
-  color: var(--accent);
-  background: rgba(79,140,255,0.12);
-}
-
 .shield-btn.open {
   color: var(--accent);
   background: rgba(79,140,255,0.15);
@@ -537,6 +981,40 @@ html, body {
 
 .account-item.dragging {
   opacity: 0.4;
+}
+
+.account-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 4px;
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.account-group-header:hover {
+  background: rgba(255,255,255,0.04);
+  color: var(--text);
+}
+
+.group-caret {
+  width: 10px;
+  text-align: center;
+}
+
+.group-name {
+  flex: 1;
+}
+
+.group-count {
+  font-weight: 400;
+  opacity: 0.7;
 }
 
 .account-item.active {
@@ -788,6 +1266,11 @@ html, body {
   opacity: 0.5;
 }
 
+.status-update-progress {
+  color: var(--accent);
+  font-size: 11px;
+}
+
 .status-optimize-btn {
   background: none;
   border: 1px solid rgba(255,255,255,0.13);
@@ -847,6 +1330,18 @@ html, body {
   display: none;
 }
 
+/* Only active outside a live drag (see setDragInProgress in renderer.js) —
+   applying this unconditionally would ease every per-frame rect update a
+   divider/free-panel drag sends, adding lag exactly where the rAF-batched
+   drag path was built to remove it. With it scoped here, opening/closing an
+   account (or anything else that reflows panelsGeometry) animates smoothly
+   into its new position instead of jumping there, while manual dragging
+   stays perfectly 1:1 with the mouse. */
+body.layout-animated .panel-webview,
+body.layout-animated .panel-header {
+  transition: left 180ms ease, top 180ms ease, width 180ms ease, height 180ms ease;
+}
+
 /* Set via window.api.hideViews()/showViews() (see preload.js) for the
    duration of a drag (split divider, free-mode panel, URL-suggestion
    dropdown). A <webview> is real hit-testable content — without this, a
@@ -892,6 +1387,14 @@ html, body {
   white-space: nowrap;
   color: var(--text);
   font-weight: 600;
+}
+
+.panel-load-phase {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--accent);
+  opacity: 0.85;
 }
 
 .panel-header .panel-url {
@@ -1344,6 +1847,54 @@ html, body {
   max-height: 80vh;
   display: flex;
   flex-direction: column;
+}
+
+.translate-modal {
+  width: 320px;
+  align-items: center;
+  text-align: center;
+}
+
+.translate-progress-bar {
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.08);
+  overflow: hidden;
+  margin-top: 6px;
+}
+
+.translate-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--neon-green);
+  transition: width 0.15s ease-out;
+}
+
+.translate-progress-label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.translate-download-hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.translate-error {
+  font-size: 12px;
+  color: #ff6b6b;
+  margin-top: 4px;
+}
+
+/* Distinct from #toolbar button.active's --accent color (shared with the
+   mute button etc.) — the user specifically asked for a neon-green marker
+   that means "this page is translated right now", separate from every
+   other toolbar toggle state. */
+#toolbar button.translated {
+  color: var(--neon-green);
 }
 
 .dns-intro {
@@ -4730,6 +5281,63 @@ html, body {
 .poke-notable-sprite {
   width: 34px;
   height: 34px;
+}
+
+.shortcuts-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2147483000;
+}
+
+.shortcuts-overlay-card {
+  background: var(--panel-bg, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 20px;
+  min-width: 320px;
+  max-width: 420px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+
+.shortcuts-overlay-card h3 {
+  margin: 0 0 12px;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.shortcuts-overlay-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shortcuts-overlay-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.shortcuts-overlay-row kbd {
+  background: rgba(255,255,255,0.08);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font: 11px monospace;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.shortcuts-overlay-row span {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
 }
 
 .poke-notable-name {

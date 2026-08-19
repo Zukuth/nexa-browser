@@ -99,6 +99,13 @@ test.describe('QA audit — repeated open/close stress', () => {
   test('opening and closing 20 accounts in a row does not corrupt sidebar state or leak unbounded memory', async ({ page, electronApp }) => {
     const pageErrors = [];
     page.on('pageerror', (err) => pageErrors.push(err.message));
+    // The adblock filter engine loads asynchronously in the background after
+    // first paint (~1.4s on a cold cache — see loadAdBlockEngine in main.js)
+    // regardless of protectionLevel. Confirmed live: without this wait, that
+    // one-time load can finish partway through the loop below and get
+    // miscounted as "growth from cycling accounts" instead of what it
+    // actually is — a fixed startup cost paid once, not a per-cycle leak.
+    await expect.poll(() => page.evaluate(() => window.api.isAdBlockEngineReady()), { timeout: 20000 }).toBe(true);
 
     const metricsBefore = await electronApp.evaluate(({ app }) => {
       const m = app.getAppMetrics().find((p) => p.type === 'Browser');

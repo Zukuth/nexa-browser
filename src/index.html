@@ -22,7 +22,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://raw.githubusercontent.com https://poke.idleworld.online https://pokexguides.com https://www.pokexguides.com; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none';" />
   <link rel="stylesheet" href="style.css" />
 </head>
-<body>
+<body class="layout-animated">
   <div id="topbar">
     <button id="tb-back" class="nav-btn" title="Atrás" data-i18n-title="topbar.back">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15,5 8,12 15,19"/></svg>
@@ -56,18 +56,7 @@
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/></svg>
           <span id="tb-shield-count" class="shield-count" title="Ver qué se bloqueó" data-i18n-title="topbar.adblockViewLog"></span>
         </button>
-        <div id="protection-menu" class="dropdown-menu hidden">
-          <div class="protection-option" data-level="off">
-            <span data-i18n="protection.off">Desactivada</span>
-          </div>
-          <div class="protection-option" data-level="standard">
-            <span data-i18n="protection.standard">Estándar</span>
-          </div>
-          <div class="protection-option" data-level="strict">
-            <span data-i18n="protection.strict">Estricta</span>
-          </div>
-        </div>
-        <div id="shield-menu" class="dropdown-menu hidden"></div>
+        <div id="shield-menu" class="dropdown-menu shield-popup hidden"></div>
       </div>
 
       <button id="tb-screenshot" title="Capturar pantalla" data-i18n-title="topbar.screenshot">
@@ -76,6 +65,14 @@
 
       <button id="tb-dns" title="Test de velocidad de DNS" data-i18n-title="topbar.dnsTest">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a13 13 0 0 1 0 18a13 13 0 0 1 0-18z"/></svg>
+      </button>
+
+      <button id="tb-translate" title="Traducir página (motor local, sin conexión externa)" data-i18n-title="topbar.translate">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h7"/><path d="M7 3v2c0 4.5-2 8-5 10"/><path d="M3 12c2.5 2 5 2 7 0"/><path d="M14 21l4-9 4 9"/><path d="M15.5 18h5"/></svg>
+      </button>
+
+      <button id="tb-miniplayer" title="Mini reproductor flotante" data-i18n-title="topbar.miniplayer">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="1.5"/><rect x="12" y="11" width="8" height="6" rx="1" fill="currentColor" stroke="none"/></svg>
       </button>
 
       <div class="menu-wrap">
@@ -155,6 +152,7 @@
       <span id="status-active-account"></span>
     </div>
     <div id="status-right">
+      <span id="status-update-progress" class="status-update-progress hidden"></span>
       <span id="status-cpu"></span>
       <span id="status-ram"></span>
       <span id="status-time"></span>
@@ -339,6 +337,21 @@
     </div>
   </div>
 
+  <div id="translate-modal" class="modal-overlay hidden">
+    <div class="modal translate-modal">
+      <div id="translate-modal-title" class="modal-title" data-i18n="translateModal.title">🌐 Traduciendo página…</div>
+      <div id="translate-progress-bar" class="translate-progress-bar">
+        <div id="translate-progress-fill" class="translate-progress-fill"></div>
+      </div>
+      <div id="translate-progress-label" class="translate-progress-label">0%</div>
+      <div id="translate-download-hint" class="translate-download-hint hidden"></div>
+      <div id="translate-error" class="translate-error hidden"></div>
+      <div class="modal-actions">
+        <button id="btn-close-translate" class="primary hidden" data-i18n="action.close">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
   <div id="settings-modal" class="modal-overlay hidden">
     <div class="modal settings-modal">
       <div class="settings-header">
@@ -353,6 +366,7 @@
           <div class="settings-nav-item" data-tab="extensiones" data-i18n="settings.tab.extensiones">Extensiones</div>
           <div class="settings-nav-item" data-tab="contrasenas" data-i18n="settings.tab.contrasenas">Contraseñas</div>
           <div class="settings-nav-item" data-tab="red" data-i18n="settings.tab.red">Red</div>
+          <div class="settings-nav-item" data-tab="permisos" data-i18n="settings.tab.permisos">Permisos</div>
           <div class="settings-nav-item" data-tab="acerca" data-i18n="settings.tab.acerca">Acerca de</div>
         </div>
         <div class="settings-content">
@@ -404,6 +418,7 @@
               <span data-i18n="settings.autoEcoMinutes">Minutos sin foco antes de activarlo</span>
               <input type="number" id="set-auto-eco-minutes" min="1" max="60" style="width:60px;" />
             </div>
+            <div class="settings-hint eco-savings-hint" id="eco-savings-hint"></div>
             <div class="settings-row">
               <span data-i18n="settings.showFpsOverlay">Mostrar contador de FPS por pestaña</span>
               <label class="switch"><input type="checkbox" id="set-show-fps" /><span class="slider"></span></label>
@@ -411,6 +426,13 @@
             <div class="settings-row">
               <span data-i18n="settings.showPingOverlay">Mostrar latencia (ms) por pestaña</span>
               <label class="switch"><input type="checkbox" id="set-show-ping" /><span class="slider"></span></label>
+            </div>
+            <div class="settings-row">
+              <div>
+                <div data-i18n="settings.translateMemoryTitle">Recordar traducciones entre sesiones</div>
+                <div class="settings-hint" data-i18n="settings.translateMemoryHint">Guarda en disco lo ya traducido para no repetir el trabajo la próxima vez que abras la app (se descarta solo, después de 30 días).</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="set-translate-memory-persist" /><span class="slider"></span></label>
             </div>
             <div class="settings-row">
               <div>
@@ -515,6 +537,14 @@
           </div>
 
 
+          <div class="settings-pane" data-pane="permisos">
+            <p class="settings-hint" data-i18n="settings.permissionsHint">
+              Decisiones de permisos (cámara/micrófono, notificaciones, ubicación) que guardaste por sitio. Podés revocarlas para que el sitio vuelva a preguntar.
+            </p>
+            <div id="permissions-list" class="ext-list"></div>
+            <button id="permissions-clear-all" type="button" class="hidden" data-i18n="permissions.clearAll">🗑 Revocar todos los permisos</button>
+          </div>
+
           <div class="settings-pane" data-pane="acerca">
             <div class="settings-about-title"><span data-i18n="settings.aboutTitlePrefix">Nexa</span> <span class="accent-text" data-i18n="settings.aboutTitleAccent">Browser</span></div>
             <p class="settings-hint" data-i18n="settings.aboutDesc">Navegador multisesión gratuito: organiza cuentas ilimitadas en espacios, cada una con una sesión aislada.</p>
@@ -522,6 +552,7 @@
               <div class="settings-row"><span data-i18n="settings.version">Versión</span><span id="ver-app"></span></div>
               <div class="settings-row"><span data-i18n="settings.electron">Electron</span><span id="ver-electron"></span></div>
               <div class="settings-row"><span data-i18n="settings.chromium">Chromium</span><span id="ver-chrome"></span></div>
+              <div class="settings-row"><span data-i18n="settings.updateStatus">Actualizaciones</span><span id="ver-update-status"></span></div>
             </div>
             <div class="settings-support-card">
               <div>
@@ -1342,6 +1373,23 @@
         <div class="modal-actions-right">
           <button id="sell-confirm-btn" class="primary" data-i18n="pokeIdle.sellhubSell">Vender seleccionados</button>
           <button id="btn-close-sell-modal-2" data-i18n="action.close">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="security-warning-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="settings-header">
+        <div class="modal-title" data-i18n="security.plaintextPasswordsTitle">Aviso de seguridad</div>
+        <button id="btn-close-security-warning" class="icon-close" data-i18n-title="action.close" title="Cerrar">✕</button>
+      </div>
+      <div class="market-detail-body" data-i18n="security.plaintextPasswordsBody">
+        Este sistema no tiene disponible el cifrado seguro del sistema operativo, así que las contraseñas guardadas se están almacenando en texto plano en el archivo de datos local.
+      </div>
+      <div class="modal-actions">
+        <div class="modal-actions-right">
+          <button id="btn-dismiss-security-warning" class="primary" data-i18n="action.understood">Entendido</button>
         </div>
       </div>
     </div>

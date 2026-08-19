@@ -1,9 +1,7 @@
-const { app, BrowserWindow, ipcMain, session, Menu, shell, dialog, clipboard, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, session, Menu, shell, dialog, clipboard, Notification, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const https = require('https');
 const crypto = require('crypto');
-const extractZip = require('extract-zip');
 const store = require('./store');
 const { GAP, GRID_MAX_PANELS, MIN_SPLIT_FRAC, resolveFracs, cellsForMode, freeCells, normalizeFracsWithMin } = require('./layout-utils');
 const gameTelemetry = require('./game-telemetry');
@@ -13,7 +11,10 @@ const networkHealth = require('./network-health');
 const powerManager = require('./power-manager');
 const gameConnectionManager = require('./game-connection-manager');
 const dnsTest = require('./dns-test');
+const translate = require('./translate');
 const memoryOptimizer = require('./memory-optimizer');
+const pipPlayer = require('./pip-player');
+const elementPicker = require('./element-picker');
 const { classifyCrash } = require('./crash-classifier');
 const diagnostics = require('./diagnostics');
 const { normalizeAddressInput } = require('./address-bar');
@@ -81,44 +82,52 @@ process.on('unhandledRejection', (err) => {
 
 const APP_ICON_PATH = path.join(__dirname, 'assets', 'icon.png');
 
+const { hostnameFromUrlLike } = require('./url-utils');
+
+// window.open() popups (Etapa: OAuth login flows) get allowed through only
+// when they go to the account's own site or a well-known third-party login
+// provider — anything else is denied and logged. Before this, every account
+// on every page could window.open() to literally anywhere and still receive
+// a fully isolated+sandboxed+contextIsolated popup window; scoping the
+// *destination* closes the remaining gap without breaking real Google/
+// Facebook/Discord "sign in with..." flows, which is the only legitimate
+// reason a game page needs a popup at all.
+const POPUP_ALLOWED_HOSTS = new Set([
+  'accounts.google.com',
+  'accounts.youtube.com',
+  'www.facebook.com',
+  'm.facebook.com',
+  'appleid.apple.com',
+  'login.microsoftonline.com',
+  'login.live.com',
+  'discord.com',
+  'twitter.com',
+  'x.com',
+  'api.twitter.com'
+]);
+
+function hostMatchesPopupAllowlist(hostname, accountHostname) {
+  if (!hostname) return false;
+  const h = hostname.toLowerCase();
+  // Same site (or a subdomain of it) opening a popup to itself — e.g. a
+  // "share"/"support" window the game itself spawns.
+  if (accountHostname && (h === accountHostname || h.endsWith(`.${accountHostname}`))) return true;
+  let walk = h;
+  while (walk.includes('.')) {
+    if (POPUP_ALLOWED_HOSTS.has(walk)) return true;
+    walk = walk.slice(walk.indexOf('.') + 1);
+  }
+  return POPUP_ALLOWED_HOSTS.has(walk);
+}
+
 // app.getPath('userData') is derived from package.json's "name" field
 // ("nexa-browser" since the rebrand) — do not change that field again without
 // a migration step, or existing spaces/accounts/passwords/extensions become
 // invisible to the app (new empty folder, old one orphaned). The data file
 // itself went through exactly this migration — see LEGACY_DATA_FILE in store.js.
-const EXTENSIONS_DIR = path.join(app.getPath('userData'), 'extensions');
-if (!fs.existsSync(EXTENSIONS_DIR)) fs.mkdirSync(EXTENSIONS_DIR, { recursive: true });
-
-// Ad/tracker blocker — starts blocking immediately with this curated list of the
-// most common ad/analytics/tracking domains, then gets replaced in the background
-// by the much larger community-maintained StevenBlack hosts list (cached to disk,
-// refreshed at most once a day) once it's fetched.
-const BUILTIN_BLOCKLIST = [
-  'doubleclick.net', 'googlesyndication.com', 'googleadservices.com', 'google-analytics.com',
-  'googletagmanager.com', 'googletagservices.com', 'adservice.google.com', 'pagead2.googlesyndication.com',
-  'facebook.com/tr', 'connect.facebook.net', 'ads-twitter.com', 'analytics.twitter.com',
-  'amazon-adsystem.com', 'adnxs.com', 'adsrvr.org', 'adroll.com', 'criteo.com', 'criteo.net',
-  'taboola.com', 'outbrain.com', 'pubmatic.com', 'rubiconproject.com', 'openx.net', 'media.net',
-  'moatads.com', 'scorecardresearch.com', 'quantserve.com', 'quantcast.com', 'hotjar.com',
-  'mixpanel.com', 'segment.io', 'segment.com', 'fullstory.com', 'mouseflow.com', 'crazyegg.com',
-  'yandex.ru/metrica', 'mc.yandex.ru', 'bat.bing.com', 'ads.yahoo.com', 'advertising.com',
-  'adcolony.com', 'applovin.com', 'chartboost.com', 'unityads.unity3d.com', 'vungle.com',
-  'ironsrc.com', 'inmobi.com', 'smartadserver.com', 'adform.net', 'flashtalking.com',
-  'bidswitch.net', 'casalemedia.com', 'contextweb.com', 'sharethrough.com', 'triplelift.com',
-  'yieldmo.com', 'indexexchange.com', 'sovrn.com', 'gumgum.com', 'teads.tv', 'spotxchange.com',
-  'tremorhub.com', 'undertone.com', 'zedo.com', 'adtechus.com', 'exelator.com', 'demdex.net',
-  'krxd.net', 'bluekai.com', 'rlcdn.com', 'agkn.com', 'adsymptotic.com', 'mathtag.com',
-  'turn.com', 'rfihub.com', 'simpli.fi', 'tapad.com', 'chango.com', 'brightroll.com',
-  'yieldlab.net', 'improvedigital.com', 'smartclip.net', 'adtelligent.com', 'sonobi.com',
-  '33across.com', 'lijit.com', 'rhythmone.com', 'freewheel.tv', 'innovid.com',
-  'newrelic.com', 'nr-data.net', 'bugsnag.com', 'sentry.io', 'amplitude.com',
-  'clicktale.net', 'clarity.ms', 'histats.com', 'statcounter.com', 'analytics.google.com'
-];
-
-const BLOCKLIST_CACHE_FILE = path.join(app.getPath('userData'), 'blocklist-cache.txt');
-const BLOCKLIST_URL = 'https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts';
-let blockedDomains = new Set(BUILTIN_BLOCKLIST);
-const blockedCounts = new Map();
+// Only ever read/written when data.settings.translateMemoryPersist is on
+// (see app.whenReady and 'before-quit' below) — off by default.
+const TRANSLATE_MEMORY_FILE = path.join(app.getPath('userData'), 'translate-memory.json');
 // Value shape: { count, lastAt }. A crash from long ago shouldn't count
 // against an account that's been stable since — without decay, a account
 // that crashed 3 times weeks ago and has run fine ever since immediately
@@ -143,11 +152,6 @@ function recordCrash(accountId) {
   return count;
 }
 let lastFocusedAccountId = null;
-const ADBLOCK_ALLOWLIST = new Set([
-  'poke.idleworld.online',
-  'challenges.cloudflare.com',
-  'static.cloudflareinsights.com'
-]);
 
 // Real password values never live on `data.passwords` — only id/name/url/
 // username do. `data` is what state:get/state:update hand the renderer
@@ -161,167 +165,14 @@ const ADBLOCK_ALLOWLIST = new Set([
 // broadcast).
 const passwordSecrets = new Map();
 
-function parseHostsFile(text, into) {
-  const re = /^\s*0\.0\.0\.0\s+(\S+)/gm;
-  let m;
-  while ((m = re.exec(text))) {
-    const host = m[1].toLowerCase();
-    if (host !== 'localhost' && host !== '0.0.0.0') into.add(host);
-  }
-}
-
-// Async and called after the first window is up (see app.whenReady() below) —
-// this used to be a synchronous fs.readFileSync() called before createWindow(),
-// which blocked the very first paint on however long it took to read+parse a
-// StevenBlack cache file that can run into the hundreds of KB. Adblock isn't
-// needed until a page actually loads in some account view, well after the
-// window itself has appeared, so there's no reason to make startup wait on it.
-async function loadCachedBlocklist() {
-  try {
-    const raw = await fs.promises.readFile(BLOCKLIST_CACHE_FILE, 'utf-8');
-    parseHostsFile(raw, blockedDomains);
-    console.log('[adblock] loaded cached list —', blockedDomains.size, 'domains');
-  } catch {
-    console.log('[adblock] no cache yet — using built-in list of', blockedDomains.size, 'domains');
-  }
-}
-
-function refreshBlocklistIfStale() {
-  let stale = true;
-  try {
-    const stat = fs.statSync(BLOCKLIST_CACHE_FILE);
-    stale = Date.now() - stat.mtimeMs > 24 * 60 * 60 * 1000;
-  } catch {
-    // no cache file yet — definitely stale
-  }
-  if (!stale) return;
-
-  https
-    .get(BLOCKLIST_URL, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
-      if (res.statusCode !== 200) {
-        res.resume();
-        return;
-      }
-      const chunks = [];
-      res.on('data', (c) => chunks.push(c));
-      res.on('end', () => {
-        const text = Buffer.concat(chunks).toString('utf-8');
-        try {
-          fs.writeFileSync(BLOCKLIST_CACHE_FILE, text, 'utf-8');
-        } catch {
-          // best-effort cache write
-        }
-        const fresh = new Set(BUILTIN_BLOCKLIST);
-        parseHostsFile(text, fresh);
-        blockedDomains = fresh;
-        console.log('[adblock] refreshed list —', blockedDomains.size, 'domains');
-      });
-    })
-    .on('error', () => {
-      // offline or blocked — keep using the built-in/cached list
-    });
-}
-
-function isBlockedHost(hostname) {
-  if (!hostname) return false;
-  let h = hostname.toLowerCase();
-  if (ADBLOCK_ALLOWLIST.has(h)) return false;
-  while (h.includes('.')) {
-    if (ADBLOCK_ALLOWLIST.has(h)) return false;
-    if (blockedDomains.has(h)) return true;
-    h = h.slice(h.indexOf('.') + 1);
-  }
-  return false;
-}
-
-// Diagnostic ring buffer, per account — doesn't change any block/allow
-// decision, just makes what got blocked inspectable (diagnostics.js export,
-// Etapa 8) instead of only a running count. Capped so a chatty page can't
-// grow this unbounded over a multi-day session.
-const AD_BLOCK_LOG_CAP = 500;
-const adBlockLog = new Map(); // accountId -> array of {url, hostname, resourceType, initiator, accountId, timestamp}
-
-function recordAdBlockEntry(accountId, entry) {
-  let log = adBlockLog.get(accountId);
-  if (!log) {
-    log = [];
-    adBlockLog.set(accountId, log);
-  }
-  diagnostics.pushCapped(log, entry, AD_BLOCK_LOG_CAP);
-}
-
-// Three levels instead of a blind on/off, matching the shape of Firefox's
-// Enhanced Tracking Protection (Estándar/Estricto) rather than a single
-// checkbox: 'off' blocks nothing; 'standard' is the previous behavior
-// (known ad/tracker hosts, subresources only — the top-level navigation
-// itself is exempt so a listed host typed directly into the address bar
-// still loads); 'strict' additionally blocks a listed host used AS the
-// navigation target, plus every resourceType 'ping' request regardless of
-// host — Chromium's classification for navigator.sendBeacon()/<a ping>,
-// which in practice carries cross-site tracking pings almost exclusively,
-// not content a user would ever notice missing. That's the same shape as
-// ETP Strict: a whole extra tracking category, not just a longer domain
-// list.
-function applyAdBlock(ses, accountId) {
-  ses.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, callback) => {
-    const level = data.settings.protectionLevel || 'standard';
-    if (level === 'off') {
-      callback({});
-      return;
-    }
-    if (details.resourceType === 'mainFrame' && level !== 'strict') {
-      callback({});
-      return;
-    }
-    let hostname;
-    try {
-      hostname = new URL(details.url).hostname;
-    } catch {
-      callback({});
-      return;
-    }
-    const blocked = isBlockedHost(hostname) || (level === 'strict' && details.resourceType === 'ping');
-    if (blocked) {
-      blockedCounts.set(accountId, (blockedCounts.get(accountId) || 0) + 1);
-      recordAdBlockEntry(accountId, {
-        url: details.url,
-        hostname,
-        resourceType: details.resourceType,
-        initiator: details.initiator || null,
-        accountId,
-        timestamp: Date.now()
-      });
-      callback({ cancel: true });
-    } else {
-      callback({});
-    }
-  });
-}
-
-// Without an explicit handler Electron denies most permission requests outright,
-// which silently breaks sites that need a camera/mic (video calls), notifications,
-// or geolocation. These are all things a site only asks for when the page itself
-// wants to use them, so allowing the common/expected set matches normal browser
-// behavior instead of a blanket silent denial.
-const ALLOWED_PERMISSIONS = new Set([
-  'media',
-  'notifications',
-  'geolocation',
-  'fullscreen',
-  'pointerLock',
-  'midi',
-  'midiSysex',
-  'clipboard-sanitized-write',
-  'openExternal'
-]);
-
-// Poke Idle World has no legitimate use for a camera, microphone, or the
-// player's real-world location — narrowing the default for that domain
-// specifically (instead of the same blanket ALLOWED_PERMISSIONS every other
-// site gets) cuts attack surface and avoids spurious OS permission prompts,
-// without touching normal browsing, where camera/mic requests are expected
-// (video calls, etc.).
-const GAME_DENIED_PERMISSIONS = new Set(['media', 'geolocation']);
+const { createAdblockManager } = require('./adblock-manager');
+const adblockManager = createAdblockManager({
+  getData: () => data,
+  persist: () => persist(),
+  broadcastState: () => broadcastState(),
+  getAccount: (id) => getAccount(id)
+});
+const { applyAdBlock, loadAdBlockEngine, rebuildAdBlockEngine, resetPageAdBlockStats } = adblockManager;
 
 function isAllowedExternalSupportUrl(url) {
   try {
@@ -333,14 +184,15 @@ function isAllowedExternalSupportUrl(url) {
   }
 }
 
-function applyPermissionHandler(ses, account) {
-  const isGameAccount = !!(account && account.url && gameTelemetry.isGameUrl(account.url));
-  const allow = (permission) => ALLOWED_PERMISSIONS.has(permission) && !(isGameAccount && GAME_DENIED_PERMISSIONS.has(permission));
-  ses.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(allow(permission));
-  });
-  ses.setPermissionCheckHandler((_wc, permission) => allow(permission));
-}
+const { createPermissionsManager } = require('./permissions-manager');
+const permissionsManager = createPermissionsManager({
+  getData: () => data,
+  persist: () => persist(),
+  broadcastState: () => broadcastState(),
+  mt,
+  getMainWindow: () => mainWindow
+});
+const { applyPermissionHandler } = permissionsManager;
 
 const proxyAuthWired = new WeakSet();
 
@@ -408,6 +260,16 @@ function mainWindowAlive() {
 }
 let appQuitting = false;
 let data = store.load();
+// Computed after app.whenReady() (safeStorage's OS-keychain backend isn't
+// reliably available before that) — see the app.whenReady() block below.
+let passwordEncryptionAvailable = true;
+
+// Real health state for the auto-updater — previously a failed check only
+// ever hit console.error, invisible to the user (and to Configuración >
+// Acerca de, which just shows the static installed version regardless).
+// 'idle' before the very first check ever runs (dev, or hasn't reached
+// app.whenReady() yet).
+let updateStatus = { state: 'idle', lastError: null, lastCheckedAt: null };
 
 // Always start on auto grid, regardless of whichever layout was active when the
 // app was last closed — the user wants a consistent, predictable starting layout.
@@ -590,10 +452,6 @@ const views = new Map();
 const pipActiveAccounts = new Set();
 const poppedOutIds = new Set();
 const poppedOutWindows = new Map();
-// One open popup window per extension at a time, keyed by extension id —
-// clicking its toolbar icon again while already open just closes it,
-// matching how a real browser's extension popup toggles.
-const extensionPopupWindows = new Map();
 
 // Debounced: SPA sites fire did-navigate-in-page (pushState/hash routing) and
 // page-title-updated many times a minute, and persist() used to do a synchronous
@@ -965,189 +823,16 @@ function handleDownloads(ses) {
   });
 }
 
-function extensionIdFromInput(input) {
-  const match = String(input).trim().match(/[a-p]{32}/);
-  return match ? match[0] : null;
-}
-
-// Compatibilidad de extensiones: prodversion le dice al Chrome Web Store con
-// qué motor estamos, y Google puede devolver una build más vieja del paquete
-// si cree que el navegador es más antiguo de lo que realmente es. Este valor
-// estaba fijo en "131.0.6778.86" — confirmado desatualizado: esta app corre
-// Electron 43.3.0 (Chromium ~150) desde hace varias versiones. Usar la
-// versión real de Chromium en cada descarga evita pedirle a Google una build
-// pensada para un motor mucho más viejo que el que realmente ejecuta la
-// extensión. Verificado en vivo: instalación real de AdGuard Adblocker
-// (bgnkhhnnamicmpeenaelnjfhikgbkllg) completó ok con la versión corregida.
-function downloadCrx(id) {
-  const chromeVersion = process.versions.chrome || '131.0.6778.86';
-  const url =
-    'https://clients2.google.com/service/update2/crx?response=redirect' +
-    '&os=win&arch=x64&os_arch=x64&nacl_arch=x64' +
-    `&prod=chrome&prodchannel=stable&prodversion=${chromeVersion}&lang=en` +
-    '&acceptformat=crx3' +
-    `&x=id%3D${id}%26uc`;
-  return new Promise((resolve, reject) => {
-    const get = (u, redirects) => {
-      if (redirects > 5) return reject(new Error(mt(data.settings.language || 'es', 'main.tooManyRedirects')));
-      https
-        .get(u, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' } }, (res) => {
-          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-            res.resume();
-            get(res.headers.location, redirects + 1);
-            return;
-          }
-          if (res.statusCode !== 200) {
-            res.resume();
-            reject(new Error(mt(data.settings.language || 'es', 'main.downloadFailed', { status: res.statusCode })));
-            return;
-          }
-          const chunks = [];
-          res.on('data', (c) => chunks.push(c));
-          res.on('end', () => resolve(Buffer.concat(chunks)));
-          res.on('error', reject);
-        })
-        .on('error', reject);
-    };
-    get(url, 0);
-  });
-}
-
-function crxToZip(buf) {
-  if (buf.toString('utf8', 0, 4) !== 'Cr24') throw new Error(mt(data.settings.language || 'es', 'main.invalidCrxFile'));
-  const version = buf.readUInt32LE(4);
-  let offset;
-  if (version === 2) {
-    const pubKeyLen = buf.readUInt32LE(8);
-    const sigLen = buf.readUInt32LE(12);
-    offset = 16 + pubKeyLen + sigLen;
-  } else if (version === 3) {
-    const headerLen = buf.readUInt32LE(8);
-    offset = 12 + headerLen;
-  } else {
-    throw new Error(mt(data.settings.language || 'es', 'main.unsupportedCrxVersion'));
-  }
-  return buf.subarray(offset);
-}
-
-async function loadExtensionOnAllSessions(dir) {
-  let result = null;
-  for (const view of views.values()) {
-    try {
-      result = await view.session.extensions.loadExtension(dir, { allowFileAccess: true });
-    } catch {
-      // session may already have it loaded, or view may be closing — ignore
-    }
-  }
-  return result;
-}
-
-// Manifest V3 uses `action`, V2 used `browser_action`/`page_action` — real
-// installed extensions can be either depending on age, so all three are
-// checked in that priority order (matches Chrome's own resolution). Falls
-// back to the extension's top-level `icons` (present on essentially every
-// extension, action or not) if the action itself doesn't declare its own
-// icon — some extensions rely on that fallback rather than repeating it.
-function extractExtensionAction(manifest, dir) {
-  const action = manifest.action || manifest.browser_action || manifest.page_action || null;
-  const pickIconPath = (iconField) => {
-    if (!iconField) return null;
-    if (typeof iconField === 'string') return iconField;
-    if (typeof iconField === 'object') {
-      const sizes = Object.keys(iconField).map(Number).filter(Number.isFinite).sort((a, b) => a - b);
-      if (!sizes.length) return null;
-      const preferred = sizes.find((s) => s >= 32) ?? sizes[sizes.length - 1];
-      return iconField[String(preferred)];
-    }
-    return null;
-  };
-  const iconRel = pickIconPath(action?.default_icon) || pickIconPath(manifest.icons);
-  return {
-    icon: iconRel ? path.join(dir, iconRel) : null,
-    popup: action?.default_popup || null,
-    title: action?.default_title || manifest.name || ''
-  };
-}
-
-function readManifest(dir) {
-  try {
-    const raw = fs.readFileSync(path.join(dir, 'manifest.json'), 'utf-8');
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
-}
-
-async function installExtensionFromStore(input) {
-  const id = extensionIdFromInput(input);
-  if (!id) throw new Error(mt(data.settings.language || 'es', 'main.noValidExtensionId'));
-  // Checked by destination folder, not by e.id — finishInstall now stores
-  // whatever id Electron actually assigns on load (see its comment), which
-  // for a downloaded CRX never matches this store id, so comparing against
-  // e.id here would never catch a real duplicate. destDir is deterministic
-  // from the store id regardless, so it's still a reliable "already
-  // downloaded this one" check.
-  const destDir = path.join(EXTENSIONS_DIR, id);
-  if (data.settings.extensions.some((e) => e.path === destDir)) throw new Error(mt(data.settings.language || 'es', 'main.extensionAlreadyInstalled'));
-
-  const crxBuf = await downloadCrx(id);
-  const zipBuf = crxToZip(crxBuf);
-  const zipPath = path.join(app.getPath('temp'), `${id}-${Date.now()}.zip`);
-  fs.writeFileSync(zipPath, zipBuf);
-
-  if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true });
-  await extractZip(zipPath, { dir: destDir });
-  fs.unlinkSync(zipPath);
-
-  return finishInstall(id, destDir);
-}
-
-// `id` here is only a GUESS at what Electron will assign — the Chrome Web
-// Store ID for a downloaded CRX (crxToZip strips the original signature/key,
-// so Electron can't recompute the store's canonical ID from the unpacked
-// folder) or a locally-replicated path hash for a manually loaded unpacked
-// folder. Confirmed live: installing AdGuard Adblocker from the store, the
-// guessed id (bgnkhhnn...) never matched what session.extensions.
-// loadExtension() actually assigned (cbmeffkc...) — every chrome-extension://
-// URL built from the guessed id then hit ERR_BLOCKED_BY_CLIENT, leaving the
-// popup permanently blank. loaded.id (what Electron/Chromium itself decided,
-// the only id any chrome-extension:// URL or session lookup can ever match)
-// is now the source of truth; the guess is only a fallback for the rare case
-// loadExtension() failed on every session.
-async function finishInstall(id, dir) {
-  const manifest = readManifest(dir);
-  const loaded = await loadExtensionOnAllSessions(dir);
-  const realId = loaded?.id || id;
-  const entry = {
-    id: realId,
-    path: dir,
-    name: loaded?.name || manifest.name || id,
-    version: loaded?.version || manifest.version || '',
-    description: manifest.description || '',
-    action: extractExtensionAction(manifest, dir),
-    enabled: true
-  };
-  data.settings.extensions.push(entry);
-  persist();
-  broadcastState();
-  return entry;
-}
-
-function closeExtensionPopup(id) {
-  const popup = extensionPopupWindows.get(id);
-  if (popup && !popup.isDestroyed()) popup.close();
-  extensionPopupWindows.delete(id);
-}
-
-function unloadExtensionFromAllSessions(id) {
-  for (const view of views.values()) {
-    try {
-      view.session.extensions.removeExtension(id);
-    } catch {
-      // not loaded on this session — ignore
-    }
-  }
-}
+const { createExtensionsManager } = require('./extensions-manager');
+const extensionsManager = createExtensionsManager({
+  getData: () => data,
+  persist: () => persist(),
+  broadcastState: () => broadcastState(),
+  mt,
+  getMainWindow: () => mainWindow,
+  views
+});
+const { readManifest, extractExtensionAction } = extensionsManager;
 
 const SPACE_COLORS = ['#4f8cff', '#ff6b6b', '#51cf66', '#fcc419', '#cc5de8', '#ff922b', '#f06595', '#22b8cf'];
 const SPACE_ICON_KEYS = ['grid', 'gamepad', 'swords', 'shield', 'flame', 'leaf', 'droplet', 'bolt', 'star', 'crown', 'ghost', 'rocket'];
@@ -1423,9 +1108,34 @@ function refreshPowerBlockerNeed() {
 // CPU/wake-ups proportional to how many open panels aren't actually
 // farming. setBackgroundThrottling() takes effect immediately, no reload
 // needed, unlike the webview's own initial `webpreferences` attribute.
-function syncBackgroundThrottling(wc, url) {
+// accountId is optional (existing call sites that don't have it handy still
+// work — they just don't get the "is this the active panel" boost). When
+// present, the currently active/frontmost panel always gets full-speed
+// timers, not just game pages — so switching to a non-game account (a wiki
+// tab, Discord, whatever) never feels laggy from Chromium's own background-
+// tab throttling heuristics kicking in on a panel that's technically still
+// part of the same window. This is a lighter touch than Modo Eco (which
+// actively caps rAF) — it just makes sure nothing throttles the ONE panel
+// the user is actually looking at, while backgrounded non-game panels keep
+// normal throttling to free up CPU for it.
+function syncBackgroundThrottling(wc, url, accountId) {
   if (!wc || wc.isDestroyed()) return;
-  wc.setBackgroundThrottling(!gameTelemetry.isGameUrl(url));
+  const isActive = accountId && data.settings.activeAccountId === accountId;
+  wc.setBackgroundThrottling(!(gameTelemetry.isGameUrl(url) || isActive));
+}
+
+// Called whenever activeAccountId changes (see accounts:activate) so the
+// panel losing focus goes back to normal throttling rules (unless it's a
+// game, which stays exempt regardless — see syncBackgroundThrottling) and
+// the panel gaining focus immediately gets the full-speed exemption instead
+// of waiting for its next did-finish-load/did-navigate-in-page to re-sync.
+function syncActiveThrottling(previousId, newId) {
+  for (const id of [previousId, newId]) {
+    if (!id) continue;
+    const wc = views.get(id);
+    if (!wc || wc.isDestroyed()) continue;
+    syncBackgroundThrottling(wc, wc.getURL(), id);
+  }
 }
 
 // Enforces a minimum gap between consecutive 'webview:ready' dispatches —
@@ -1451,6 +1161,34 @@ function scheduleWebviewReady(hostWebContents, accountId) {
   }, delay);
 }
 
+// Fire-and-forget DNS+TCP+TLS warmup for an account about to navigate.
+// wireAccountWebContents calls this right before scheduleWebviewReady, so
+// the real navigation (which only happens once the renderer gets
+// 'webview:ready', after the stagger delay above) gets a head start on the
+// network round-trip instead of starting DNS resolution from zero the
+// moment the <webview>'s src actually changes. Scoped to the account's own
+// session partition (not the default session) since that's the partition
+// the real navigation will use — Chromium keeps a separate host resolver
+// cache per session, so warming the wrong one wouldn't help. Best-effort
+// only: any failure (offline, DNS blocked, whatever) is silently ignored
+// since the real navigation will surface the actual error on its own.
+function preconnectAccountHost(account, ses) {
+  try {
+    const url = new URL(account.url);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return;
+    const req = net.request({ method: 'HEAD', url: `${url.protocol}//${url.host}/`, session: ses });
+    req.on('error', () => {});
+    req.on('response', (res) => {
+      res.on('data', () => {});
+      res.on('error', () => {});
+    });
+    req.end();
+  } catch {
+    // Malformed account.url — the real navigation will fail loudly on its
+    // own, no need to duplicate that here.
+  }
+}
+
 // Wires up a specific account's guest <webview> webContents — called from a
 // 'did-attach-webview' handler once the renderer has actually created the
 // DOM element, instead of main constructing a native WebContentsView itself
@@ -1467,21 +1205,33 @@ function wireAccountWebContents(wc, account, hostWebContents) {
   wc.session.setSpellCheckerLanguages(spellCheckerLanguagesFor(data.settings.language));
   wc.setZoomFactor(account.zoom || data.settings.defaultZoom || 1);
   // Popups (e.g. a Google login window opened via window.open) get the same
-  // isolated session and autofill preload as their opener.
-  wc.setWindowOpenHandler(() => ({
-    action: 'allow',
-    overrideBrowserWindowOptions: {
-      webPreferences: {
-        partition: accountPartition(account.id),
-        contextIsolation: true,
-        sandbox: true,
-        spellcheck: true,
-        plugins: true,
-        additionalArguments: [`--account-id=${account.id}`],
-        preload: ACCOUNT_PRELOAD_PATH
-      }
+  // isolated session and autofill preload as their opener — but only when
+  // the destination is the account's own site or a known login provider
+  // (see POPUP_ALLOWED_HOSTS above). Anything else is denied; Chromium's own
+  // gesture-gated popup blocker already stops most abuse upstream of this,
+  // but that alone was never a URL/origin policy.
+  wc.setWindowOpenHandler((details) => {
+    const targetHost = hostnameFromUrlLike(details && details.url);
+    const accountHost = hostnameFromUrlLike(account.url);
+    if (!hostMatchesPopupAllowlist(targetHost, accountHost)) {
+      console.warn('[popup] blocked window.open to non-allowlisted host', targetHost, 'from account', account.id);
+      return { action: 'deny' };
     }
-  }));
+    return {
+      action: 'allow',
+      overrideBrowserWindowOptions: {
+        webPreferences: {
+          partition: accountPartition(account.id),
+          contextIsolation: true,
+          sandbox: true,
+          spellcheck: true,
+          plugins: true,
+          additionalArguments: [`--account-id=${account.id}`],
+          preload: ACCOUNT_PRELOAD_PATH
+        }
+      }
+    };
+  });
   handleDownloads(wc.session);
   applyAdBlock(wc.session, account.id);
   applyPermissionHandler(wc.session, account);
@@ -1504,7 +1254,7 @@ function wireAccountWebContents(wc, account, hostWebContents) {
       : enabledExtensions;
     for (const e of extensionsForAccount) {
       try {
-        await wc.session.extensions.loadExtension(e.path, { allowFileAccess: true });
+        await wc.session.extensions.loadExtension(e.path);
         console.log('[ext] loaded', e.name, 'into', account.id);
       } catch (err) {
         console.error('[ext] FAILED to load', e.name, 'into', account.id, err);
@@ -1524,10 +1274,18 @@ function wireAccountWebContents(wc, account, hostWebContents) {
   if (account.url && gameTelemetry.isGameUrl(account.url)) {
     attachGameCaptureFor(wc, account.id);
   }
-  wc.on('did-navigate', (_e, url) => notifyNav(account.id, url));
+  wc.on('did-navigate', (_e, url) => {
+    // A real navigation (not SPA routing) throws away the whole DOM, so any
+    // translate-watch state (tracked nodes, the MutationObserver) is gone
+    // with it — stop draining for this account until the user translates
+    // the new page fresh.
+    translateWatching.delete(account.id);
+    resetPageAdBlockStats(account.id);
+    notifyNav(account.id, url);
+  });
   wc.on('did-navigate-in-page', (_e, url) => {
     notifyNav(account.id, url);
-    syncBackgroundThrottling(wc, url);
+    syncBackgroundThrottling(wc, url, account.id);
     // Same /login → /play client-side transition: did-finish-load won't
     // fire again to trigger the telemetry attach below, so it has to be
     // done here too. isGameUrl() now excludes /login on purpose (see
@@ -1552,8 +1310,25 @@ function wireAccountWebContents(wc, account, hostWebContents) {
   // chosen zoom (or the app default) so it survives reload/repartition and
   // only ever changes via the user picking a new one or closing the tab.
   wc.on('did-finish-load', () => {
+    // Auto-reapplies translation after a REAL navigation (e.g. the
+    // /login -> game redirect) if the user had it on before — did-navigate
+    // above already dropped translateWatching for the old page, but
+    // translationEnabled is the user's standing preference and survives
+    // that. A short delay lets the new page's own script actually render
+    // its content first; extracting immediately after did-finish-load can
+    // catch a still-mostly-empty shell on a JS-heavy page.
+    if (translationEnabled.has(account.id)) {
+      const to = translationEnabled.get(account.id);
+      setTimeout(async () => {
+        if (wc.isDestroyed() || !translationEnabled.has(account.id)) return;
+        const result = await performTranslate(account.id, to);
+        if (result.ok && mainWindowAlive()) {
+          mainWindow.webContents.send('translate:autoApplied', { id: account.id });
+        }
+      }, 1500);
+    }
     wc.setZoomFactor(account.zoom || data.settings.defaultZoom || 1);
-    syncBackgroundThrottling(wc, wc.getURL());
+    syncBackgroundThrottling(wc, wc.getURL(), account.id);
     injectFpsOverlay(wc, data.settings.showFpsOverlay !== false);
     injectPingOverlay(wc, data.settings.showPingOverlay !== false);
     if (account.ecoMode) enableEcoMode(wc);
@@ -1601,7 +1376,7 @@ function wireAccountWebContents(wc, account, hostWebContents) {
   });
   wc.on('unresponsive', () => feedConnectionEvent(account.id, { type: 'RENDERER_UNRESPONSIVE' }));
   wc.on('responsive', () => feedConnectionEvent(account.id, { type: 'RENDERER_RESPONSIVE' }));
-  wc.on('context-menu', (_e, params) => showPageContextMenu(wc, params));
+  wc.on('context-menu', (_e, params) => showPageContextMenu(wc, params, account.id));
   wc.on('focus', () => {
     lastFocusedAccountId = account.id;
   });
@@ -1660,6 +1435,7 @@ function wireAccountWebContents(wc, account, hostWebContents) {
     if (mainWindowAlive()) mainWindow.webContents.send('account:pipState', { id: account.id, active });
   });
 
+  preconnectAccountHost(account, wc.session);
   scheduleWebviewReady(hostWebContents, account.id);
 }
 
@@ -1737,6 +1513,15 @@ function disableEcoMode(wc) {
 const AUTO_ECO_POLL_MS = 5000;
 const autoEcoInactiveSince = new Map(); // accountId -> Date.now() when it was last seen active
 const autoEcoApplied = new Set(); // accountId currently auto-throttled by this loop
+// CPU%, not RAM: this eco mode works by capping requestAnimationFrame to a
+// lower FPS (see enableEcoMode above), which reduces rendering/script work,
+// not memory footprint — showing a RAM number here would be measuring the
+// wrong mechanism. autoEcoBaselineCpu is each account's LAST real CPU
+// reading in the tick just before throttling kicked in (its own genuine
+// "before"), compared against autoEcoCurrentCpu's latest post-throttle
+// reading — a real per-account measurement, not an estimate.
+const autoEcoBaselineCpu = new Map(); // accountId -> CPU% right before eco was applied
+const autoEcoCurrentCpu = new Map(); // accountId -> latest CPU% while eco'd
 
 function startAutoEcoLoop() {
   setInterval(() => {
@@ -1744,12 +1529,14 @@ function startAutoEcoLoop() {
     const activeId = data.settings.activeAccountId;
     const thresholdMs = Math.max(1, cfg.minutes || 30) * 60 * 1000;
     const openIds = new Set();
+    const cpuByPid = new Map(app.getAppMetrics().map((m) => [m.pid, m.cpu ? m.cpu.percentCPUUsage : 0]));
 
     for (const account of data.accounts) {
       if (account.closed) continue;
       const wc = views.get(account.id);
       if (!wc || wc.isDestroyed()) continue;
       openIds.add(account.id);
+      const cpuNow = cpuByPid.get(wc.getOSProcessId()) || 0;
 
       const isActive = account.id === activeId;
       if (isActive) {
@@ -1762,6 +1549,7 @@ function startAutoEcoLoop() {
       const shouldAutoEco = !isActive && !!cfg.enabled && !account.ecoMode && inactiveMs >= thresholdMs;
 
       if (shouldAutoEco && !autoEcoApplied.has(account.id)) {
+        autoEcoBaselineCpu.set(account.id, cpuNow);
         enableEcoMode(wc);
         autoEcoApplied.add(account.id);
       } else if (!shouldAutoEco && autoEcoApplied.has(account.id)) {
@@ -1769,6 +1557,10 @@ function startAutoEcoLoop() {
         // throttled, just stop tracking it as an auto-applied one.
         if (!account.ecoMode) disableEcoMode(wc);
         autoEcoApplied.delete(account.id);
+        autoEcoBaselineCpu.delete(account.id);
+        autoEcoCurrentCpu.delete(account.id);
+      } else if (autoEcoApplied.has(account.id)) {
+        autoEcoCurrentCpu.set(account.id, cpuNow);
       }
     }
 
@@ -1778,7 +1570,11 @@ function startAutoEcoLoop() {
       if (!openIds.has(id)) autoEcoInactiveSince.delete(id);
     }
     for (const id of [...autoEcoApplied]) {
-      if (!openIds.has(id)) autoEcoApplied.delete(id);
+      if (!openIds.has(id)) {
+        autoEcoApplied.delete(id);
+        autoEcoBaselineCpu.delete(id);
+        autoEcoCurrentCpu.delete(id);
+      }
     }
   }, AUTO_ECO_POLL_MS);
 }
@@ -1813,7 +1609,13 @@ function injectFpsOverlay(wc, visible) {
       ${FPS_COLOR_SCRIPT}
       const badge = document.createElement('div');
       badge.id = 'nexa-fps-badge';
-      badge.style.cssText = 'position:fixed;top:6px;right:6px;z-index:2147483647;background:rgba(0,0,0,0.55);color:#3ddc57;font:11px monospace;padding:2px 6px;border-radius:4px;pointer-events:none;display:${visible ? '' : 'none'};';
+      // contain:layout style paint scopes every future text update to just
+      // this element's own box — without it, a fixed-position element whose
+      // content changes width every second (9 FPS vs 123 FPS) can still make
+      // the browser walk up looking for anything that might need to react,
+      // on a page that's already busy rendering a real game. This tells it
+      // up front that nothing outside this box ever needs to know.
+      badge.style.cssText = 'position:fixed;top:6px;right:6px;z-index:2147483647;background:rgba(0,0,0,0.55);color:#3ddc57;font:11px monospace;padding:2px 6px;border-radius:4px;pointer-events:none;contain:layout style paint;display:${visible ? '' : 'none'};';
       badge.textContent = '… FPS';
       (document.body || document.documentElement).appendChild(badge);
       let frames = 0;
@@ -2114,7 +1916,128 @@ function sendGameSocketFrameScript(frame) {
   })();`;
 }
 
-function showPageContextMenu(wc, params) {
+async function translateSelectionAt(id, x, y) {
+  const wc = views.get(id);
+  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  // Shown immediately (before extraction even runs) so the user gets
+  // feedback the instant they click "Traducir este texto" instead of
+  // wondering whether anything happened — confirmed live this genuinely
+  // matters: the whole pipeline (extraction, detection, a possible first-
+  // time model download, translateBatch) can take several seconds, and
+  // this was previously silent the whole time. Always cleared in the
+  // finally block below, success or failure.
+  wc.executeJavaScript(translate.showSelectionLoadingScript(x, y)).catch(() => {});
+  // Tracks whether the success path below already handed off to
+  // finishSelectionLoadingScript (which shows a brief result and cleans
+  // itself up on its own timer) — every OTHER exit path (nothing found,
+  // an error) still needs the finally block to remove the badge immediately
+  // instead of leaving it stuck on "⏳ Traduciendo…" forever.
+  let finished = false;
+  try {
+    const extracted = await wc.executeJavaScript(translate.extractElementAtPointScript(x, y));
+    if (!extracted || !extracted.fragments.length) return { ok: true, translated: 0 };
+    const to = data.settings.language || 'es';
+    // Content-detection FIRST here, page <html lang> only as a last-resort
+    // fallback — the opposite priority from the full-page translate flow.
+    // Confirmed live against dragonballidle.online: its <html lang> is
+    // "es" unconditionally (an app-shell attribute, not something that
+    // tracks what's actually on screen), so trusting it here made every
+    // right-click "Traducir este texto" on real Portuguese chat text
+    // silently no-op — from ('es') matched to ('es'), so translateBatch's
+    // own from===to short-circuit returned the text unchanged. Selecting a
+    // SPECIFIC piece of text is exactly the case where it's most likely to
+    // be in a different language than the page overall (a chat message
+    // from another player, a quoted string), so trusting the page's
+    // declared lang here is backwards.
+    const detected = await translate.detectLanguage(extracted.fragments.join(' '));
+    // Real bug hit live in the chat-translate feature this same guard was
+    // added for: detectLanguage recognizes languages this app has no
+    // Bergamot model for at all (French, Swedish, dozens of others — see
+    // translate.js's isSupportedLanguage), and feeding one straight into
+    // translateBatch throws instead of translating. Falling back through
+    // extracted.from (the page's declared lang) and finally 'pt' means an
+    // unsupported detection never reaches translateBatch at all.
+    //
+    // extracted.from is only trusted here when it's DIFFERENT from the
+    // target language — confirmed live this matters: short, slangy chat
+    // text ("fiquei top5 cade minha tag OP") is exactly the kind of string
+    // franc can't confidently detect at all (returns null, not a wrong
+    // guess), and on a page whose declared <html lang> equals the target
+    // (the same dragonballidle.online quirk noted above — its lang="es"
+    // unconditionally), falling back to that lang would silently turn this
+    // into another from===to no-op. 'pt' — every game this app targets —
+    // is the same last-resort default used everywhere else in this file
+    // for exactly this "genuinely can't tell" case.
+    const from = translate.isSupportedLanguage(detected) ? detected
+      : (translate.isSupportedLanguage(extracted.from) && extracted.from !== to) ? extracted.from
+      : 'pt';
+    // Reuses the exact same translate:downloadProgress channel the main
+    // "Traducir página" flow uses — the renderer opens the SAME modal for
+    // it regardless of what triggered the download (see onTranslateDownloadProgress
+    // in renderer.js), so a right-click translate that happens to need a
+    // language pair no other translation on this account has used yet
+    // isn't just a silent multi-second stall with no explanation.
+    let downloadHappened = false;
+    const translated = await translate.translateBatch(from, to, extracted.fragments, {
+      html: false,
+      onDownloadProgress: ({ filename, loaded, total }) => {
+        downloadHappened = true;
+        if (mainWindowAlive()) mainWindow.webContents.send('translate:downloadProgress', { id, filename, loaded, total });
+      }
+    });
+    if (downloadHappened && mainWindowAlive()) mainWindow.webContents.send('translate:downloadFinished', { id });
+    await wc.executeJavaScript(translate.applySelectionTranslationScript(translated, extracted.startIndex));
+    finished = true;
+    if (!wc.isDestroyed()) wc.executeJavaScript(translate.finishSelectionLoadingScript(translated.length)).catch(() => {});
+    return { ok: true, translated: translated.length, from, to };
+  } catch (err) {
+    console.error('[translate] selection translate failed', err);
+    return { ok: false, error: String((err && err.message) || err) };
+  } finally {
+    if (!finished && !wc.isDestroyed()) wc.executeJavaScript(translate.hideSelectionLoadingScript()).catch(() => {});
+  }
+}
+
+async function restoreSelectionTranslations(id) {
+  const wc = views.get(id);
+  if (!wc || wc.isDestroyed()) return { ok: false };
+  await wc.executeJavaScript(translate.restoreSelectionTranslationsScript()).catch(() => {});
+  return { ok: true };
+}
+
+// uBlock Origin's element picker/zapper — the click-to-hide flow lives
+// entirely in elementPickerScript() (runs in-page); this just persists
+// what it returns as a real hostname##selector cosmetic rule alongside any
+// hand-written ones in the "Reglas personalizadas" dashboard textarea, then
+// rebuilds the engine so the rule also applies on the NEXT load of this (or
+// any matching) page — the picker's own immediate `display:none` already
+// handles the current one.
+async function pickElementToBlock(wc, lang) {
+  let result;
+  try {
+    result = await wc.executeJavaScript(elementPicker.elementPickerScript(mt(lang, 'js.adblockPickerHint')), true);
+  } catch (err) {
+    console.error('[element-picker] failed', err);
+    return;
+  }
+  if (!result || !result.ok || !result.selector) return;
+  let hostname = '';
+  try {
+    hostname = new URL(wc.getURL()).hostname;
+  } catch {
+    return;
+  }
+  const rule = `${hostname}##${result.selector}`;
+  const rules = new Set(data.settings.adBlockCustomRules || []);
+  if (rules.has(rule)) return;
+  rules.add(rule);
+  data.settings.adBlockCustomRules = Array.from(rules);
+  persist();
+  broadcastState();
+  rebuildAdBlockEngine().catch((err) => console.error('[adblock] rebuild after element pick failed', err));
+}
+
+function showPageContextMenu(wc, params, accountId) {
   const lang = data.settings.language || 'es';
   const items = [
     { label: mt(lang, 'ctx.back'), enabled: wc.navigationHistory.canGoBack(), click: () => wc.navigationHistory.goBack() },
@@ -2140,18 +2063,12 @@ function showPageContextMenu(wc, params) {
           // without the `userGesture` argument here, Chromium sees this
           // executeJavaScript call as script-initiated, not user-initiated
           // (the right-click that opened this menu doesn't carry over), and
-          // silently rejects with "Must be handling a user gesture".
-          wc.executeJavaScript(
-            `(function() {
-              var el = document.elementFromPoint(${params.x}, ${params.y});
-              var video = el && el.tagName === 'VIDEO' ? el : (el && el.closest ? el.closest('video') : null);
-              if (!video) video = document.querySelector('video');
-              if (video && document.pictureInPictureEnabled && !video.disablePictureInPicture) {
-                video.requestPictureInPicture().catch((err) => console.error('[pip] requestPictureInPicture failed:', err.message));
-              }
-            })();`,
-            true
-          ).catch((err) => console.error('[pip] executeJavaScript failed:', err));
+          // silently rejects with "Must be handling a user gesture". Same
+          // script pip-player.js's toolbar entry point uses (see
+          // account:openMiniPlayer below) — point-based here since a
+          // right-click has an exact spot to go on, unlike the toolbar.
+          wc.executeJavaScript(pipPlayer.requestPipWithControlsScript({ x: params.x, y: params.y }), true)
+            .catch((err) => console.error('[pip] executeJavaScript failed:', err));
         }
       },
       { type: 'separator' }
@@ -2160,6 +2077,44 @@ function showPageContextMenu(wc, params) {
 
   if (params.selectionText) {
     items.push({ label: mt(lang, 'ctx.copy'), click: () => clipboard.writeText(params.selectionText) }, { type: 'separator' });
+  }
+
+  items.push(
+    { label: mt(lang, 'ctx.blockElement'), click: () => pickElementToBlock(wc, lang) },
+    { type: 'separator' }
+  );
+
+  if (!params.isEditable) {
+    items.push(
+      { label: mt(lang, 'ctx.translateSelection'), click: () => translateSelectionAt(accountId, params.x, params.y) },
+      { label: mt(lang, 'ctx.restoreTranslatedSelections'), click: () => restoreSelectionTranslations(accountId) },
+      { type: 'separator' }
+    );
+  }
+
+  // Only offered on sites this app actually knows the chat DOM structure
+  // for (see CHAT_SITE_SELECTORS in translate.js) — showing it everywhere
+  // and having it silently do nothing on unsupported sites would be
+  // confusing, not helpful.
+  {
+    let hostname = '';
+    try { hostname = new URL(wc.getURL()).hostname; } catch { /* about:blank etc. */ }
+    if (translate.chatSelectorsForHost(hostname)) {
+      const account = getAccount(accountId);
+      const enabled = !!(account && account.chatAutoTranslate);
+      items.push(
+        {
+          label: mt(lang, enabled ? 'ctx.chatAutoTranslateOff' : 'ctx.chatAutoTranslateOn'),
+          click: () => {
+            if (!account) return;
+            account.chatAutoTranslate = !enabled;
+            if (!account.chatAutoTranslate) chatUserLanguageHistory.delete(accountId);
+            persist();
+          }
+        },
+        { type: 'separator' }
+      );
+    }
   }
 
   if (params.isEditable) {
@@ -2458,6 +2413,9 @@ function broadcastState() {
 // ---- IPC handlers ----
 
 ipcMain.handle('state:get', () => data);
+ipcMain.handle('security:passwordEncryptionAvailable', () => passwordEncryptionAvailable);
+
+permissionsManager.registerIpcHandlers();
 
 ipcMain.handle('accounts:add', (_e, { name, url, spaceId, color }) => {
   const targetSpaceId = spaceId || getCurrentSpace()?.id || 'default';
@@ -2485,12 +2443,20 @@ ipcMain.handle('accounts:quickAdd', () => {
 
 ipcMain.handle('account:navigate', (_e, { id, url }) => {
   const account = getAccount(id);
-  if (!account) return;
+  if (!account) return { ok: false, error: 'Cuenta no encontrada.' };
   const target = normalizeAddressInput(url);
+  // account.url (and the state broadcast the renderer polls) used to be set
+  // BEFORE confirming the real <webview> was even wired up yet — if
+  // ensureView() returned undefined, the state silently claimed the
+  // navigation happened while the actual page never moved. Now the state
+  // only advances once there's a real webContents to call loadURL on.
+  const wc = ensureView(account);
+  if (!wc) return { ok: false, error: 'La vista de esta cuenta todavía no está lista.' };
   account.url = target;
   persist();
-  ensureView(account)?.loadURL(target);
+  wc.loadURL(target);
   broadcastState();
+  return { ok: true, url: target };
 });
 
 // Shared by the accounts:remove IPC handler and the "Eliminar cuenta" context
@@ -2518,12 +2484,14 @@ function removeAccountCompletely(id) {
     views.delete(id);
   }
   ses.clearStorageData().then(() => ses.clearCache()).catch((err) => console.error('[remove-account] failed to clear session for', id, err));
-  blockedCounts.delete(id);
+  adblockManager.cleanupAccount(id);
   crashCounts.delete(id);
-  adBlockLog.delete(id);
   connectionManagers.delete(id);
   gameTelemetry.removeState(id);
   notifiedEventAt.delete(id);
+  translateWatching.delete(id);
+  translationEnabled.delete(id);
+  chatUserLanguageHistory.delete(id);
   if (data.settings.activeAccountId === id) {
     data.settings.activeAccountId = accountsInCurrentSpace()[0]?.id || null;
   }
@@ -2566,6 +2534,86 @@ ipcMain.handle('account:clearSession', async (_e, { id }) => {
   await ses.clearStorageData();
   await ses.clearCache();
   if (wc) wc.reload();
+});
+
+function getGroup(id) {
+  return data.groups.find((g) => g.id === id);
+}
+
+// Collapsible account groups within a Space (browser-inspired idea #11).
+ipcMain.handle('groups:create', (_e, { spaceId, name }) => {
+  const group = { id: crypto.randomUUID(), spaceId, name: name || 'Grupo', collapsed: false };
+  data.groups.push(group);
+  persist();
+  broadcastState();
+  return group;
+});
+
+ipcMain.handle('groups:rename', (_e, { id, name }) => {
+  const group = getGroup(id);
+  if (group && name && name.trim()) {
+    group.name = name.trim();
+    persist();
+    broadcastState();
+  }
+  return data;
+});
+
+// Ungroups its accounts rather than deleting them — removing a group is
+// about the grouping, never about the accounts inside it.
+ipcMain.handle('groups:remove', (_e, { id }) => {
+  data.groups = data.groups.filter((g) => g.id !== id);
+  data.accounts.forEach((a) => {
+    if (a.groupId === id) a.groupId = null;
+  });
+  persist();
+  broadcastState();
+  return data;
+});
+
+ipcMain.handle('groups:toggleCollapsed', (_e, { id }) => {
+  const group = getGroup(id);
+  if (group) {
+    group.collapsed = !group.collapsed;
+    persist();
+    broadcastState();
+  }
+  return data;
+});
+
+ipcMain.handle('accounts:setGroup', (_e, { id, groupId }) => {
+  const account = getAccount(id);
+  if (account) {
+    account.groupId = groupId || null;
+    persist();
+    broadcastState();
+  }
+  return data;
+});
+
+ipcMain.on('groups:contextmenu', (_e, payload) => {
+  if (!payload || typeof payload.id !== 'string') return;
+  const group = getGroup(payload.id);
+  if (!group) return;
+  const lang = data.settings.language || 'es';
+  const menu = Menu.buildFromTemplate([
+    {
+      label: mt(lang, 'ctx.renameGroup'),
+      click: () => mainWindow.webContents.send('ui:promptRenameGroup', { groupId: group.id, currentName: group.name })
+    },
+    {
+      label: mt(lang, 'ctx.deleteGroup'),
+      click: () => {
+        data.groups = data.groups.filter((g) => g.id !== group.id);
+        data.accounts.forEach((a) => {
+          if (a.groupId === group.id) a.groupId = null;
+        });
+        persist();
+        broadcastState();
+      }
+    }
+  ]);
+  menu.popup({ window: mainWindow });
 });
 
 ipcMain.on('accounts:contextmenu', (_e, payload) => {
@@ -2613,6 +2661,41 @@ ipcMain.on('accounts:contextmenu', (_e, payload) => {
     },
     { label: mt(lang, 'ctx.editAccount'), click: () => mainWindow.webContents.send('ui:open-account-editor', { id }) },
     {
+      label: mt(lang, 'ctx.moveToGroup'),
+      submenu: [
+        ...(account.groupId
+          ? [
+              {
+                label: mt(lang, 'ctx.removeFromGroup'),
+                click: () => {
+                  account.groupId = null;
+                  persist();
+                  broadcastState();
+                }
+              },
+              { type: 'separator' }
+            ]
+          : []),
+        ...data.groups
+          .filter((g) => g.spaceId === account.spaceId)
+          .map((g) => ({
+            label: g.name,
+            type: 'radio',
+            checked: account.groupId === g.id,
+            click: () => {
+              account.groupId = g.id;
+              persist();
+              broadcastState();
+            }
+          })),
+        { type: 'separator' },
+        {
+          label: mt(lang, 'ctx.newGroup'),
+          click: () => mainWindow.webContents.send('ui:promptNewGroup', { accountId: id, spaceId: account.spaceId })
+        }
+      ]
+    },
+    {
       label: mt(lang, 'ctx.openInNewWindow'),
       enabled: !poppedOutIds.has(id),
       click: () => openAccountInNewWindow(id)
@@ -2655,7 +2738,7 @@ ipcMain.on('accounts:contextmenu', (_e, payload) => {
   menu.popup({ window: mainWindow });
 });
 
-ipcMain.handle('accounts:update', (_e, { id, name, color, url, proxy, ecoMode, hideChat, hideGameBar, sellLockOn, cleanGameProfile }) => {
+ipcMain.handle('accounts:update', (_e, { id, name, color, url, proxy, ecoMode, hideChat, hideGameBar, sellLockOn, cleanGameProfile, chatAutoTranslate }) => {
   const account = getAccount(id);
   if (!account) return data;
   if (name !== undefined) account.name = name || null;
@@ -2693,6 +2776,14 @@ ipcMain.handle('accounts:update', (_e, { id, name, color, url, proxy, ecoMode, h
     // once re-enabled) — only re-applying with the account's real lock lists
     // when turned back on matters here.
     if (wc && !wc.isDestroyed() && account.sellLockOn) applySellLock(wc, account);
+  }
+  if (chatAutoTranslate !== undefined && chatAutoTranslate !== account.chatAutoTranslate) {
+    account.chatAutoTranslate = !!chatAutoTranslate;
+    // Turning it off drops whatever per-user language history had been
+    // built up — starting fresh next time it's re-enabled is simpler and
+    // safer than trying to decide whether a stale history is still
+    // trustworthy after an unknown gap.
+    if (!account.chatAutoTranslate) chatUserLanguageHistory.delete(id);
   }
   // Extensions only actually load once, at account-wiring time (see the
   // extensionsForAccount filter in wireAccountWebContents) — this just
@@ -2944,6 +3035,7 @@ ipcMain.handle('accounts:activate', (_e, { id }) => {
   const account = getAccount(id);
   if (!account) return data;
 
+  const previousActiveId = data.settings.activeAccountId;
   // Opening/switching to an account never touches the others — each tab keeps
   // its own timer and resource usage running independently in the background.
   if (account.closed) {
@@ -2956,6 +3048,11 @@ ipcMain.handle('accounts:activate', (_e, { id }) => {
   if (data.settings.maximizedAccountId) {
     data.settings.maximizedAccountId = id;
   }
+  // Gives the newly-active panel full-speed timers immediately instead of
+  // waiting for its next did-navigate-in-page/did-finish-load, and puts the
+  // previously-active one back under normal throttling rules (unless it's a
+  // game page, which stays exempt either way).
+  syncActiveThrottling(previousActiveId, id);
   persist();
   renderLayout();
   broadcastState();
@@ -3144,32 +3241,127 @@ ipcMain.handle('accounts:reopenLastClosed', () => {
   return data;
 });
 
+// Shared by both the direct-save path (account:captureScreenshot) and the
+// editor's save (screenshot-editor:save) — same folder-resolution logic
+// handleDownloads() already uses.
+function resolveScreenshotFolder() {
+  const folder = data.settings.downloadsFolder || path.join(app.getPath('pictures'), 'Nexa Browser');
+  fs.mkdirSync(folder, { recursive: true });
+  return folder;
+}
+
+function writeScreenshotFile(buffer) {
+  const folder = resolveScreenshotFolder();
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const filePath = path.join(folder, `nexa-screenshot-${stamp}.png`);
+  fs.writeFileSync(filePath, buffer);
+  try {
+    new Notification({ title: 'Nexa Browser', body: `Captura guardada: ${filePath}` }).show();
+  } catch { /* Notification unsupported/unavailable — non-fatal, the file is already saved */ }
+  return filePath;
+}
+
 // Point 7 of the browser-inspired feature list (Firefox's built-in
 // Screenshot tool) — captures exactly what the account's own <webview> is
 // currently showing via wc.capturePage() (no extra permissions needed, it's
 // the same webContents that already renders the page) and writes it
-// straight to disk as a PNG. Saved next to the user's other Nexa downloads
-// (data.settings.downloadsFolder) when one is configured, falling back to
-// the OS Pictures folder in a dedicated subfolder otherwise — mirrors how
-// handleDownloads() already resolves a save location.
+// straight to disk as a PNG. Kept as a direct one-click primitive (used by
+// the command palette's quick action and by e2e tests) — the toolbar button
+// instead opens the editor below for the region-select + annotate flow.
 ipcMain.handle('account:captureScreenshot', async (_e, { id }) => {
   const wc = views.get(id);
   if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
   try {
     const image = await wc.capturePage();
-    const folder = data.settings.downloadsFolder || path.join(app.getPath('pictures'), 'Nexa Browser');
-    fs.mkdirSync(folder, { recursive: true });
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const filePath = path.join(folder, `nexa-screenshot-${stamp}.png`);
-    fs.writeFileSync(filePath, image.toPNG());
-    try {
-      new Notification({ title: 'Nexa Browser', body: `Captura guardada: ${filePath}` }).show();
-    } catch { /* Notification unsupported/unavailable — non-fatal, the file is already saved */ }
+    const filePath = writeScreenshotFile(image.toPNG());
     return { ok: true, path: filePath };
   } catch (err) {
     console.error('[screenshot] failed to capture/save', err);
     return { ok: false, error: String((err && err.message) || err) };
   }
+});
+
+// Screenshot editor: captures the same way as above, but opens a small
+// dedicated window (src/screenshot-editor.html) instead of saving straight
+// to disk — lets the user crop to a region and draw simple arrow/text
+// annotations before it's written. Same window/preload split as the
+// popped-out account window (popout-preload.js) — its own minimal IPC
+// surface, nothing shared with the main app's window.api.
+let activeScreenshotEditorWindow = null;
+ipcMain.handle('account:openScreenshotEditor', async (_e, { id }) => {
+  const wc = views.get(id);
+  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  try {
+    const image = await wc.capturePage();
+    const dataUrl = 'data:image/png;base64,' + image.toPNG().toString('base64');
+    const size = image.getSize();
+    if (activeScreenshotEditorWindow && !activeScreenshotEditorWindow.isDestroyed()) {
+      activeScreenshotEditorWindow.close();
+    }
+    const editorWin = new BrowserWindow({
+      width: Math.min(1100, size.width + 40),
+      height: Math.min(850, size.height + 150),
+      title: 'Editar captura — Nexa Browser',
+      backgroundColor: '#111318',
+      icon: APP_ICON_PATH,
+      webPreferences: {
+        preload: path.join(__dirname, 'screenshot-editor-preload.js'),
+        contextIsolation: true,
+        sandbox: true
+      }
+    });
+    editorWin.setMenuBarVisibility(false);
+    editorWin.loadFile(path.join(__dirname, '..', 'src', 'screenshot-editor.html'));
+    editorWin.webContents.once('did-finish-load', () => {
+      editorWin.webContents.send('screenshot-editor:image', { dataUrl, lang: data.settings.language || 'es' });
+    });
+    editorWin.on('closed', () => {
+      if (activeScreenshotEditorWindow === editorWin) activeScreenshotEditorWindow = null;
+    });
+    activeScreenshotEditorWindow = editorWin;
+    return { ok: true };
+  } catch (err) {
+    console.error('[screenshot-editor] failed to open', err);
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+});
+
+// Does NOT close the editor window itself — the renderer (screenshot-editor.html)
+// awaits this IPC call and closes its own window only once the reply
+// actually arrives, which is what genuinely guarantees the round-trip
+// completed before teardown (see that file's save button handler for why
+// a fixed delay here instead used to still race intermittently).
+ipcMain.handle('screenshot-editor:save', (_e, dataUrl) => {
+  try {
+    const base64 = String(dataUrl || '').replace(/^data:image\/png;base64,/, '');
+    const filePath = writeScreenshotFile(Buffer.from(base64, 'base64'));
+    return { ok: true, path: filePath };
+  } catch (err) {
+    console.error('[screenshot-editor] failed to save', err);
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+});
+
+ipcMain.handle('screenshot-editor:cancel', () => {
+  if (activeScreenshotEditorWindow && !activeScreenshotEditorWindow.isDestroyed()) {
+    activeScreenshotEditorWindow.close();
+  }
+  return { ok: true };
+});
+
+// Toolbar entry point for Picture-in-Picture (no click point to go on,
+// unlike the right-click ctx.pip menu item, which shares the same
+// underlying script — see pip-player.js for why this ended up building on
+// the native requestPictureInPicture() + Media Session API instead of a
+// fully custom Document Picture-in-Picture window: that approach opened
+// successfully but self-closed within milliseconds every time when
+// triggered from inside a <webview> guest context, confirmed live via
+// direct process logs.
+ipcMain.handle('account:openMiniPlayer', (_e, { id }) => {
+  const wc = views.get(id);
+  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  return wc.executeJavaScript(pipPlayer.requestPipWithControlsScript(), true)
+    .catch((err) => ({ ok: false, error: String((err && err.message) || err) }));
 });
 
 ipcMain.on('account:findInPage', (_e, payload) => {
@@ -3330,117 +3522,7 @@ ipcMain.on('account:setLiveRect', (_e, payload) => {
   });
 });
 
-ipcMain.handle('extensions:installFromStore', async (_e, { input }) => {
-  try {
-    await installExtensionFromStore(input);
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err.message };
-  }
-});
-
-ipcMain.handle('extensions:loadUnpacked', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
-  if (result.canceled || !result.filePaths[0]) return { ok: false };
-  const dir = result.filePaths[0];
-  const manifest = readManifest(dir);
-  if (!manifest.manifest_version) return { ok: false, error: 'La carpeta no contiene un manifest.json válido.' };
-  const id = crypto.createHash('sha1').update(dir).digest('hex').slice(0, 32).replace(/[0-9]/g, (d) => 'abcdefghij'[d]);
-  if (data.settings.extensions.some((e) => e.path === dir)) return { ok: false, error: mt(data.settings.language || 'es', 'main.folderAlreadyLoaded') };
-  try {
-    await finishInstall(id, dir);
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err.message };
-  }
-});
-
-// Opens (or, if already open, closes) an extension's toolbar popup —
-// chrome-extension://<id>/<popup> only resolves inside a session that
-// actually has that extension loaded, so this reuses the currently active
-// account's session (falling back to any open account) rather than a
-// dedicated session, matching where the extension is actually running.
-ipcMain.handle('extensions:openPopup', (_e, { id }) => {
-  const ext = data.settings.extensions.find((e) => e.id === id);
-  if (!ext) return { ok: false, error: 'Extensión no encontrada' };
-  if (!ext.action || !ext.action.popup) {
-    return { ok: false, error: 'Esta extensión no tiene una ventana propia — funciona en segundo plano.' };
-  }
-
-  const existing = extensionPopupWindows.get(id);
-  if (existing && !existing.isDestroyed()) {
-    existing.close();
-    extensionPopupWindows.delete(id);
-    return { ok: true, closed: true };
-  }
-
-  const activeId = data.settings.activeAccountId;
-  let wc = activeId ? views.get(activeId) : null;
-  if (!wc || wc.isDestroyed()) {
-    wc = [...views.values()].find((v) => !v.isDestroyed());
-  }
-  if (!wc) return { ok: false, error: 'Abrí al menos una cuenta primero.' };
-
-  const popup = new BrowserWindow({
-    width: 380,
-    height: 560,
-    resizable: false,
-    frame: false,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    backgroundColor: '#ffffff',
-    title: ext.action.title || ext.name,
-    webPreferences: { session: wc.session }
-  });
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    const b = mainWindow.getBounds();
-    popup.setPosition(Math.round(b.x + b.width - 400), Math.round(b.y + 90));
-  }
-  extensionPopupWindows.set(id, popup);
-  popup.on('closed', () => extensionPopupWindows.delete(id));
-  // Auto-dismiss on blur, same as a real browser's extension popup —
-  // otherwise it'd be a floating window the user has to remember to close.
-  popup.on('blur', () => {
-    if (!popup.isDestroyed()) popup.close();
-  });
-  popup.loadURL(`chrome-extension://${id}/${ext.action.popup}`);
-  return { ok: true };
-});
-
-ipcMain.handle('extensions:toggle', (_e, { id, enabled }) => {
-  const ext = data.settings.extensions.find((e) => e.id === id);
-  if (!ext) return data;
-  ext.enabled = enabled;
-  if (enabled) {
-    for (const view of views.values()) {
-      view.session.extensions
-        .loadExtension(ext.path, { allowFileAccess: true })
-        .catch((err) => console.error('[ext] FAILED to re-enable', ext.name, err));
-    }
-  } else {
-    unloadExtensionFromAllSessions(id);
-    closeExtensionPopup(id);
-  }
-  persist();
-  broadcastState();
-  return data;
-});
-
-ipcMain.handle('extensions:remove', (_e, { id }) => {
-  const ext = data.settings.extensions.find((e) => e.id === id);
-  if (!ext) return data;
-  unloadExtensionFromAllSessions(id);
-  closeExtensionPopup(id);
-  try {
-    if (ext.path.startsWith(EXTENSIONS_DIR)) fs.rmSync(ext.path, { recursive: true, force: true });
-  } catch {
-    // best-effort cleanup
-  }
-  data.settings.extensions = data.settings.extensions.filter((e) => e.id !== id);
-  persist();
-  broadcastState();
-  return data;
-});
+extensionsManager.registerIpcHandlers();
 
 ipcMain.handle('account:setZoom', (_e, { id, factor }) => {
   const account = getAccount(id);
@@ -3551,7 +3633,8 @@ const SETTINGS_UPDATE_WHITELIST = new Set([
   'newSpaceDefaultLayout',
   'askDownloadLocation',
   'pokeIdleMarketPrefs',
-  'stability'
+  'stability',
+  'translateMemoryPersist'
 ]);
 
 ipcMain.handle('settings:update', (_e, fields) => {
@@ -3581,6 +3664,9 @@ ipcMain.handle('settings:update', (_e, fields) => {
     app.setLoginItemSettings({ openAtLogin: !!fields.startWithWindows });
   }
   if ('stability' in fields) refreshPowerBlockerNeed();
+  // Turning it on mid-session picks up whatever was saved from a previous
+  // run right away, instead of only taking effect after the next restart.
+  if (fields.translateMemoryPersist) translate.loadPersistedCache(TRANSLATE_MEMORY_FILE);
   // Live-apply to every already-open account instead of waiting for their
   // next did-finish-load — the badges are already injected, this just
   // flips their display style (see setFpsOverlayVisible/setPingOverlayVisible).
@@ -4433,7 +4519,8 @@ ipcMain.handle('depot:movePoke', async (_e, { id, pokeId, dir }) => {
     const waitPromise = gameTelemetry.waitForNextPokes(id);
     const sent = await wc.executeJavaScript(sendGameSocketFrameScript({ type: dir === 'store' ? 'poke-store' : 'poke-withdraw', pokeId: String(pokeId) }));
     if (!sent) return { ok: false, error: 'No se pudo enviar el movimiento (socket del juego no disponible).' };
-    await waitPromise;
+    const confirmed = await waitPromise;
+    if (!confirmed) return { ok: false, error: 'El movimiento se envió, pero el servidor no confirmó el cambio a tiempo. Revisa el depot antes de reintentar.' };
     return { ok: true };
   } catch (e) {
     return { ok: false, error: String((e && e.message) || e) };
@@ -4457,7 +4544,8 @@ ipcMain.handle('pokes:get', async (_e, { id }) => {
     const waitPromise = gameTelemetry.waitForNextPokes(id);
     const sent = await wc.executeJavaScript(sendGameSocketFrameScript({ type: 'pokes-get' }));
     if (!sent) return { ok: false, error: 'No se pudo pedir los datos (socket del juego no disponible).' };
-    await waitPromise;
+    const confirmed = await waitPromise;
+    if (!confirmed) return { ok: false, error: 'El servidor no respondió a tiempo. Intenta de nuevo.' };
     return { ok: true };
   } catch (e) {
     return { ok: false, error: String((e && e.message) || e) };
@@ -4481,7 +4569,8 @@ ipcMain.handle('family:get', async (_e, { id }) => {
     const waitPromise = gameTelemetry.waitForFrame(id, 'family');
     const sent = await wc.executeJavaScript(sendGameSocketFrameScript({ type: 'family-get' }));
     if (!sent) return { ok: false, error: 'No se pudo pedir los datos (socket del juego no disponible).' };
-    await waitPromise;
+    const confirmed = await waitPromise;
+    if (!confirmed) return { ok: false, error: 'El servidor no respondió a tiempo. Intenta de nuevo.' };
     return { ok: true };
   } catch (e) {
     return { ok: false, error: String((e && e.message) || e) };
@@ -4499,7 +4588,8 @@ ipcMain.handle('family:moveItem', async (_e, { id, itemId, quantity, dir }) => {
     const waitPromise = gameTelemetry.waitForFrame(id, 'family');
     const sent = await wc.executeJavaScript(sendGameSocketFrameScript({ type: 'family-action', action: 'item', dir, itemId, quantity }));
     if (!sent) return { ok: false, error: 'No se pudo enviar el movimiento (socket del juego no disponible).' };
-    await waitPromise;
+    const confirmed = await waitPromise;
+    if (!confirmed) return { ok: false, error: 'El movimiento se envió, pero el servidor no confirmó el cambio a tiempo. Revisa el depot familiar antes de reintentar.' };
     return { ok: true };
   } catch (e) {
     return { ok: false, error: String((e && e.message) || e) };
@@ -4518,7 +4608,8 @@ ipcMain.handle('family:movePoke', async (_e, { id, pokeId, dir }) => {
     const waitPokes = gameTelemetry.waitForFrame(id, 'pokes');
     const sent = await wc.executeJavaScript(sendGameSocketFrameScript({ type: 'family-action', action: 'poke', dir, capturedId: String(pokeId) }));
     if (!sent) return { ok: false, error: 'No se pudo enviar el movimiento (socket del juego no disponible).' };
-    await Promise.all([waitFamily, waitPokes]);
+    const [familyConfirmed, pokesConfirmed] = await Promise.all([waitFamily, waitPokes]);
+    if (!familyConfirmed || !pokesConfirmed) return { ok: false, error: 'El movimiento se envió, pero el servidor no confirmó el cambio a tiempo. Revisa el depot familiar antes de reintentar.' };
     return { ok: true };
   } catch (e) {
     return { ok: false, error: String((e && e.message) || e) };
@@ -4713,9 +4804,15 @@ async function optimizeMemorySafe() {
       try {
         // Works if the game exposes gc() — best-effort, no CDP involved
         // (game accounts no longer attach the CDP debugger at all since the
-        // telemetry capture migrated to a passive JS patch).
-        await wc.executeJavaScript('try{window.gc&&window.gc()}catch(e){}').catch(() => {});
-        result.viewsPurged++;
+        // telemetry capture migrated to a passive JS patch). Renderers never
+        // get --js-flags=--expose-gc, so window.gc is realistically always
+        // undefined right now — only counting a REAL purge (instead of
+        // unconditionally incrementing) keeps viewsPurged from silently
+        // claiming JS-heap purges that never happened.
+        const purged = await wc.executeJavaScript(
+          '(() => { try { if (typeof window.gc === "function") { window.gc(); return true; } return false; } catch (e) { return false; } })()'
+        ).catch(() => false);
+        if (purged) result.viewsPurged++;
       } catch {}
     }
 
@@ -4762,8 +4859,10 @@ async function optimizeMemoryDeepClean() {
     for (const [accountId, wc] of views.entries()) {
       if (accountId === activeId || wc.isDestroyed() || purchaseInFlight.has(accountId)) continue;
       try {
-        await wc.executeJavaScript('try{window.gc&&window.gc()}catch(e){}').catch(() => {});
-        result.viewsPurged++;
+        const purged = await wc.executeJavaScript(
+          '(() => { try { if (typeof window.gc === "function") { window.gc(); return true; } return false; } catch (e) { return false; } })()'
+        ).catch(() => false);
+        if (purged) result.viewsPurged++;
       } catch {}
     }
     lastOptimizeAt = Date.now();
@@ -4772,13 +4871,6 @@ async function optimizeMemoryDeepClean() {
     broadcastOptimizeStatus();
   }
   return { ok: true, ...result };
-}
-
-// Deprecated alias — kept for one release so nothing that still calls the
-// old name breaks; new code should call optimizeMemorySafe directly. Safe
-// to delete once nothing references optimizeMemory() anymore.
-async function optimizeMemory() {
-  return optimizeMemorySafe();
 }
 
 // A blind 24h timer alone means an account genuinely growing fast (several
@@ -4800,9 +4892,27 @@ function totalAccountMemoryMb() {
   }
 }
 
-// Auto-optimize: check every 30 min, fire when 24 h have elapsed OR when
-// real memory pressure crosses MEMORY_PRESSURE_THRESHOLD_MB, whichever
-// comes first.
+// Real OS-level free memory, not just our own processes' usage — Electron
+// exposes this directly (process.getSystemMemoryInfo(), KB), no native calls
+// or shelling out needed. Firefox-style: reacts to actual system pressure
+// (another heavy app eating RAM counts too), which totalAccountMemoryMb()
+// alone can't see since it only sums our own working sets.
+function systemFreeMemoryInfo() {
+  try {
+    const info = process.getSystemMemoryInfo();
+    return { freeMb: info.free / 1024, totalMb: info.total / 1024 };
+  } catch {
+    return { freeMb: null, totalMb: null };
+  }
+}
+
+// Auto-optimize: check every 30 min, fire when 24 h have elapsed, OR when
+// our own processes' memory crosses MEMORY_PRESSURE_THRESHOLD_MB, OR when
+// the whole system's free RAM drops below memoryOptimizer's percentage
+// threshold — whichever comes first. All three only ever lead to the same
+// safe-tier cache clear (optimizeMemorySafe never touches an account's
+// connection/session), so this never disconnects anything, no matter which
+// trigger fires.
 function startAutoOptimizeLoop() {
   setInterval(async () => {
     if (optimizeRunning) return;
@@ -4815,6 +4925,12 @@ function startAutoOptimizeLoop() {
     const memoryMb = totalAccountMemoryMb();
     if (memoryMb >= MEMORY_PRESSURE_THRESHOLD_MB) {
       console.log('[optimize] memory pressure threshold reached (', Math.round(memoryMb), 'MB across all processes) — running auto-optimization early (safe tier)');
+      await optimizeMemorySafe();
+      return;
+    }
+    const { freeMb, totalMb } = systemFreeMemoryInfo();
+    if (memoryOptimizer.systemMemoryPressureHigh({ freeMb, totalMb })) {
+      console.log('[optimize] system-wide free memory low (', Math.round(freeMb), '/', Math.round(totalMb), 'MB free) — running auto-optimization early (safe tier)');
       await optimizeMemorySafe();
     }
   }, 30 * 60 * 1000);
@@ -5088,19 +5204,10 @@ ipcMain.handle('metrics:get', () => {
     result[id] = {
       cpu: m ? m.cpu.percentCPUUsage : 0,
       memoryMB: m ? Math.round((m.memory?.workingSetSize || 0) / 1024) : 0,
-      blocked: blockedCounts.get(id) || 0
+      blocked: adblockManager.getBlockedCount(id)
     };
   }
   return result;
-});
-
-// Exposes the adBlockLog ring buffer (already collected for diagnostics.js's
-// export report, Etapa 8) directly to the toolbar shield icon's dropdown —
-// so "N blocked" isn't just a number, the user can see exactly which
-// hostnames were blocked for the account they're looking at right now.
-ipcMain.handle('adblock:getLog', (_e, { id }) => {
-  const log = adBlockLog.get(id) || [];
-  return log.slice(-30).reverse();
 });
 
 ipcMain.handle('diagnostics:exportReport', async () => {
@@ -5129,7 +5236,7 @@ ipcMain.handle('diagnostics:exportReport', async () => {
       const snapshot = await networkHealth.checkAccountNetwork(account.id, { hostname: 'poke.idleworld.online' });
       networkSnapshots.push({ accountId: account.id, ...snapshot });
     }
-    const log = adBlockLog.get(account.id);
+    const log = adblockManager.getLogForAccount(account.id);
     if (log) adBlockLogFlat.push(...log);
   }
 
@@ -5161,6 +5268,46 @@ ipcMain.handle('diagnostics:stopNetLog', async () => {
 // dns-test.js). Never touches the OS's actual DNS config; applyCommandFor()
 // only hands the renderer a PowerShell command for the user to run
 // themselves, exactly as decided: Nexa Browser measures, the user applies.
+// Real per-account CPU% before/after Modo Eco auto-throttling — see
+// autoEcoBaselineCpu/autoEcoCurrentCpu above. Only counts accounts with
+// BOTH a baseline and at least one post-eco sample; an account throttled
+// less than one 5s tick ago won't have a post-eco reading yet and is left
+// out rather than reported with a misleading 0%.
+ipcMain.handle('eco:getSavings', () => {
+  let cpuBefore = 0;
+  let cpuAfter = 0;
+  let sampled = 0;
+  for (const id of autoEcoApplied) {
+    const before = autoEcoBaselineCpu.get(id);
+    const after = autoEcoCurrentCpu.get(id);
+    if (before == null || after == null) continue;
+    cpuBefore += before;
+    cpuAfter += after;
+    sampled++;
+  }
+  return {
+    throttledCount: autoEcoApplied.size,
+    sampledCount: sampled,
+    cpuBefore: Math.round(cpuBefore * 10) / 10,
+    cpuAfter: Math.round(cpuAfter * 10) / 10,
+    savingsPercent: sampled > 0 && cpuBefore > 0 ? Math.round((1 - cpuAfter / cpuBefore) * 100) : null
+  };
+});
+
+// Same picker the right-click "Bloquear este elemento" context menu item
+// uses (pickElementToBlock), triggered from the shield popup's target icon
+// instead — the renderer calls showViews() first (the popup itself hides
+// the account views the way every other dropdown does) so the click-to-hide
+// listeners land on real, visible page content.
+ipcMain.handle('adblock:pickElement', async (_e, { id }) => {
+  const wc = views.get(id);
+  if (!wc || wc.isDestroyed()) return { ok: false };
+  await pickElementToBlock(wc, data.settings.language || 'es');
+  return { ok: true };
+});
+
+adblockManager.registerIpcHandlers();
+
 ipcMain.handle('dns:test', async () => dnsTest.runSpeedTest());
 ipcMain.handle('dns:getApplyCommand', (_e, { servers }) => dnsTest.applyCommandFor(servers));
 ipcMain.handle('dns:getRestoreCommand', () => dnsTest.RESTORE_COMMAND);
@@ -5169,12 +5316,520 @@ ipcMain.handle('dns:copyCommand', (_e, { command }) => {
   return { ok: true };
 });
 
+// On-device page translation (see translate.js) — extracts visible text
+// nodes from the account's own webview, translates them locally via the
+// Bergamot WASM engine (no API key, no network dependency beyond the
+// one-time model download), and writes the translation back into the same
+// nodes. translate:restore puts the original text back without a reload.
+// accountId -> {from, to} for every account currently showing a translated
+// page. Drained by startPageTranslateWatchLoop() below, which is what keeps a
+// page translated through its OWN later DOM updates (a live gold counter, a
+// re-rendered shop list, ...) instead of only translating once at click
+// time — confirmed live that without this, any text a game rewrites after
+// the initial translation silently reverts to the original language.
+const translateWatching = new Map();
+
+// accountId -> target language, for as long as the user wants this account
+// kept translated — set on a successful manual translate:page, cleared only
+// by translate:restore or the account closing. Deliberately separate from
+// translateWatching (which tracks the CURRENT page's live MutationObserver
+// state and gets cleared on every real navigation): this one is the user's
+// standing preference, and is what makes did-finish-load below know to
+// automatically re-translate a freshly-loaded page (e.g. right after a
+// login redirect) instead of leaving the user to click the button again —
+// confirmed live this was a real, repeated point of friction.
+const translationEnabled = new Map();
+
+// Chat auto-translate — a first, deliberately narrow base (see
+// translate.js's CHAT_SITE_SELECTORS): only Dragon Ball Idle's chat DOM has
+// been confirmed live so far. accountId -> Map(username -> {lang, count}).
+// Per-account (not global) since the same username on two different
+// accounts' chats has no reason to share a history — different accounts
+// can even be in different clans/worlds with unrelated player rosters.
+// Confidence gate (count >= 1 — a single successfully-detected message is
+// already enough to trust). Originally required 2 matching detections
+// before trusting a player's history, but that has a real bootstrap
+// problem confirmed live: a chat where every message from a given player
+// happens to be very short ("olá", "beleza", ".") never produces a SECOND
+// confirmation, since franc can't confidently detect a language from one
+// or two words either — the threshold could never be reached at all, so
+// that player's messages just silently never got translated. A single
+// detection is weaker evidence, but it's still real evidence, and a wrong
+// guess only affects that one player's own short follow-up messages
+// (self-correcting the moment they write something long enough for franc
+// to detect on its own again).
+const chatUserLanguageHistory = new Map();
+const CHAT_HISTORY_CONFIDENCE_THRESHOLD = 1;
+
+// Returns a small result object (not just fire-and-forget) — the watch
+// loop below ignores it, but this is also exposed directly over IPC (see
+// translate:chatOnce) both to make this independently useful (a manual
+// "translate chat now" trigger, e.g. if the 800ms tick hasn't caught up
+// yet) and to make it possible to test at all — Playwright can't reach a
+// <webview>'s DOM to verify a fire-and-forget effect any other way.
+async function translateChatMessages(id) {
+  const wc = views.get(id);
+  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  let hostname;
+  try {
+    hostname = new URL(wc.getURL()).hostname;
+  } catch {
+    return { ok: false, error: 'URL inválida' };
+  }
+  const selectors = translate.chatSelectorsForHost(hostname);
+  if (!selectors) return { ok: true, translated: 0, unsupported: true };
+
+  const to = data.settings.language || 'es';
+  let history = chatUserLanguageHistory.get(id);
+  if (!history) {
+    history = new Map();
+    chatUserLanguageHistory.set(id, history);
+  }
+
+  try {
+    const extracted = await wc.executeJavaScript(translate.extractChatMessagesScript(selectors));
+    // extracted.hidden means the chat panel is minimized/closed in the
+    // game's own UI right now — extraction already short-circuited before
+    // doing any real work (see extractChatMessagesScript), so this is a
+    // near-free check, not a wasted translateBatch call.
+    if (!extracted || !extracted.items.length) return { ok: true, translated: 0, hidden: !!(extracted && extracted.hidden) };
+    // Only shown when there's actually new chat content to process — the
+    // 800ms watch-loop tick would otherwise flash this on/off constantly
+    // even during quiet stretches with nothing new to translate.
+    wc.executeJavaScript(translate.chatTranslateStatusScript('loading')).catch(() => {});
+    // Same temporary Modo Eco throttle performTranslate uses for the main
+    // "Traducir página" flow — confirmed live this is a real user concern
+    // (visible FPS drop while a translation batch runs, competing for CPU
+    // with the game's own canvas rendering). Only actually applies if the
+    // account doesn't already have manual Modo Eco on (see
+    // startTranslateTempEco), and is always lifted in the finally block
+    // below regardless of how this exits.
+    startTranslateTempEco(id, wc);
+
+    // Group by the detected (or history-assisted) source language so each
+    // group can go through translateBatch with the correct model pair —
+    // a real chat mixes languages message-by-message, unlike the rest of
+    // this app's translate flow which assumes one source language per page.
+    const groups = new Map(); // from -> [{ index, text }]
+    for (let i = 0; i < extracted.items.length; i++) {
+      const { username, text } = extracted.items[i];
+      let from = await translate.detectLanguage(text);
+      // Confirmed live this is most of a real chat: franc returns null
+      // (no opinion) for exactly the words a translator most needs to
+      // handle — "olá", "vc", "blz", "boa noite" — because they're short
+      // and common-shaped across languages. An EXACT glossary match is
+      // much stronger evidence than franc's own uncertain guess would be
+      // even if it had one, so this is checked before falling back to
+      // per-user history.
+      if (!from) from = translate.glossaryLanguageFor(text);
+      const histEntry = username && history.get(username);
+      if (!from && histEntry && histEntry.count >= CHAT_HISTORY_CONFIDENCE_THRESHOLD) {
+        // franc couldn't tell on its own (too short) — fall back to what
+        // this same player has reliably written in before.
+        from = histEntry.lang;
+      }
+      // Confirmed live: franc has real false positives for short/slangy
+      // Portuguese chat text landing on 'es' (e.g. "Onde que vai pora
+      // breedar?" detected as Spanish) — since 'es' is also this app's
+      // usual target language, that misdetection made the message look
+      // "already translated" and skip forever. A confident, already-built
+      // history for this exact user in a different supported language is
+      // stronger evidence than a single franc guess on a short message.
+      if (from === to && histEntry && histEntry.count >= CHAT_HISTORY_CONFIDENCE_THRESHOLD && histEntry.lang !== to) {
+        from = histEntry.lang;
+      }
+      if (!from || from === to) continue; // already in the target language, or genuinely undetectable — leave it as-is rather than guess
+      // franc recognizes languages this app has no model for at all (see
+      // isSupportedLanguage's comment) — skip rather than let translateBatch
+      // throw, which used to abort every OTHER language's group in the same
+      // pass along with it.
+      if (!translate.isSupportedLanguage(from)) continue;
+      if (username) {
+        const existing = history.get(username);
+        if (existing && existing.lang === from) existing.count += 1;
+        else history.set(username, { lang: from, count: 1 });
+      }
+      if (!groups.has(from)) groups.set(from, []);
+      groups.get(from).push({ index: extracted.startIndex + i, text });
+    }
+    if (!groups.size) {
+      wc.executeJavaScript(translate.chatTranslateStatusScript('done', 0)).catch(() => {});
+      return { ok: true, translated: 0, seen: extracted.items.length };
+    }
+
+    const translations = [];
+    let downloadHappened = false;
+    for (const [from, entries] of groups) {
+      // One language group failing (network hiccup on a first-ever model
+      // download, etc.) shouldn't lose every OTHER group's already-successful
+      // translations — apply what worked instead of an all-or-nothing batch.
+      try {
+        const translated = await translate.translateBatch(from, to, entries.map((e) => e.text), {
+          html: false,
+          // Same modal the main "Traducir página" flow uses (see
+          // translate:downloadProgress in renderer.js) — a chat that
+          // suddenly needs, say, a ru->es model it's never loaded before
+          // otherwise just goes quiet for several seconds with zero
+          // indication anything is happening.
+          onDownloadProgress: ({ filename, loaded, total }) => {
+            downloadHappened = true;
+            if (mainWindowAlive()) mainWindow.webContents.send('translate:downloadProgress', { id, filename, loaded, total });
+          }
+        });
+        entries.forEach((e, i) => translations.push({ index: e.index, text: translated[i] }));
+      } catch (err) {
+        console.error('[translate] chat group', from, '->', to, 'failed for', id, err);
+      }
+    }
+    if (downloadHappened && mainWindowAlive()) mainWindow.webContents.send('translate:downloadFinished', { id });
+    if (translations.length) await wc.executeJavaScript(translate.applyChatTranslationsScript(translations));
+    if (!wc.isDestroyed()) wc.executeJavaScript(translate.chatTranslateStatusScript('done', translations.length)).catch(() => {});
+    return { ok: true, translated: translations.length, seen: extracted.items.length };
+  } catch (err) {
+    console.error('[translate] chat auto-translate failed for', id, err);
+    if (!wc.isDestroyed()) wc.executeJavaScript(translate.chatTranslateStatusScript('done', 0)).catch(() => {});
+    return { ok: false, error: String((err && err.message) || err) };
+  } finally {
+    stopTranslateTempEco(id, wc);
+  }
+}
+
+// accountId -> true while performTranslate applied a TEMPORARY eco-throttle
+// of its own (see below) — tracked so the matching disableEcoMode only ever
+// fires for a throttle we actually applied, never for an account the user
+// already had on manual Modo Eco (that one's the user's own choice and
+// isn't ours to touch).
+const translateAppliedTempEco = new Set();
+
+function startTranslateTempEco(id, wc) {
+  const account = getAccount(id);
+  if (!account || account.ecoMode || translateAppliedTempEco.has(id)) return;
+  translateAppliedTempEco.add(id);
+  enableEcoMode(wc);
+}
+
+function stopTranslateTempEco(id, wc) {
+  if (!translateAppliedTempEco.has(id)) return;
+  translateAppliedTempEco.delete(id);
+  if (!wc.isDestroyed()) disableEcoMode(wc);
+}
+
+// Confirmed live against a real account: a page can genuinely mix
+// languages — dragonballidle.online's own menu is Spanish, but a
+// Portuguese third-party helper overlay (Auto-Helper) can be layered on
+// top of it. The old single from-language-for-the-whole-page approach
+// (either <html lang> or one detectLanguage() call over every fragment
+// joined together) always resolved to whichever language dominates by
+// volume — here, the game's own already-Spanish menu — so from===to for
+// the WHOLE page and the Portuguese overlay silently never got touched,
+// even though translateBatch reported a non-zero "translated" count (it
+// ran, it just had nothing to actually change). Per-fragment detection
+// (same approach translateChatMessages already uses for mixed-language
+// chat) fixes this: each fragment gets its own source-language guess,
+// grouped by language, translated in separate batches, and results are
+// scattered back into their original positions — fragments already in
+// the target language are left untouched rather than force-fed through
+// translateBatch for nothing.
+async function resolveFragmentFrom(text, to, pageLangFallback) {
+  let from = await translate.detectLanguage(text);
+  // franc recognizes dozens of languages this app has no model for at all —
+  // a confident-but-wrong guess (e.g. a short English word misdetected as
+  // Swedish) is just as useless as no opinion at all, and must fall through
+  // the same way, not get treated as a real answer that then fails the
+  // isSupportedLanguage check below and silently skips a fragment that
+  // genuinely needed translating. Confirmed by a real e2e regression: short
+  // fragments like a button's "Inventory" label or a title= tooltip
+  // occasionally got misdetected this way and were wrongly left untranslated.
+  if (!translate.isSupportedLanguage(from)) from = null;
+  if (!from) from = translate.glossaryLanguageFor(text);
+  // pageLangFallback (<html lang>) is a much weaker signal than real
+  // content detection — confirmed live that dragonballidle.online's
+  // <html lang> is a fixed "es" regardless of actual content — so it's
+  // only ever used for fragments too short/ambiguous for franc to have
+  // any opinion on, and only when it actually differs from the target
+  // (matches translateSelectionAt's same fix earlier this session).
+  if (!from && translate.isSupportedLanguage(pageLangFallback) && pageLangFallback !== to) from = pageLangFallback;
+  if (!from) from = 'pt'; // every game this app targets is Portuguese
+  if (from === to) return null;
+  return from; // isSupportedLanguage(from) is already guaranteed at this point
+}
+
+async function groupFragmentsByLang(fragments, to, pageLangFallback) {
+  const groups = new Map(); // from -> [{ index, text }]
+  for (let i = 0; i < fragments.length; i++) {
+    const from = await resolveFragmentFrom(fragments[i], to, pageLangFallback);
+    if (!from) continue;
+    if (!groups.has(from)) groups.set(from, []);
+    groups.get(from).push({ index: i, text: fragments[i] });
+  }
+  return groups;
+}
+
+// Returns a results array the same length/order as `fragments` (entries
+// that didn't need translation keep their original text unchanged — safe
+// to feed straight into applyTranslatedTextScript/applyPendingScript,
+// which write by position) plus how many fragments were actually
+// translated (for the ok/translated count callers report) and `from`, the
+// language with the most translated fragments — for the overwhelmingly
+// common single-language page this is simply the correct answer; for a
+// genuinely mixed page it's a best-effort summary, not a claim that every
+// fragment shared one source language.
+async function translateFragmentsMixed(fragments, to, pageLangFallback, batchOpts = {}) {
+  const groups = await groupFragmentsByLang(fragments, to, pageLangFallback);
+  const results = fragments.slice();
+  let translatedCount = 0;
+  let dominantFrom = null;
+  let dominantCount = 0;
+  for (const [from, entries] of groups) {
+    try {
+      const translated = await translate.translateBatch(from, to, entries.map((e) => e.text), batchOpts);
+      entries.forEach((e, i) => { results[e.index] = translated[i]; });
+      translatedCount += entries.length;
+      if (entries.length > dominantCount) { dominantCount = entries.length; dominantFrom = from; }
+    } catch (err) {
+      console.error('[translate] mixed-language group', from, '->', to, 'failed', err);
+    }
+  }
+  return { results, translatedCount, from: dominantFrom };
+}
+
+async function performTranslate(id, to) {
+  const wc = views.get(id);
+  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  // Read at the moment translation is actually about to run (not e.g. on
+  // every account open/close) — cheap, and this is the only place that
+  // ever needs an up-to-date count: see currentWorkerCount() in
+  // translate.js, which only consults it when a language pair's translator
+  // is first created.
+  translate.setOpenAccountCount(views.size);
+  // Frees up real CPU for the translator by briefly capping THIS account's
+  // own rAF (same mechanism Modo Eco already uses) for as long as
+  // translation is actively running — confirmed live this matters: 4 real
+  // game accounts rendering at once were the actual bottleneck behind
+  // translation feeling stuck, not a lack of workers. Only this one
+  // account's rendering is throttled, not the other open accounts, and
+  // it's lifted the moment all translation work (including the background
+  // off-screen tail below) finishes.
+  startTranslateTempEco(id, wc);
+  // Set right before kicking off a background off-screen tail (the one path
+  // that must keep the throttle alive past this function returning — its
+  // own .then/.finally lifts it once that tail actually completes). Every
+  // other return/throw path below hits the finally block with this still
+  // false, so it cleans up immediately instead of leaking the throttle on.
+  let keepTempEcoForBackgroundTail = false;
+  try {
+    // Already actively translated on THIS exact page (translateWatching
+    // only ever gets cleared by a real navigation — see did-navigate)? A
+    // repeat call — the user clicking the button again, or opening a new
+    // panel that hasn't been caught by the background watch loop yet —
+    // must never re-run the full extraction. Confirmed live against a real
+    // game: doing that re-walks and re-translates text that's ALREADY
+    // Spanish, and translating already-translated text a second time
+    // through the pt/en pivot doesn't repeat the same correct answer, it
+    // produces garbage ("Impulso de daños" came back as "Implora de
+    // daños"). Draining instead — the exact same mechanism
+    // startPageTranslateWatchLoop uses — only ever touches text the
+    // MutationObserver has flagged as genuinely new, so a repeat click is
+    // safe and just catches up faster than waiting for the next tick.
+    const watching = translateWatching.get(id);
+    if (watching) {
+      let translatedCount = 0;
+      for (let round = 0; round < 5; round++) {
+        const pending = await wc.executeJavaScript(translate.drainPendingScript());
+        if (!pending || !pending.fragments.length) break;
+        if (mainWindowAlive()) {
+          mainWindow.webContents.send('translate:progress', { id, done: 0, total: pending.fragments.length });
+        }
+        const { results, translatedCount: groupCount } = await translateFragmentsMixed(pending.fragments, watching.to, watching.pageLang, {
+          html: false,
+          onProgress: (done, total) => {
+            if (mainWindowAlive()) mainWindow.webContents.send('translate:progress', { id, done, total });
+          },
+          onDownloadProgress: ({ filename, loaded, total }) => {
+            if (mainWindowAlive()) mainWindow.webContents.send('translate:downloadProgress', { id, filename, loaded, total });
+          }
+        });
+        await wc.executeJavaScript(translate.applyPendingScript(results));
+        translatedCount += groupCount;
+      }
+      translationEnabled.set(id, watching.to);
+      return { ok: true, translated: translatedCount, to: watching.to };
+    }
+
+    const extracted = await wc.executeJavaScript(translate.extractPageTextScript());
+    if (!extracted) return { ok: true, translated: 0 };
+    if (!extracted.fragments.length) {
+      return { ok: true, translated: 0 };
+    }
+    // extracted.from (<html lang>) is kept only as a weak per-fragment
+    // fallback now, not a single answer for the whole page — confirmed
+    // live that a real page can mix languages (a game's own Spanish menu
+    // alongside a Portuguese third-party helper overlay), and both <html
+    // lang> and a single detectLanguage() call over every fragment joined
+    // together always resolve to whichever language dominates by volume,
+    // silently no-oping every fragment that doesn't happen to match it
+    // even though translateBatch reports a non-zero "translated" count.
+    // See resolveFragmentFrom/translateFragmentsMixed above.
+    translateWatching.set(id, { pageLang: extracted.from, to });
+
+    // Visible-first: extractPageTextScript already sorted fragments so the
+    // first `visibleCount` are what's actually on screen right now.
+    // Translating and applying just those, then resolving/closing the
+    // modal, means the user sees real translated text almost immediately
+    // instead of waiting on the WHOLE page (open tabs, scrolled-off
+    // content) before seeing anything at all — the rest keeps translating
+    // in the background afterward, same mechanism the watch loop uses.
+    const visibleCount = Math.max(1, Math.min(extracted.visibleCount ?? extracted.fragments.length, extracted.fragments.length));
+    const priorityFragments = extracted.fragments.slice(0, visibleCount);
+    const restFragments = extracted.fragments.slice(visibleCount);
+
+    if (mainWindowAlive()) {
+      mainWindow.webContents.send('translate:progress', { id, done: 0, total: priorityFragments.length });
+    }
+    const { results: translatedPriority, translatedCount: priorityTranslatedCount, from: dominantFrom } = await translateFragmentsMixed(priorityFragments, to, extracted.from, {
+      html: false,
+      onProgress: (done, total) => {
+        if (mainWindowAlive()) mainWindow.webContents.send('translate:progress', { id, done, total });
+      },
+      onDownloadProgress: ({ filename, loaded, total }) => {
+        if (mainWindowAlive()) mainWindow.webContents.send('translate:downloadProgress', { id, filename, loaded, total });
+      }
+    });
+    await wc.executeJavaScript(translate.applyTranslatedTextScript(translatedPriority, 0));
+
+    if (restFragments.length) {
+      // Fire-and-forget: the IPC call (and the modal it drives) doesn't
+      // wait on this.
+      keepTempEcoForBackgroundTail = true;
+      translateFragmentsMixed(restFragments, to, extracted.from, { html: false })
+        .then(async ({ results: translatedRest }) => {
+          if (!wc.isDestroyed()) await wc.executeJavaScript(translate.applyTranslatedTextScript(translatedRest, visibleCount));
+        })
+        .catch((err) => console.error('[translate] background off-screen batch failed', err))
+        .finally(() => stopTranslateTempEco(id, wc));
+    }
+
+    if (!data.settings.hasUsedTranslate) {
+      data.settings.hasUsedTranslate = true;
+      persist();
+    }
+    translationEnabled.set(id, to);
+    return { ok: true, translated: priorityTranslatedCount, from: dominantFrom || extracted.from, to };
+  } catch (err) {
+    console.error('[translate] failed', err);
+    return { ok: false, error: String((err && err.message) || err) };
+  } finally {
+    if (!keepTempEcoForBackgroundTail) stopTranslateTempEco(id, wc);
+  }
+}
+
+ipcMain.handle('translate:page', async (_e, { id, to }) => performTranslate(id, to));
+
+// Same functions the right-click "Traducir este texto"/"Ver texto
+// original" context menu items call (see showPageContextMenu) — exposed
+// over IPC too so this is reachable from window.api, not just a native
+// menu click (also what makes it possible to cover with an e2e test at
+// all, since Electron's native context menus can't be driven from
+// Playwright).
+ipcMain.handle('translate:selectionAt', async (_e, { id, x, y }) => translateSelectionAt(id, x, y));
+ipcMain.handle('translate:restoreSelections', async (_e, { id }) => restoreSelectionTranslations(id));
+ipcMain.handle('translate:chatOnce', async (_e, { id }) => translateChatMessages(id));
+
+ipcMain.handle('translate:restore', async (_e, { id }) => {
+  translateWatching.delete(id);
+  translationEnabled.delete(id);
+  const wc = views.get(id);
+  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  try {
+    await wc.executeJavaScript(translate.restorePageTextScript());
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+});
+
+// Runs alongside the other per-account background loops (see
+// startFreezeDetectorLoop) — one shared interval instead of one per account,
+// same reasoning as that one. Drains whatever new text the MutationObserver
+// installed by extractPageTextScript queued since last tick and translates
+// just that, so a translated page stays translated as the game keeps
+// updating it, not just at the moment the button was clicked.
+//
+// 400ms, not 800ms — confirmed live (scripts/verify-translate-dynamic.js
+// against test/fixtures/dynamic-game-mock.html) that a value the game
+// re-renders often on its own (a gold counter ticking roughly every 1.2s)
+// could visibly flash back to its native-language text for a moment: the
+// game's next update landed before the watch loop caught up on the
+// previous one, so translateBatch was still "in flight" for a value that
+// was already stale by the time it came back. Tightening the interval
+// shrinks that window without going all the way to something like 100ms,
+// which would cost meaningfully more CPU/IPC for only marginal extra
+// benefit. This ONLY ever runs for accounts already in translateWatching,
+// which is populated exclusively by performTranslate() after a real
+// translation the user explicitly asked for already succeeded on an
+// already-loaded page — never during login/page-load, and never for an
+// account nobody asked to translate. Chat auto-translate deliberately
+// stays on its own separate, slower 800ms loop below: it never showed the
+// same flicker complaint, and there's no reason to spend extra CPU/IPC on
+// it just because the page-translate loop needed to tighten up.
+const PAGE_TRANSLATE_WATCH_MS = 400;
+function startPageTranslateWatchLoop() {
+  setInterval(async () => {
+    for (const [id, { pageLang, to }] of translateWatching) {
+      const wc = views.get(id);
+      if (!wc || wc.isDestroyed()) {
+        translateWatching.delete(id);
+        continue;
+      }
+      try {
+        // Drains repeatedly (capped) within a single tick instead of one
+        // pass per tick — confirmed live against a real game
+        // (baiakidle.com): opening a big new panel (e.g. a whole equipment
+        // sub-menu) queues dozens of fragments at once, and translating
+        // only one drain's worth per tick made that panel visibly trickle
+        // in translated over several seconds instead of arriving whole.
+        // Each round is cheap when there's nothing left (an empty
+        // fragments array short-circuits immediately), so this adds no
+        // overhead for accounts with nothing new to catch up on.
+        for (let round = 0; round < 5; round++) {
+          const pending = await wc.executeJavaScript(translate.drainPendingScript());
+          if (!pending || !pending.fragments.length) break;
+          // Per-fragment language grouping (see translateFragmentsMixed
+          // above) — new content the game renders after the initial
+          // translate can belong to a different language than whatever
+          // dominated the page at click time, same reasoning as the fix
+          // to performTranslate itself.
+          const { results } = await translateFragmentsMixed(pending.fragments, to, pageLang, { html: false });
+          await wc.executeJavaScript(translate.applyPendingScript(results));
+        }
+      } catch (err) {
+        console.error('[translate] watch-loop drain failed for', id, err);
+      }
+    }
+  }, PAGE_TRANSLATE_WATCH_MS);
+}
+
+// Split out from the page-translate loop above (used to share its 800ms
+// tick) so tightening that one's interval for the flicker fix doesn't also
+// double this one's CPU/IPC cost for accounts that only opted into chat
+// translation, never page translation. translateChatMessages() itself
+// no-ops instantly (before touching the page at all) for every account
+// that isn't opted in, so this stays cheap regardless of account count.
+function startChatAutoTranslateLoop() {
+  setInterval(() => {
+    for (const account of data.accounts) {
+      if (!account.closed && account.chatAutoTranslate) translateChatMessages(account.id);
+    }
+  }, 800);
+}
+
 // Closes every window and installs the already-downloaded update — the user
 // only reaches this after seeing what's actually in it (see the
 // update-downloaded listener above and the changelog modal in renderer.js).
 ipcMain.handle('update:install', () => {
   autoUpdater.quitAndInstall();
 });
+ipcMain.handle('update:getStatus', () => updateStatus);
 
 // Session partitions (accountPartition's persist:account-<id>) live on disk
 // as <userData>/Partitions/account-<id>/ for as long as Chromium/Electron
@@ -5241,6 +5896,10 @@ app.whenReady().then(() => {
     const { password, ...meta } = p;
     return meta;
   });
+  // Same safeStorage boundary, same "not reliable before whenReady()" reason
+  // as the password decrypt right above — see decryptAccountProxies in store.js.
+  data.accounts = store.decryptAccountProxies(data.accounts);
+  passwordEncryptionAvailable = store.isPasswordEncryptionAvailable();
   Menu.setApplicationMenu(null);
   cleanupOrphanedPartitions();
   // Backfills `.action` (toolbar icon + popup path) for extensions installed
@@ -5264,6 +5923,8 @@ app.whenReady().then(() => {
   startAutoOptimizeLoop();
   startAutoEcoLoop();
   startFreezeDetectorLoop();
+  startPageTranslateWatchLoop();
+  startChatAutoTranslateLoop();
   // Wired unconditionally (cheap, idempotent) — refreshPowerBlockerNeed()
   // itself no-ops unless settings.stability.backgroundKeepalive is on, so
   // this stays fully inert for every existing install until a user opts in.
@@ -5286,16 +5947,59 @@ app.whenReady().then(() => {
   // which electron-builder only generates for a real packaged install) —
   // guarded so `npm start` never logs a spurious "update check failed".
   if (app.isPackaged) {
+    updateStatus = { state: 'checking', lastError: null, lastCheckedAt: Date.now() };
     autoUpdater.checkForUpdatesAndNotify().catch((err) => {
+      updateStatus = { state: 'error', lastError: err && err.message ? err.message : String(err), lastCheckedAt: Date.now() };
       console.error('[autoUpdater] check failed', err);
     });
   }
+  // Copies the pt<->en and en<->es model files bundled in the installer
+  // (electron/bundled-models/, ~42MB) into the same on-disk cache the
+  // normal download path uses — a pure local file copy, no network
+  // involved, so unlike translate.preload() below this runs unconditionally
+  // on every launch (a no-op after the first, since it skips any file
+  // already present). This is what makes the first-ever pt->es or pt->en
+  // translation instant instead of needing a live download.
+  translate.seedBundledModels();
+  if (data.settings.translateMemoryPersist) translate.loadPersistedCache(TRANSLATE_MEMORY_FILE);
+  // Deliberately NOT warming the translator in the background anymore —
+  // explicit user directive: account login/render is always the priority,
+  // and secondary tasks like translation must never touch CPU/RAM until the
+  // user actually presses a translate button or toggle. seedBundledModels()
+  // above is fine to keep (plain fs.copyFileSync of already-bundled files,
+  // no WASM worker spun up, no ongoing CPU cost) — it's translate.preload()
+  // itself, which loads a real model into a worker thread, that used to run
+  // unconditionally at launch and was confirmed to compete with account
+  // login for CPU.
+  // Real download progress instead of just a silent wait until
+  // 'update-downloaded' fires — electron-updater emits this repeatedly
+  // while the update file streams in, with percent/transferred/total/
+  // bytesPerSecond already computed.
+  autoUpdater.on('update-not-available', () => {
+    updateStatus = { state: 'up-to-date', lastError: null, lastCheckedAt: Date.now() };
+  });
+  autoUpdater.on('update-available', () => {
+    updateStatus = { state: 'downloading', lastError: null, lastCheckedAt: Date.now() };
+  });
+  autoUpdater.on('error', (err) => {
+    updateStatus = { state: 'error', lastError: err && err.message ? err.message : String(err), lastCheckedAt: Date.now() };
+  });
+  autoUpdater.on('download-progress', (progress) => {
+    if (!mainWindowAlive()) return;
+    mainWindow.webContents.send('update:downloadProgress', {
+      percent: progress.percent,
+      transferred: progress.transferred,
+      total: progress.total,
+      bytesPerSecond: progress.bytesPerSecond
+    });
+  });
   // Fires once the update finished downloading in the background (still
   // needs the user to actually restart — checkForUpdatesAndNotify() only
   // shows a native OS notification for that part). This shows our own
   // in-app changelog instead of leaving the user to find out what changed
   // only from that notification, or not at all.
   autoUpdater.on('update-downloaded', (info) => {
+    updateStatus = { state: 'downloaded', lastError: null, lastCheckedAt: Date.now() };
     if (!mainWindowAlive()) return;
     const notes = info.releaseNotes;
     const releaseNotes = typeof notes === 'string'
@@ -5309,11 +6013,9 @@ app.whenReady().then(() => {
   mainWindow.webContents.once('did-finish-load', () => {
     renderLayout();
     broadcastState();
-    // Deferred past first paint — see the comment on loadCachedBlocklist().
-    // blockedDomains already has the built-in list from module load, so
-    // adblock works from the very first page load either way; this just
-    // upgrades it to the fuller cached/fresh list a moment later.
-    loadCachedBlocklist().then(refreshBlocklistIfStale);
+    // Deferred past first paint — see the comment on loadAdBlockEngine().
+    loadAdBlockEngine();
+    adblockManager.registerCosmeticIpcHandlers();
   });
 
   app.on('activate', () => {
@@ -5332,5 +6034,10 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   appQuitting = true;
   powerManager.shutdownPowerManager();
+  if (data.settings.translateMemoryPersist) translate.savePersistedCache(TRANSLATE_MEMORY_FILE);
   flushPersist();
+  // Bergamot's own README is explicit about this: skipping delete() on a
+  // NodeJS translator leaves its worker thread listening for messages
+  // forever, which can keep the process from exiting cleanly on its own.
+  translate.shutdown();
 });
