@@ -1535,6 +1535,13 @@ const autoEcoCurrentCpu = new Map(); // accountId -> latest CPU% while eco'd
 function startAutoEcoLoop() {
   setInterval(() => {
     const cfg = data.settings.autoEco || {};
+    // autoEco is off by default — every tick used to call app.getAppMetrics()
+    // (a real per-process CPU sample across main+every renderer+GPU+utility)
+    // and iterate every account regardless, for a feature that then did
+    // nothing with any of it. Bailing out first means a user who never
+    // turned this on pays zero cost for it, every 5s, for the app's whole
+    // lifetime.
+    if (!cfg.enabled) return;
     const activeId = data.settings.activeAccountId;
     const thresholdMs = Math.max(1, cfg.minutes || 30) * 60 * 1000;
     const openIds = new Set();
