@@ -1636,7 +1636,15 @@ function injectFpsOverlay(wc, visible) {
       (document.body || document.documentElement).appendChild(badge);
       let frames = 0;
       let last = performance.now();
+      // Toggling the setting off used to only hide the badge with
+      // display:none — the rAF loop itself kept running forever underneath,
+      // still doing real work (a callback every single frame, competing with
+      // the game's own canvas rendering) for an account nobody could even see
+      // a counter on. window.__nexaFpsSetRunning lets setFpsOverlayVisible
+      // below actually stop/restart the loop instead of just hiding its output.
+      let running = ${visible};
       function loop(now) {
+        if (!running) return;
         frames += 1;
         if (now - last >= 1000) {
           badge.textContent = frames + ' FPS';
@@ -1646,19 +1654,29 @@ function injectFpsOverlay(wc, visible) {
         }
         requestAnimationFrame(loop);
       }
-      requestAnimationFrame(loop);
+      window.__nexaFpsSetRunning = (on) => {
+        const wasRunning = running;
+        running = on;
+        badge.style.display = on ? '' : 'none';
+        if (on && !wasRunning) {
+          frames = 0;
+          last = performance.now();
+          requestAnimationFrame(loop);
+        }
+      };
+      if (running) requestAnimationFrame(loop);
     })();`
   ).catch(() => {});
 }
 
-// Toggles the already-injected FPS badge's visibility live, without
-// re-injecting or losing its running rAF counter — used when the user
-// flips "Mostrar FPS" in Configuración while accounts are already open.
+// Toggles the already-injected FPS badge on/off, and — unlike the old
+// display:none-only version — actually stops the rAF loop while off instead
+// of leaving it running invisibly. Used when the user flips "Mostrar FPS" in
+// Configuración while accounts are already open.
 function setFpsOverlayVisible(wc, visible) {
   wc.executeJavaScript(
     `(function() {
-      const el = document.getElementById('nexa-fps-badge');
-      if (el) el.style.display = ${visible} ? '' : 'none';
+      if (window.__nexaFpsSetRunning) window.__nexaFpsSetRunning(${visible});
     })();`
   ).catch(() => {});
 }
@@ -1747,18 +1765,38 @@ function injectPingOverlay(wc, visible) {
         badge.textContent = ms + ' ms';
         badge.style.color = nexaPingColor(ms);
       }
-      measure();
-      setInterval(measure, 2000);
+      // Same problem as the FPS badge above: display:none alone left this
+      // setInterval firing a real network request every 2s forever, even
+      // for an account whose ping counter the user explicitly turned off.
+      // window.__nexaPingSetRunning actually starts/stops the timer.
+      let intervalId = null;
+      function start() {
+        if (intervalId) return;
+        measure();
+        intervalId = setInterval(measure, 2000);
+      }
+      function stop() {
+        if (intervalId) {
+          clearInterval(intervalId);
+          intervalId = null;
+        }
+      }
+      window.__nexaPingSetRunning = (on) => {
+        badge.style.display = on ? '' : 'none';
+        if (on) start(); else stop();
+      };
+      if (${visible}) start();
     })();`
   ).catch(() => {});
 }
 
-// Same live-toggle pattern as setFpsOverlayVisible, for the ping badge.
+// Same live-toggle pattern as setFpsOverlayVisible, for the ping badge —
+// actually stops the 2s network-request timer while off, not just the
+// visible display.
 function setPingOverlayVisible(wc, visible) {
   wc.executeJavaScript(
     `(function() {
-      const el = document.getElementById('nexa-ping-badge');
-      if (el) el.style.display = ${visible} ? '' : 'none';
+      if (window.__nexaPingSetRunning) window.__nexaPingSetRunning(${visible});
     })();`
   ).catch(() => {});
 }

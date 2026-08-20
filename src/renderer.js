@@ -4770,9 +4770,14 @@ async function init() {
   checkPasswordEncryptionWarning();
 }
 
+// 6s, not the original 3s — each tick's IPC round-trip triggers a real
+// app.getAppMetrics() call in main.js (a CPU/memory sample across every
+// open account + the GPU + utility process, not a cheap local read), and the
+// sidebar's CPU/RAM readout doesn't need sub-5s freshness to be useful. This
+// alone halves that specific cost app-wide, for every account, all the time.
 setInterval(async () => {
   metrics = await window.api.getMetrics();
-}, 3000);
+}, 6000);
 
 setInterval(async () => {
   gameStats = await window.api.getGameStats();
