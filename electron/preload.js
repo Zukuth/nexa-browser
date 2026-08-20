@@ -181,8 +181,6 @@ contextBridge.exposeInMainWorld('api', {
   computeGrowthCalc: (payload) => ipcRenderer.invoke('pokeFormulas:computeGrowth', payload),
   toggleSellLockPoke: (id, pokeId) => ipcRenderer.invoke('account:toggleSellLockPoke', { id, pokeId }),
   setSellLockItems: (id, itemIds) => ipcRenderer.invoke('account:setSellLockItems', { id, itemIds }),
-  getMarketAlertFeed: () => ipcRenderer.invoke('market:getAlertFeed'),
-  onMarketOpenAlert: (cb) => onIpc('market:openAlert', cb),
   addBookmark: (payload) => ipcRenderer.invoke('bookmarks:add', payload),
   removeBookmark: (id) => ipcRenderer.invoke('bookmarks:remove', { id }),
   exportBookmarks: () => ipcRenderer.invoke('bookmarks:export'),

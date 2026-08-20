@@ -1,16 +1,9 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
-const market = require('../../electron/market');
 const gameTelemetry = require('../../electron/game-telemetry');
 
-describe('market helpers', () => {
-  test('normalizes market currencies', () => {
-    assert.equal(market.normalizeCurrency('DIAMONDS'), 'DIAMONDS');
-    assert.equal(market.normalizeCurrency('gold'), 'GOLD');
-    assert.equal(market.normalizeCurrency('$'), 'GOLD');
-  });
-
+describe('game-telemetry wallet/inventory helpers', () => {
   test('derives pokemon rarity from quality thresholds', () => {
     assert.equal(gameTelemetry.rarityFromQuality(1.35), 'Rara');
     assert.equal(gameTelemetry.rarityFromQuality(1.7), 'Lendária');
@@ -82,30 +75,5 @@ describe('market helpers', () => {
     assert.equal(gameTelemetry.parseWalletAmount('1.254.514'), 1254514);
     assert.equal(gameTelemetry.parseWalletAmount('2,5M'), 2500000);
     assert.equal(gameTelemetry.parseWalletAmount('49 Diamonds'), 49);
-  });
-
-  test('adjustWallet correctly debits gold after a purchase', () => {
-    gameTelemetry.updateWallet('buy-debit-test', { gold: 100000, goldSource: 'visual-hud' });
-    gameTelemetry.adjustWallet('buy-debit-test', { currency: 'GOLD', delta: -500 });
-    const stats = gameTelemetry.getStats('buy-debit-test');
-
-    assert.equal(stats.wallet.gold, 99500);
-  });
-
-  test('adjustWallet does not go below zero', () => {
-    gameTelemetry.updateWallet('buy-floor-test', { gold: 100, goldSource: 'visual-hud' });
-    gameTelemetry.adjustWallet('buy-floor-test', { currency: 'GOLD', delta: -999999 });
-    const stats = gameTelemetry.getStats('buy-floor-test');
-
-    assert.equal(stats.wallet.gold, 0);
-  });
-
-  test('adjustWallet is a no-op when gold is not yet known', () => {
-    // Account that has never had a wallet reading — adjusting it should not
-    // invent a negative balance or crash.
-    gameTelemetry.adjustWallet('buy-unknown-test', { currency: 'GOLD', delta: -500 });
-    const stats = gameTelemetry.getStats('buy-unknown-test');
-
-    assert.equal(stats && stats.wallet.gold, null);
   });
 });

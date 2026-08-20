@@ -605,7 +605,6 @@
         <symbol id="poke-icon-drops" viewBox="0 0 24 24"><path d="M12 2s7 7.2 7 12.2A7 7 0 0 1 5 14.2C5 9.2 12 2 12 2Zm0 4.6c-2.1 2.5-4 5.5-4 7.6a4 4 0 0 0 8 0c0-2.1-1.9-5.1-4-7.6Z"/></symbol>
         <symbol id="poke-icon-book" viewBox="0 0 24 24"><path d="M5 4.5A2.5 2.5 0 0 1 7.5 2H20v17H7.5A2.5 2.5 0 0 0 5 21.5v-17ZM8 5v2h9V5H8Zm0 4v2h9V9H8Zm0 4v2h6v-2H8Z"/></symbol>
         <symbol id="poke-icon-capture" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 3a6 6 0 0 1 5.7 4H6.3A6 6 0 0 1 12 6Zm0 12a6 6 0 0 1-5.7-4h11.4A6 6 0 0 1 12 18Zm0-7.5A1.5 1.5 0 1 0 12 13.5a1.5 1.5 0 0 0 0-3Z"/></symbol>
-        <symbol id="poke-icon-market" viewBox="0 0 24 24"><path d="M6 6h14l-1.5 8.5A2 2 0 0 1 16.5 16H9a2 2 0 0 1-2-1.7L5.5 4H3V2h4l.4 4ZM9 20a2 2 0 1 1 0-4 2 2 0 0 1 0 4Zm8 0a2 2 0 1 1 0-4 2 2 0 0 1 0 4Z"/></symbol>
         <symbol id="poke-icon-alert" viewBox="0 0 24 24"><path d="M12 2 2 20h20L12 2Zm1 15h-2v-2h2v2Zm0-4h-2V8h2v5Z"/></symbol>
         <symbol id="poke-icon-settings" viewBox="0 0 24 24"><path d="M19.4 13.5c.1-.5.1-1 .1-1.5s0-1-.1-1.5l2-1.5-2-3.5-2.4 1a8 8 0 0 0-2.6-1.5L14 2h-4l-.4 2.5A8 8 0 0 0 7 6L4.6 5 2.6 8.5l2 1.5c-.1.5-.1 1-.1 1.5s0 1 .1 1.5l-2 1.5 2 3.5 2.4-1a8 8 0 0 0 2.6 1.5L10 22h4l.4-2.5A8 8 0 0 0 17 18l2.4 1 2-3.5-2-1.5ZM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5Z"/></symbol>
       </svg>
@@ -699,37 +698,6 @@
             <input type="number" id="poke-alert-balls-threshold" min="0" style="width:70px;" />
             <label class="switch"><input type="checkbox" id="poke-alert-balls" /><span class="slider"></span></label>
           </div>
-        </div>
-        <div class="settings-row">
-          <div>
-            <div data-i18n="pokeIdle.alertsMarketIv">🛒 Pokémon en el Market</div>
-            <div class="settings-hint" data-i18n="pokeIdle.alertsMarketIvHint">Avisar cuando aparezca un Pokémon nuevo a la venta con IV igual o mayor a:</div>
-          </div>
-          <div style="display:flex; align-items:center; gap:8px;">
-            <input type="number" id="poke-alert-market-iv-threshold" min="0" max="192" style="width:70px;" />
-            <label class="switch"><input type="checkbox" id="poke-alert-market-iv" /><span class="slider"></span></label>
-          </div>
-        </div>
-        <div class="settings-row">
-          <div>
-            <div data-i18n="pokeIdle.alertsMarketIvDesktop">NotificaciÃ³n de PC para Market IV</div>
-            <div class="settings-hint" data-i18n="pokeIdle.alertsMarketIvDesktopHint">Si lo apagas, Nexa sigue guardando los Ãºltimos 5 avisos en la interfaz, pero no muestra notificaciones del sistema.</div>
-          </div>
-          <label class="switch"><input type="checkbox" id="poke-alert-market-iv-desktop" /><span class="slider"></span></label>
-        </div>
-        <div class="settings-row">
-          <div>
-            <div data-i18n="pokeIdle.alertsMarketIvRareOnly">Solo Epica/Lendaria+</div>
-            <div class="settings-hint" data-i18n="pokeIdle.alertsMarketIvRareOnlyHint">Filtra las alertas de IV para ocultar Fraca, Comum, Incomum y Rara aunque tengan IV alto.</div>
-          </div>
-          <label class="switch"><input type="checkbox" id="poke-alert-market-iv-rare-only" /><span class="slider"></span></label>
-        </div>
-        <div class="settings-row">
-          <div>
-            <div data-i18n="pokeIdle.alertsMarketIvMaxPrice">💰 Precio máximo (sniper)</div>
-            <div class="settings-hint" data-i18n="pokeIdle.alertsMarketIvMaxPriceHint">Solo alertar si el precio está por debajo de este valor. Pon 0 para sin límite.</div>
-          </div>
-          <input type="number" id="poke-alert-market-iv-max-price" min="0" step="1000" style="width:90px;" placeholder="0 = sin límite" />
         </div>
       </section>
 

@@ -590,7 +590,7 @@ function shutdown() {
 }
 
 // Injected into the webview's page context via executeJavaScript (main
-// world — same technique used by market.js/game-socket-capture.js). Walks
+// world — same technique used by game-socket-capture.js). Walks
 // visible text nodes, stashes the originals on `window` (survives across
 // separate executeJavaScript calls as long as the page doesn't navigate) so
 // a later restore call can undo it, and returns the fragments to translate

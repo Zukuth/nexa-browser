@@ -6,7 +6,6 @@ const store = require('./store');
 const { GAP, GRID_MAX_PANELS, MIN_SPLIT_FRAC, resolveFracs, cellsForMode, freeCells, normalizeFracsWithMin } = require('./layout-utils');
 const gameTelemetry = require('./game-telemetry');
 const pokeFormulas = require('./poke-formulas');
-const market = require('./market');
 const networkHealth = require('./network-health');
 const powerManager = require('./power-manager');
 const gameConnectionManager = require('./game-connection-manager');
@@ -571,184 +570,6 @@ function startPokeIdleAlertLoop() {
       if (notif) new Notification(notif).show();
     }
   }, 5000);
-}
-
-// Market IV-alert watch: per-account state so a fresh listing only ever
-// alerts once, and so turning the toggle on (or a fresh app boot) doesn't
-// immediately fire an alert for every listing already on the market — only
-// for ones that show up AFTER the first poll for that account establishes
-// a baseline.
-const marketWatch = new Map(); // accountId -> { seen: Set<string>, initialized: boolean }
-let marketAlertFeed = []; // most-recent-first, capped — shown in the Market tab's alert feed
-const MARKET_ALERT_FEED_CAP = 20;
-const MARKET_POLL_MS = 5 * 60 * 1000;
-const MARKET_ALERT_FEED_TTL_MS = 30 * 60 * 1000;
-
-function marketAlertId(accountId, listing) {
-  return String([
-    accountId || '',
-    listing?.listingId ?? listing?.marketId ?? listing?.id ?? listing?.refId ?? '',
-    listing?.price ?? '',
-    listing?.iv ?? listing?.ivTotal ?? listing?.totalIv ?? ''
-  ].join(':'));
-}
-
-function broadcastMarketAlertFeed() {
-  pruneMarketAlertFeed();
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('market:alertFeedUpdated', marketAlertFeed.slice(0, MARKET_ALERT_FEED_CAP));
-  }
-}
-
-function pruneMarketAlertFeed() {
-  const cutoff = Date.now() - MARKET_ALERT_FEED_TTL_MS;
-  marketAlertFeed = marketAlertFeed
-    .filter((entry) => entry && (entry.at || 0) >= cutoff)
-    .sort((a, b) => (b.at || 0) - (a.at || 0))
-    .slice(0, MARKET_ALERT_FEED_CAP);
-}
-
-function marketListingName(listing) {
-  return listing?.name || listing?.title || listing?.speciesName || listing?.itemName || listing?.productName || 'Pokemon';
-}
-
-function marketListingIv(listing) {
-  const iv = listing?.iv ?? listing?.ivTotal ?? listing?.totalIv ?? null;
-  const n = Number(iv);
-  return Number.isFinite(n) ? n : null;
-}
-
-function marketListingQuality(listing) {
-  const raw = listing?.quality ?? listing?.qualityValue ?? listing?.pokemonQuality ?? listing?.pokemon?.quality ?? null;
-  if (raw == null || raw === '') return null;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
-}
-
-function marketRarityFromQuality(quality) {
-  if (quality == null) return '';
-  if (quality < 1.0) return 'weak';
-  if (quality < 1.1) return 'common';
-  if (quality < 1.3) return 'uncommon';
-  if (quality < 1.5) return 'rare';
-  if (quality < 1.7) return 'epic';
-  if (quality < 2.0) return 'legendary';
-  if (quality < 3.0) return 'mythic';
-  if (quality < 4.0) return 'ancient';
-  return 'divine';
-}
-
-function marketRarityKey(value) {
-  const rarity = String(value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim();
-  if (!rarity) return '';
-  if (rarity.includes('divine')) return 'divine';
-  if (rarity.includes('ancient')) return 'ancient';
-  if (rarity.includes('mythic')) return 'mythic';
-  if (rarity.includes('legend') || rarity.includes('lendar')) return 'legendary';
-  if (rarity.includes('epic') || rarity.includes('epica')) return 'epic';
-  if (rarity.includes('rare') || rarity.includes('rara')) return 'rare';
-  if (rarity.includes('incom')) return 'uncommon';
-  if (rarity.includes('comum') || rarity.includes('common')) return 'common';
-  if (rarity.includes('fraca') || rarity.includes('weak')) return 'weak';
-  return rarity;
-}
-
-function marketListingRarityKey(listing) {
-  const fromQuality = marketRarityFromQuality(marketListingQuality(listing));
-  if (fromQuality) return fromQuality;
-  return marketRarityKey(
-    listing?.rarity || listing?.rank || listing?.tier || listing?.qualityLabel ||
-    listing?.qualityName || listing?.pokemon?.rarity || listing?.pokemon?.qualityLabel ||
-    listing?.pokemon?.qualityName || ''
-  );
-}
-
-function marketListingPassesAlertRarity(listing, cfg) {
-  if (cfg?.marketIvRareOnly === false) return true;
-  return ['epic', 'legendary', 'mythic', 'ancient', 'divine'].includes(marketListingRarityKey(listing));
-}
-
-function marketListingPriceText(listing) {
-  const currency = market.normalizeCurrency(listing?.currency || listing?.paymentCurrency || listing?.moneyType);
-  const symbol = currency === 'DIAMONDS' ? 'diamantes' : 'dolares';
-  const price = listing?.price ?? listing?.amount ?? '?';
-  return `${price} ${symbol}`;
-}
-
-function showMarketIvNotification(account, listing, threshold) {
-  if (!Notification.isSupported()) return;
-  const iv = marketListingIv(listing);
-  const notif = new Notification({
-    title: `Market global: ${marketListingName(listing)} IV ${iv ?? '?'}`,
-    body: `${displayName(account)} · ${marketListingPriceText(listing)} · alerta >= ${threshold} IV`,
-    icon: APP_ICON_PATH,
-    silent: false
-  });
-  notif.on('click', () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
-    // Tell the renderer to open the Market panel and highlight this listing.
-    mainWindow.webContents.send('market:openAlert', {
-      alertId: marketAlertId(account.id, listing),
-      accountId: account.id,
-      listing
-    });
-  });
-  notif.show();
-}
-
-function startMarketAlertLoop() {
-  setInterval(async () => {
-    pruneMarketAlertFeed();
-    broadcastMarketAlertFeed();
-    const cfg = data.settings.pokeIdleAlerts;
-    if (!cfg || !cfg.marketIv) return;
-    const threshold = cfg.marketMinIv ?? 150;
-    let notificationsThisTick = 0;
-    for (const account of data.accounts) {
-      if (account.closed) continue;
-      const wc = views.get(account.id);
-      if (!wc || wc.isDestroyed() || !gameTelemetry.isGameUrl(wc.getURL())) continue;
-      let result;
-      try {
-        result = await wc.executeJavaScript(market.fetchListingsScript('Pokémon'));
-      } catch {
-        continue;
-      }
-      if (!result || !result.ok || !Array.isArray(result.listings)) continue;
-      let watch = marketWatch.get(account.id);
-      if (!watch) {
-        watch = { seen: new Set(), initialized: false };
-        marketWatch.set(account.id, watch);
-      }
-      const isFirstPoll = !watch.initialized;
-      for (const listing of result.listings) {
-        const id = listing && listing.id;
-        if (!id || watch.seen.has(id)) continue;
-        watch.seen.add(id);
-        if (isFirstPoll) continue; // baseline — don't alert on what was already there
-        const iv = marketListingIv(listing);
-        if (iv == null || iv < threshold) continue;
-        if (!marketListingPassesAlertRarity(listing, cfg)) continue;
-        const maxPrice = Number(cfg.marketIvMaxPrice ?? 0);
-        if (maxPrice > 0 && Number(listing.price ?? listing.amount ?? 0) > maxPrice) continue;
-        if (notificationsThisTick >= 10) continue;
-        marketAlertFeed.unshift({ alertId: marketAlertId(account.id, listing), accountId: account.id, listing, at: Date.now(), threshold });
-        pruneMarketAlertFeed();
-        broadcastMarketAlertFeed();
-        if (cfg.enabled !== false && cfg.marketIvDesktop !== false) showMarketIvNotification(account, listing, threshold);
-        notificationsThisTick += 1;
-      }
-      watch.initialized = true;
-      // Cap memory: keep only the most recent chunk of seen ids per account.
-      if (watch.seen.size > 2000) watch.seen = new Set([...watch.seen].slice(-1000));
-    }
-  }, MARKET_POLL_MS);
 }
 
 // Live DownloadItem handles, keyed by the same id as its `data.downloads`
@@ -3638,7 +3459,6 @@ const SETTINGS_UPDATE_WHITELIST = new Set([
   'defaultZoom',
   'newSpaceDefaultLayout',
   'askDownloadLocation',
-  'pokeIdleMarketPrefs',
   'stability',
   'translateMemoryPersist'
 ]);
@@ -3648,7 +3468,6 @@ ipcMain.handle('settings:update', (_e, fields) => {
   for (const key of Object.keys(fields)) {
     if (!SETTINGS_UPDATE_WHITELIST.has(key)) continue;
     if (key === 'pokeIdleAlerts' && (typeof fields[key] !== 'object' || fields[key] === null)) continue;
-    if (key === 'pokeIdleMarketPrefs' && (typeof fields[key] !== 'object' || fields[key] === null)) continue;
     if (key === 'protectionLevel' && !['off', 'standard', 'strict'].includes(fields[key])) continue;
     if (key === 'autoEco' && (typeof fields[key] !== 'object' || fields[key] === null)) continue;
     if (key === 'supportPaypalUrl' && fields[key]) {
@@ -4234,16 +4053,12 @@ ipcMain.handle('pokeFormulas:getItemCatalog', async () => {
   return gameTelemetry.getItemCatalogArray();
 });
 
-// Every Market/Tienda/Depot/Venta-masiva/Familia handler below assumes the
-// account is actually ON poke.idleworld.online right now — market.js's
-// injected scripts use relative fetch('/api/game/...') URLs, which only
-// resolve against that origin. An account sitting on the login page,
+// pokes:get (Mi Equipo's data source) assumes the account is actually ON
+// poke.idleworld.online right now — an account sitting on the login page,
 // about:blank, or literally any other site (these are general-purpose
-// browser tabs, not exclusively game tabs) made that fetch throw "Failed
-// to parse URL from /api/game/..." straight into the renderer — confirmed
-// live. This guard turns that into a normal { ok: false } result with a
-// clear message, the same way the market-alert background loop already
-// checks isGameUrl() before touching a webContents (see startMarketAlertLoop).
+// browser tabs, not exclusively game tabs) made a game-only request throw
+// straight into the renderer — confirmed live. This guard turns that into a
+// normal { ok: false } result with a clear message instead.
 function requireGameWebContents(id) {
   const wc = views.get(id);
   if (!wc || wc.isDestroyed()) return { error: 'La cuenta no está abierta' };
@@ -4284,10 +4099,6 @@ ipcMain.handle('pokes:get', async (_e, { id }) => {
 });
 
 
-ipcMain.handle('market:getAlertFeed', () => {
-  pruneMarketAlertFeed();
-  return marketAlertFeed.slice(0, MARKET_ALERT_FEED_CAP);
-});
 const CALC_STAT_KEYS = ['hp', 'atk', 'def', 'spatk', 'spdef', 'speed'];
 ipcMain.handle('pokeFormulas:computeGrowth', async (_e, payload) => {
   const { speciesId, level, quality, observed, projLevel } = payload || {};
@@ -4624,9 +4435,8 @@ async function runRecoveryLevel({ accountId, level, wc, reason }) {
     const result = await networkHealth.checkAccountNetwork(accountId, { hostname: 'poke.idleworld.online' });
     feedConnectionEvent(accountId, { type: 'NETWORK_CHECK', result });
   } else if (level === 2) {
-    // Reused unchanged — also called directly from the market auto-buy flow
-    // (see market listing purchase handler), so its signature/behavior must
-    // not change here.
+    // Also called by the freeze detector below — keep its signature/behavior
+    // consistent between both callers.
     await pulseGameRealtimeConnection(wc).catch(() => {});
     try {
       if (typeof wc.setBackgroundThrottling === 'function') wc.setBackgroundThrottling(false);
@@ -5518,7 +5328,6 @@ app.whenReady().then(() => {
   gameTelemetry.startHeartbeat();
   gameTelemetry.setBallsLowThreshold(data.settings.pokeIdleAlerts?.ballsThreshold ?? 20);
   startPokeIdleAlertLoop();
-  startMarketAlertLoop();
   startAutoOptimizeLoop();
   startAutoEcoLoop();
   startFreezeDetectorLoop();

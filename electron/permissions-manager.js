@@ -3,9 +3,9 @@
 // of main.js so the permission-prompt window lifecycle and the per-site
 // remember/revoke storage aren't tangled up with window/account bookkeeping.
 //
-// Uses the same dependency-injection shape as market.js/translate.js: main.js
-// stays the single owner of `data`/persist()/broadcastState(), this module
-// only ever touches them through the functions it's handed.
+// Uses the same dependency-injection shape as translate.js: main.js stays
+// the single owner of `data`/persist()/broadcastState(), this module only
+// ever touches them through the functions it's handed.
 const { ipcMain, session } = require('electron');
 const path = require('path');
 const gameTelemetry = require('./game-telemetry');

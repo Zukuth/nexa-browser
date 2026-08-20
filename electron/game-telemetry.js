@@ -812,19 +812,6 @@ function updateWallet(accountId, wallet) {
   mergeWallet(state, wallet);
 }
 
-function adjustWallet(accountId, { currency, delta }) {
-  const state = getOrCreateState(accountId);
-  const amount = Number(delta);
-  if (!Number.isFinite(amount) || !currency) return;
-  state.wallet = state.wallet || { gold: null, goldSource: null, diamonds: null, diamondsSource: null, updatedAt: null };
-  const key = String(currency).toUpperCase().includes('DIAM') ? 'diamonds' : 'gold';
-  if (state.wallet[key] == null) return;
-  state.wallet[key] = Math.max(0, state.wallet[key] + amount);
-  if (key === 'gold' && !state.wallet.goldSource) state.wallet.goldSource = 'adjusted';
-  if (key === 'diamonds' && !state.wallet.diamondsSource) state.wallet.diamondsSource = 'adjusted';
-  state.wallet.updatedAt = Date.now();
-}
-
 // accountId -> intervalId. The interval polls window.__nexaFrameQueue
 // (populated by the injected WebSocket.prototype patch, see
 // game-socket-capture.js) every 250ms, since there's no direct IPC channel
@@ -1021,7 +1008,6 @@ module.exports = {
   isLikelyFrozen,
   getDeltas: (accountId) => stateByAccount.get(accountId)?.deltas || null,
   updateWallet,
-  adjustWallet,
   ensureCreatureCatalog,
   getCreatureCatalogArray,
   getCreatureCatalogMeta,

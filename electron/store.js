@@ -103,7 +103,6 @@ const DEFAULT_DATA = {
   passwords: [],
   history: [],
   downloads: [],
-  marketPurchases: [],
   // Lifetime ad/tracker-blocking counters — unlike adBlockLog in main.js
   // (an in-memory, 500-entry-capped ring buffer per account that resets on
   // every restart), this survives restarts so the dashboard can show a real
@@ -208,23 +207,7 @@ const DEFAULT_DATA = {
       rare: true,
       ballsLow: true,
       disconnect: true,
-      ballsThreshold: 20,
-      marketIv: false,
-      marketIvDesktop: true,
-      marketIvRareOnly: true,
-      marketMinIv: 150
-    },
-    pokeIdleMarketPrefs: {
-      rarityFilterVersion: 2,
-      showEpic: false,
-      showLegendary: false,
-      showDollar: true,
-      showDiamonds: true,
-      autoRefresh: false,
-      refreshSeconds: 15,
-      dealMaxPrice: 0,
-      dealNotify: true,
-      dealsOnly: false
+      ballsThreshold: 20
     },
     // Stability/connection-manager overhaul — everything here defaults to
     // off/safe so existing installs behave exactly as before until a user

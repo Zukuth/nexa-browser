@@ -325,11 +325,6 @@ const pokeAlertRare = document.getElementById('poke-alert-rare');
 const pokeAlertDisconnect = document.getElementById('poke-alert-disconnect');
 const pokeAlertBalls = document.getElementById('poke-alert-balls');
 const pokeAlertBallsThreshold = document.getElementById('poke-alert-balls-threshold');
-const pokeAlertMarketIv = document.getElementById('poke-alert-market-iv');
-const pokeAlertMarketIvDesktop = document.getElementById('poke-alert-market-iv-desktop');
-const pokeAlertMarketIvRareOnly = document.getElementById('poke-alert-market-iv-rare-only');
-const pokeAlertMarketIvThreshold = document.getElementById('poke-alert-market-iv-threshold');
-const pokeAlertMarketIvMaxPrice = document.getElementById('poke-alert-market-iv-max-price');
 const networkListEl = document.getElementById('network-list');
 
 const SPACE_COLORS = ['#4f8cff', '#ff6b6b', '#51cf66', '#fcc419', '#cc5de8', '#ff922b', '#f06595', '#22b8cf'];
@@ -766,7 +761,7 @@ function render() {
       const wallet = gs.wallet || {};
       const trustedGoldSource = ['visual-shop', 'visual-hud', 'visual', 'adjusted'].includes(wallet.goldSource);
       const walletHtml = wallet.gold != null && trustedGoldSource
-        ? `<span>${marketCurrencySymbol('GOLD')}${formatCompactNumber(wallet.gold)}</span>`
+        ? `<span>${currencySymbol('GOLD')}${formatCompactNumber(wallet.gold)}</span>`
         : '';
       gameRow.innerHTML =
         `<span>${dot} ${formatCompactNumber(gs.killsPerHour)} ${t('pokeIdle.killsPerHour')}</span>` +
@@ -2814,6 +2809,11 @@ bmExport.addEventListener('click', async () => {
 // Compact K/M/B suffix for the game-stats row — xp/h routinely runs into
 // the millions on high-level accounts, and the raw digit count doesn't fit
 // a sidebar row.
+// Currency symbol for the sidebar's per-account gold/hour wallet display.
+function currencySymbol(currency) {
+  return currency === 'DIAMONDS' ? '♦' : '$';
+}
+
 function formatCompactNumber(n) {
   if (n == null) return '0';
   const abs = Math.abs(n);
@@ -3649,11 +3649,6 @@ function loadPokeIdleAlertFields() {
   pokeAlertDisconnect.checked = cfg.disconnect !== false;
   pokeAlertBalls.checked = cfg.ballsLow !== false;
   pokeAlertBallsThreshold.value = cfg.ballsThreshold ?? 20;
-  pokeAlertMarketIv.checked = !!cfg.marketIv;
-  if (pokeAlertMarketIvDesktop) pokeAlertMarketIvDesktop.checked = cfg.marketIvDesktop !== false;
-  if (pokeAlertMarketIvRareOnly) pokeAlertMarketIvRareOnly.checked = cfg.marketIvRareOnly !== false;
-  pokeAlertMarketIvThreshold.value = cfg.marketMinIv ?? 150;
-  if (pokeAlertMarketIvMaxPrice) pokeAlertMarketIvMaxPrice.value = cfg.marketIvMaxPrice ?? 0;
 }
 
 function savePokeIdleAlertFields() {
@@ -3664,23 +3659,16 @@ function savePokeIdleAlertFields() {
       rare: pokeAlertRare.checked,
       disconnect: pokeAlertDisconnect.checked,
       ballsLow: pokeAlertBalls.checked,
-      ballsThreshold: Math.max(0, Number(pokeAlertBallsThreshold.value) || 0),
-      marketIv: pokeAlertMarketIv.checked,
-      marketIvDesktop: pokeAlertMarketIvDesktop ? pokeAlertMarketIvDesktop.checked : true,
-      marketIvRareOnly: pokeAlertMarketIvRareOnly ? pokeAlertMarketIvRareOnly.checked : true,
-      marketMinIv: Math.max(0, Number(pokeAlertMarketIvThreshold.value) || 0),
-      marketIvMaxPrice: Math.max(0, Number(pokeAlertMarketIvMaxPrice?.value) || 0)
+      ballsThreshold: Math.max(0, Number(pokeAlertBallsThreshold.value) || 0)
     }
   });
 }
 
-[pokeAlertEnabled, pokeAlertShiny, pokeAlertRare, pokeAlertDisconnect, pokeAlertBalls, pokeAlertMarketIv, pokeAlertMarketIvDesktop, pokeAlertMarketIvRareOnly].forEach((el) => {
+[pokeAlertEnabled, pokeAlertShiny, pokeAlertRare, pokeAlertDisconnect, pokeAlertBalls].forEach((el) => {
   if (!el) return;
   el.addEventListener('change', savePokeIdleAlertFields);
 });
 pokeAlertBallsThreshold.addEventListener('change', savePokeIdleAlertFields);
-pokeAlertMarketIvThreshold.addEventListener('change', savePokeIdleAlertFields);
-pokeAlertMarketIvMaxPrice?.addEventListener('change', savePokeIdleAlertFields);
 
 const POKE_NOTABLE_VISIBLE_LIMIT = 30;
 
@@ -3965,11 +3953,9 @@ function renderPokeIdleLivePanels() {
   renderPokeIdleTeam();
 }
 
-// Caps at 200 entries each (see the .size checks below) so a long session
-// doesn't grow these unbounded — only recent keys matter for dedup anyway.
+// Caps at 200 entries (see the .size check below) so a long session doesn't
+// grow this unbounded — only recent keys matter for dedup anyway.
 const notifiedGameEventKeys = new Set();
-const notifiedMarketAlertKeys = new Set();
-let marketSoundPollBusy = false;
 
 function maybePlayGameAlertSounds() {
   const cfg = state.settings?.pokeIdleAlerts || {};
@@ -3984,25 +3970,6 @@ function maybePlayGameAlertSounds() {
     if ((event.type === 'shiny_capture' || event.type === 'shiny_wild') && cfg.shiny !== false) {
       playAlertTone('shiny');
     }
-  }
-}
-
-async function maybePlayMarketAlertSounds() {
-  const cfg = state.settings?.pokeIdleAlerts || {};
-  if (!cfg.enabled || !cfg.marketIv || marketSoundPollBusy) return;
-  marketSoundPollBusy = true;
-  try {
-    const feed = await window.api.getMarketAlertFeed();
-    const entries = Array.isArray(feed) ? feed : [];
-    for (const entry of entries) {
-      const key = entry.alertId || `${entry.accountId || ''}:${entry.at || ''}`;
-      if (notifiedMarketAlertKeys.has(key)) continue;
-      notifiedMarketAlertKeys.add(key);
-      if (notifiedMarketAlertKeys.size > 200) notifiedMarketAlertKeys.delete(notifiedMarketAlertKeys.values().next().value);
-    }
-  } catch {
-  } finally {
-    marketSoundPollBusy = false;
   }
 }
 let creatureCatalogCache = null;
@@ -4422,13 +4389,6 @@ window.api.onOptimizeStatusUpdate?.(applyOptimizeStatus);
 window.api.getOptimizeStatus?.().then(applyOptimizeStatus).catch(() => {});
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Notification click → open the panel (the Market tab itself no longer
-// exists, so there's nothing left to scroll to or highlight — just surface
-// Alertas, where the threshold that triggered this notification lives).
-window.api.onMarketOpenAlert?.(() => {
-  openPokeIdlePanel();
-});
-
 window.api.onNavUpdate(({ id, url }) => {
   const account = state.accounts.find((a) => a.id === id);
   if (account) account.url = url;
@@ -4782,7 +4742,6 @@ setInterval(async () => {
 setInterval(async () => {
   gameStats = await window.api.getGameStats();
   maybePlayGameAlertSounds();
-  maybePlayMarketAlertSounds();
   renderPokeIdleLivePanels();
 }, 5000);
 
