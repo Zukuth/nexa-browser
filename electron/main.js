@@ -842,8 +842,8 @@ const SHORTCUTS = [
   { combo: 'Ctrl + Tab', key: 'shortcut.nextPanel' },
   { combo: 'Ctrl + Shift + N', key: 'shortcut.newSpace' },
   { combo: 'Ctrl + N', key: 'shortcut.newAccount' },
-  { combo: 'Ctrl + R', key: 'shortcut.reloadActive' },
-  { combo: 'Ctrl + Shift + R', key: 'shortcut.reloadHardActive' },
+  { combo: 'Ctrl + R / F5', key: 'shortcut.reloadActive' },
+  { combo: 'Ctrl + Shift + R / Shift + F5', key: 'shortcut.reloadHardActive' },
   { combo: 'Ctrl + Alt + R', key: 'shortcut.reloadAll' },
   { combo: 'Ctrl + M', key: 'shortcut.muteActive' },
   { combo: 'Ctrl + Shift + M', key: 'shortcut.muteAll' },
@@ -1007,6 +1007,15 @@ function handleAccountShortcut(input, account) {
   }
   if (ctrl && !shift && !alt && key === 'r') {
     view?.reload();
+    return true;
+  }
+  // F5 does nothing on its own in a <webview> guest — there's no
+  // Application Menu (Menu.setApplicationMenu(null)) to supply the usual
+  // "reload" accelerator a real browser gets for free, so it silently no-op'd
+  // until now. Same combo convention as Ctrl+R / Ctrl+Shift+R above.
+  if (!ctrl && !alt && key === 'f5') {
+    if (shift) view?.reloadIgnoringCache();
+    else view?.reload();
     return true;
   }
   if (ctrl && shift && !alt && key === 'm') {
@@ -1711,7 +1720,23 @@ function injectPingOverlay(wc, visible) {
           }
         }
         if (!ok) return; // HEAD and GET both failed/non-2xx — don't show a bogus number.
-        const ms = Math.round(performance.now() - start);
+        // Wall-clock around the awaited fetch (the old approach) doesn't
+        // measure network time alone — it also includes however long this
+        // callback had to wait in line for a free tick on the main thread.
+        // On a page doing heavy canvas work (a busy idle-game battle scene,
+        // dozens of sprites, already-low FPS) that queueing delay dwarfs the
+        // real round-trip and shows a "ping" of tens of seconds that has
+        // nothing to do with the network. Resource Timing entries are
+        // stamped by the browser's network stack at the moment each event
+        // actually happened, independent of when JS gets around to reading
+        // them, so pulling the duration from there instead reports real
+        // transfer time even while the main thread is starved. Falls back to
+        // the wall-clock number if the entry isn't found for some reason
+        // (buffer disabled, evicted) rather than showing nothing.
+        const entries = performance.getEntriesByType('resource').filter((e) => e.name === url && e.startTime >= start - 50);
+        const entry = entries[entries.length - 1];
+        const ms = entry ? Math.round(entry.responseEnd - entry.startTime) : Math.round(performance.now() - start);
+        performance.clearResourceTimings();
         badge.textContent = ms + ' ms';
         badge.style.color = nexaPingColor(ms);
       }
