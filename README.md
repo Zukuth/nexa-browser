@@ -199,6 +199,38 @@ Antes de publicar la próxima versión, correr `node scripts/perf-benchmark.js` 
 
 233 tests unitarios + 37 e2e, todos verdes.
 
+### v0.4.0 — Motor de adblock nativo de Brave, -64% de CPU, y limpieza de Poke Idle World
+
+#### Rendimiento
+
+- **Bloqueo de red ahora corre sobre `adblock-rs`, el mismo motor nativo en Rust que usa Brave** — reemplaza el motor JS que se usaba para esa decisión. El filtrado cosmético (ocultar los huecos vacíos que deja un anuncio bloqueado) se queda en el motor anterior sin cambios, a propósito: reescribirlo también era un subsistema aparte, con mucha superficie de regresión visual sitio por sitio, y se prefirió no mezclar dos cambios grandes en una sola pasada. Requiere Rust + Build Tools de C++ de Visual Studio para compilar desde código fuente (no afecta al instalador ya armado).
+- **CPU bajó a menos de la mitad (1.6% → 0.6%, -64%) en el mismo escenario de siempre** (3 cuentas recién abiertas, 25s de estabilización, `app.getAppMetrics()` real) — de apagar los overlays de FPS/ping por defecto (antes corrían en cada cuenta todo el tiempo, aunque nadie los mirara), la escritura del store dejar de bloquear el proceso principal, y el sidebar dejar de reconstruirse entero en cada actualización de estado irrelevante (ahora solo cuando algo estructural cambia de verdad).
+- El polling de telemetría del juego bajó de 250ms a 400ms (confirmado en vivo compitiendo con el canvas del juego en el mismo hilo), y después a un backoff adaptativo que se relaja solo si la cuenta lleva un rato sin frames nuevos. El fetch del badge de ping bajó de 2s a 3s. Ambos, junto al contador de FPS, pasaron de solo esconderse con `display:none` al apagarlos a frenar de verdad el loop/timer detrás — antes seguían corriendo invisibles para siempre.
+- El auto-updater ya no se traba después de descargar: la actualización diferencial de NSIS corre un script de PowerShell propio que una política de ejecución restrictiva puede bloquear en silencio — ahora cada actualización baja el instalador completo, más pesado pero confiable.
+- Electron actualizado a 43.4.1 (fix de seguridad real: ventanas abiertas por un frame sandboxeado ahora heredan bien las restricciones — el mismo mecanismo que usa el allowlist de `window.open()` de esta app).
+
+#### Nuevo
+
+- **Traducción de página, chat y selección con modelos offline** (bergamot-translator vía WASM, sin llamar a ningún servicio externo), con detección de idioma por contenido y memoria de traducción opcional persistente en disco.
+- **Sistema de permisos web por sitio** con prompt nativo real de Allow/Deny (cámara, micrófono, geolocalización) en vez de la lista hardcodeada de antes.
+- **Editor de capturas de pantalla** con recorte, flechas y texto antes de guardar el PNG final.
+- **Picture-in-Picture nativo y persistente entre cuentas** — sobrevive al cambio de cuenta activa en vez de congelarse o cerrarse.
+- Tres ideas tomadas de comparar la arquitectura de Nexa contra Firefox y Brave: un chip de impacto de CPU (Bajo/Medio/Alto) junto al número crudo en el sidebar, un desglose por categoría en el popup del escudo (qué se bloqueó en esta página: anuncios/rastreadores/social/analítica), y el color del Espacio ahora visible en el sidebar, no solo en el ícono del rail.
+
+#### Seguridad
+
+De una auditoría propia y de terceros sobre todo lo de arriba, confirmados en vivo antes de mergear:
+- Depot/Familia/Mi Equipo ya no reportan éxito si el servidor del juego nunca confirmó el cambio.
+- `window.open()` solo se permite hacia el sitio de la cuenta o un proveedor de login conocido (Google/Facebook/Apple/Microsoft/Discord/X) — todo lo demás se deniega y se loguea.
+- Contraseñas de proxy por cuenta ahora se cifran en disco (antes solo pasaban por `safeStorage` las contraseñas normales).
+- 11 sitios de renderizado de datos del juego (shop/sellhub/depot/team/tier-list) tenían `innerHTML` sin escapar — corregidos.
+
+#### Limpieza — Poke Idle World
+
+Se sacaron **9 pestañas** (Market, Tienda, Venta masiva, Depot, Tier List, Caza y XP, Drops en vivo, Comparador de hunts, Poképedia) y todo el sistema de alertas de mercado que dependía de ellas (loop de fondo, feed, notificaciones) — quedan solo Mi Equipo, Calculadora IV, Alertas y Ajustes. La idea central del proyecto es un navegador de varias cuentas optimizado y estable, y esas 9 pestañas pesaban mucho para lo que aportaban. Se preservó todo lo que las 4 pestañas que quedan siguen necesitando (catálogos, fórmulas de growth/IV, el loop de alertas de shiny/raras/desconexión). Sobre el final de esta versión, a pedido directo del usuario, también se sacó la fila de "Muertes/h · XP/h · oro/h" del sidebar (quedó solo en el panel de Mi Equipo) y se angostó el modal de Poke Idle World, que tenía 3 reglas de ancho compitiendo entre sí de rediseños viejos.
+
+264 tests unitarios + suite e2e completa, todos verdes. Build empaquetada real probada de punta a punta.
+
 ### v0.3.7 — Depot y Familia dejan de fallar con varias cuentas abiertas
 
 - **Equipo/Box del Depot personal quedaban vacíos**: esa pestaña solo leía los datos de Pokémon que el juego había mandado por su cuenta desde que se abrió la sesión — si todavía no había pasado nada que los disparara (recién conectado, sin capturas/ventas/subidas de nivel de por medio), quedaban vacíos para siempre aunque hubiera Pokémon reales. Mismo problema en Mi Equipo y en Venta masiva → Pokémon. Ahora se piden activamente al abrir el panel, cambiar de cuenta o entrar a esas pestañas.
