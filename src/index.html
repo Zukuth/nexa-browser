@@ -168,6 +168,7 @@
 
   <div id="sidebar">
     <div id="space-header">
+      <span id="space-color-dot" class="account-dot"></span>
       <span id="space-name"></span>
       <button id="btn-edit-space" title="Editar espacio" data-i18n-title="sidebar.editSpace">✎</button>
       <button id="btn-collapse-sidebar" title="Contraer barra lateral" data-i18n-title="sidebar.collapse">
@@ -175,6 +176,7 @@
       </button>
     </div>
     <div id="account-list"></div>
+    <div id="game-accounts-hint" class="hidden" data-i18n-title="sidebar.gameAccountsHintTitle" title=""></div>
     <div id="sidebar-bottom">
       <button id="btn-new-tab" data-i18n="sidebar.newTab">+ Nueva pestaña</button>
       <button id="btn-toggle-all" title="Cerrar todas" data-i18n-title="sidebar.closeAll">
@@ -426,6 +428,13 @@
             <div class="settings-row">
               <span data-i18n="settings.showPingOverlay">Mostrar latencia (ms) por pestaña</span>
               <label class="switch"><input type="checkbox" id="set-show-ping" /><span class="slider"></span></label>
+            </div>
+            <div class="settings-row">
+              <div>
+                <div data-i18n="settings.showAccountMetricsTitle">Mostrar CPU/RAM por cuenta</div>
+                <div class="settings-hint" data-i18n="settings.showAccountMetricsHint">Renglón de CPU/RAM en cada ítem del sidebar. Desactivarlo también corta el muestreo periódico que lo alimenta.</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="set-show-account-metrics" /><span class="slider"></span></label>
             </div>
             <div class="settings-row">
               <div>

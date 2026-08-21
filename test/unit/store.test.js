@@ -151,39 +151,39 @@ describe('store.load()', () => {
 describe('store.save() / load() round trip', () => {
   beforeEach(resetDataDir);
 
-  test('save() then load() preserves plain data untouched', () => {
+  test('save() then load() preserves plain data untouched', async () => {
     const data = store.load();
     data.settings.theme = 'dark';
     data.bookmarks.push({ title: 'x', url: 'https://example.com' });
-    store.save(data);
+    await store.save(data);
     const reloaded = store.load();
     assert.equal(reloaded.settings.theme, 'dark');
     assert.equal(reloaded.bookmarks.length, 1);
   });
 
-  test('save() encrypts passwords at rest when safeStorage is available — the raw file never has the plaintext', () => {
+  test('save() encrypts passwords at rest when safeStorage is available — the raw file never has the plaintext', async () => {
     const data = store.load();
     data.passwords.push({ site: 'example.com', username: 'u', password: 'super-secret-pw' });
-    store.save(data);
+    await store.save(data);
     const raw = fs.readFileSync(store.DATA_FILE, 'utf-8');
     assert.ok(!raw.includes('super-secret-pw'));
     assert.ok(raw.includes('enc:v1:'));
   });
 
-  test('decryptStoredPasswords() reverses exactly what save() encrypted', () => {
+  test('decryptStoredPasswords() reverses exactly what save() encrypted', async () => {
     const data = store.load();
     data.passwords.push({ site: 'example.com', username: 'u', password: 'super-secret-pw' });
-    store.save(data);
+    await store.save(data);
     const reloaded = store.load();
     const decrypted = store.decryptStoredPasswords(reloaded.passwords);
     assert.equal(decrypted[0].password, 'super-secret-pw');
   });
 
-  test('falls back to plain text if safeStorage is unavailable, instead of losing or blocking the save', () => {
+  test('falls back to plain text if safeStorage is unavailable, instead of losing or blocking the save', async () => {
     safeStorageStub.encryptionAvailable = false;
     const data = store.load();
     data.passwords.push({ site: 'example.com', username: 'u', password: 'plain-pw' });
-    store.save(data);
+    await store.save(data);
     const reloaded = store.load();
     const decrypted = store.decryptStoredPasswords(reloaded.passwords);
     assert.equal(decrypted[0].password, 'plain-pw');
@@ -198,6 +198,24 @@ describe('store.save() / load() round trip', () => {
     const decrypted = store.decryptStoredPasswords([{ site: 'x', password: 'enc:v1:not-real-ciphertext' }]);
     assert.equal(decrypted[0].password, '');
   });
+
+  // Regression guard for the async save() queue (perf audit 2026-08-21):
+  // save() used to be synchronous (writeFileSync+renameSync), so two calls
+  // close together could never overlap. Now that it's async, two calls fired
+  // back to back without awaiting the first must still queue instead of both
+  // writing TMP_FILE at once — this fires several concurrently and checks
+  // the file ends up matching the LAST call's data, not corrupted or stale.
+  test('concurrent save() calls queue instead of racing on the same temp file', async () => {
+    const data = store.load();
+    const saves = [];
+    for (let i = 0; i < 5; i += 1) {
+      const d = { ...data, settings: { ...data.settings, theme: `pass-${i}` } };
+      saves.push(store.save(d));
+    }
+    await Promise.all(saves);
+    const reloaded = store.load();
+    assert.equal(reloaded.settings.theme, 'pass-4'); // last call queued last, wins
+  });
 });
 
 describe('watchDataFile()', () => {
@@ -210,11 +228,11 @@ describe('watchDataFile()', () => {
   // watchDataFile in store.js for the full story).
   test('does not fire onChange for this process\'s own save()', async () => {
     const data = store.load();
-    store.save(data);
+    await store.save(data);
     let fired = false;
     const watcher = store.watchDataFile(() => { fired = true; });
     data.settings.theme = 'dark';
-    store.save(data);
+    await store.save(data);
     await new Promise((resolve) => setTimeout(resolve, 500));
     watcher.close();
     assert.equal(fired, false);
@@ -222,7 +240,7 @@ describe('watchDataFile()', () => {
 
   test('fires onChange when the file content differs from what this process last saved', async () => {
     const data = store.load();
-    store.save(data);
+    await store.save(data);
     let fired = false;
     const watcher = store.watchDataFile(() => { fired = true; });
     // Bypasses store.save() on purpose — simulates a second instance or a

@@ -20,6 +20,7 @@
   "dependencies": {
     "@browsermt/bergamot-translator": "^0.4.9",
     "@ghostery/adblocker-electron": "^2.18.2",
+    "adblock-rs": "^0.13.3",
     "electron-log": "^5.4.4",
     "electron-updater": "^6.8.9",
     "extract-zip": "^2.0.1",
@@ -39,7 +40,14 @@
     "compression": "normal",
     "files": [
       "electron/**/*",
-      "src/**/*"
+      "src/**/*",
+      "!**/node_modules/adblock-rs/target/**/*",
+      "!**/node_modules/adblock-rs/js/example.mjs",
+      "!**/node_modules/adblock-rs/js/test/**/*",
+      "!**/node_modules/adblock-rs/data/**/*"
+    ],
+    "asarUnpack": [
+      "**/node_modules/adblock-rs/js/index.node"
     ],
     "win": {
       "target": [

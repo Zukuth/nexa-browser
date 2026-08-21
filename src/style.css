@@ -1018,8 +1018,11 @@ html, body {
 }
 
 .account-item.active {
-  background: rgba(79,140,255,0.08);
-  border-color: rgba(79,140,255,0.4);
+  /* --space-accent is set per-render from the current Space's own color
+     (render() in renderer.js) — defaults to #4f8cff, the same blue this was
+     hardcoded to before, so the default Space looks identical to today. */
+  background: color-mix(in srgb, var(--space-accent, #4f8cff) 8%, transparent);
+  border-color: color-mix(in srgb, var(--space-accent, #4f8cff) 40%, transparent);
 }
 
 .account-item.closed {
@@ -1072,11 +1075,26 @@ html, body {
 
 .account-metrics-row {
   display: flex;
+  align-items: center;
   gap: 12px;
   font-size: 10px;
   color: var(--muted);
   padding-left: 18px;
 }
+
+/* Same green/yellow/red convention as the FPS/ping overlay badges
+   (main.js's nexaFpsColor/nexaPingColor) — one qualitative read for the
+   raw CPU % next to it, inspired by Firefox's about:performance. */
+.metrics-impact {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+.metrics-impact.low { color: #3ddc57; background: rgba(61, 220, 87, 0.14); }
+.metrics-impact.medium { color: #e0c341; background: rgba(224, 195, 65, 0.16); }
+.metrics-impact.high { color: #e05555; background: rgba(224, 85, 85, 0.16); }
 
 .account-game-stats-row {
   display: flex;
@@ -1100,6 +1118,22 @@ html, body {
 
 .account-item:hover .account-remove {
   visibility: visible;
+}
+
+#game-accounts-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--accent);
+  background: rgba(79,140,255,0.08);
+  border: 1px solid rgba(79,140,255,0.25);
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin: 0 12px 8px;
+  cursor: default;
+}
+
+#game-accounts-hint.hidden {
+  display: none;
 }
 
 #sidebar-bottom {

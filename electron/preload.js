@@ -153,6 +153,7 @@ contextBridge.exposeInMainWorld('api', {
   toggleExtension: (id, enabled) => ipcRenderer.invoke('extensions:toggle', { id, enabled }),
   removeExtension: (id) => ipcRenderer.invoke('extensions:remove', { id }),
   getMetrics: () => ipcRenderer.invoke('metrics:get'),
+  getBlockedCounts: () => ipcRenderer.invoke('metrics:getBlockedCounts'),
   getAdBlockLog: (id) => ipcRenderer.invoke('adblock:getLog', { id }),
   toggleAdBlockSitePause: (hostname) => ipcRenderer.invoke('adblock:toggleSitePause', { hostname }),
   toggleAdBlockSiteBlock: (hostname) => ipcRenderer.invoke('adblock:toggleSiteBlock', { hostname }),

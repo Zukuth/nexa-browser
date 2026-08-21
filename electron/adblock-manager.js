@@ -10,8 +10,32 @@ const { ipcMain } = require('electron');
 const fs = require('fs');
 const { hostnameFromUrlLike } = require('./url-utils');
 const path = require('path');
-const { ElectronBlocker, fromElectronDetails, fetchLists, fetchResources } = require('@ghostery/adblocker-electron');
+const { ElectronBlocker, fetchLists, fetchResources } = require('@ghostery/adblocker-electron');
 const ADBLOCKER_COSMETIC_PRELOAD = require.resolve('@ghostery/adblocker-electron-preload');
+// adblock-rs = Brave's own native (Rust) adblock-rust engine, used here only
+// for the network block/allow decision (perf/architecture pass, 2026-08-21
+// — see the header comment on loadNetworkEngine below for why cosmetic
+// filtering stays on Ghostery's engine instead of also moving over). Raw
+// engine, no Electron-specific glue of its own — unlike
+// @ghostery/adblocker-electron, it doesn't know about sessions, webRequest,
+// or preload scripts; applyAdBlock below does that wiring by hand.
+//
+// It's a native module (postinstall runs `cargo build --release` — no
+// prebuilt binaries ship in the npm package) — require() throws instead of
+// returning if the platform's .node binary isn't there (build failed, wrong
+// platform, or a fresh clone that hasn't run `npm install` with a working
+// Rust+MSVC toolchain yet). This is exactly the kind of failure the rest of
+// the app should survive: loadNetworkEngine() below checks adblockRust and
+// throws its own clear error into the *existing* loadAdBlockEngine()
+// try/catch (engineStatus becomes 'failed', same UI path as a real network
+// fetch failure) instead of this require() crashing the whole main process
+// before a single window even opens.
+let adblockRust = null;
+try {
+  adblockRust = require('adblock-rs');
+} catch (err) {
+  console.error('[adblock] adblock-rs native module failed to load — network ad-blocking will report as failed until this is fixed (see package.json/README for the Rust+MSVC build requirement)', err);
+}
 const diagnostics = require('./diagnostics');
 
 // Real EasyList/EasyPrivacy-compatible filter engine (Ghostery's
@@ -112,6 +136,25 @@ function categorizeHostname(hostname) {
   return h.includes('track') || h.includes('metric') || h.includes('pixel') ? 'tracking' : 'other';
 }
 
+// Electron's webRequest resourceType strings -> the request-type strings
+// adblock-rs's Rust core actually parses (confirmed against the upstream
+// RequestType::from_str match arms in brave/adblock-rust's src/request.rs,
+// not guessed): main_frame/sub_frame/csp_report/websocket use an underscored
+// or differently-cased form there; script/image/stylesheet/font/object/
+// media/ping/xhr are already identical strings on both sides, so this table
+// only needs entries where they diverge — anything else passes through
+// unchanged and an unrecognized value already falls back to "other" on the
+// Rust side.
+const RESOURCE_TYPE_TO_ADBLOCK_RS = {
+  mainFrame: 'main_frame',
+  subFrame: 'sub_frame',
+  cspReport: 'csp_report',
+  webSocket: 'websocket'
+};
+function mapElectronResourceType(resourceType) {
+  return RESOURCE_TYPE_TO_ADBLOCK_RS[resourceType] || resourceType || 'other';
+}
+
 // Simple 3-position preset the shield popup's mode slider drives — see
 // adBlockMode's comment in store.js. 'cookies'/'annoyances' are reserved for
 // 'super' only — confirmed live this session that a real "video ya no está
@@ -138,7 +181,18 @@ const AD_BLOCK_STATS_HOST_CAP = 200;
 const AD_BLOCK_LOG_CAP = 500;
 
 function createAdblockManager({ getData, persist, broadcastState, getAccount }) {
-  let adBlockEngine = null;
+  // Two engines, split by what each is actually used for — see the header
+  // comment on the adblock-rs require() above:
+  //  - networkEngine (adblock-rs / Brave's native engine): the real
+  //    block/allow decision for every network request. This is what
+  //    isEngineReady()/engineStatus report, and what protectionLevel gates.
+  //  - cosmeticEngine (Ghostery's engine, unchanged from before this pass):
+  //    CSS-hides leftover ad slots after a request is already blocked.
+  //    Doesn't gate protection status — if it fails to load, network
+  //    blocking above is completely unaffected, only the visual cleanup is
+  //    missing until the next successful rebuild.
+  let networkEngine = null;
+  let cosmeticEngine = null;
   // Real health state for the popup/diagnostics — isEngineReady() alone
   // (a boolean) can't distinguish "still building on first launch" from
   // "the fetch failed and nothing will ever load until a restart", which
@@ -221,11 +275,151 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
     return path.join(app.getPath('userData'), `adblock-engine-cache-${suffix}.bin`);
   }
 
+  // Same idea as adBlockCacheFileFor above, but a distinct filename — the
+  // two engines' serialize() formats aren't compatible with each other, so
+  // reusing the old name would mean feeding adblock-rs's deserialize() bytes
+  // that were actually written by Ghostery's engine (or vice versa on a
+  // downgrade), which throws. A new prefix keeps them from ever colliding —
+  // the old adblock-engine-cache-*.bin files just become harmless orphans.
+  function adblockRsCacheFileFor(app, enabled) {
+    const suffix = Object.keys(FILTER_LIST_CATEGORIES)
+      .filter((key) => enabled[key])
+      .sort()
+      .join('-') || 'none';
+    return path.join(app.getPath('userData'), `adblock-rs-engine-cache-${suffix}.bin`);
+  }
+
+  async function fetchFilterListsText(urls) {
+    const texts = await Promise.all(urls.map((url) => fetch(url).then((r) => r.text())));
+    return texts.join('\n');
+  }
+
+  // adblock-rs's own network-matching engine (Brave's native Rust engine —
+  // see the require() header comment). Built with RuleTypes.NETWORK_ONLY:
+  // cosmetic rules still stay on Ghostery's engine below, so there's no
+  // reason to also parse/index them here — that would just double the
+  // memory cost of the one thing this pass was supposed to *not* make worse.
+  //
+  // NOTE — scope cut, deliberate: $redirect=/##+js() scriptlet resources are
+  // NOT loaded here (no useResources() call). adblock-rs expects uBlock
+  // Origin's raw resource files (web_accessible_resources/, redirect-
+  // resources.js, scriptlets.js) as local files, not a couple of fetchable
+  // URLs the way filter lists are — mirroring uBO's whole resource-asset
+  // layout is real, separate scope, not something to half-build inside this
+  // pass. The vast majority of EasyList/uBO rules are plain network block
+  // rules and are completely unaffected; only the minority that specify
+  // $redirect= won't get their substitution effect until this is revisited.
+  async function loadNetworkEngine(app, enabled, customRules) {
+    if (!adblockRust) {
+      throw new Error('adblock-rs native module is not available (see the require() at the top of this file) — network blocking cannot start');
+    }
+    if (!customRules) {
+      const cachePath = adblockRsCacheFileFor(app, enabled);
+      try {
+        const cached = await fs.promises.readFile(cachePath);
+        // deserialize() downcasts strictly to a real ArrayBuffer — a Node
+        // Buffer (what readFile() returns) is a Uint8Array VIEW over one,
+        // not an ArrayBuffer itself, and gets rejected as-is (confirmed live
+        // — "failed to downcast any to JsArrayBuffer" — before adding this
+        // slice). .buffer alone isn't safe either: Node may back a Buffer
+        // with a larger pooled ArrayBuffer, so the slice has to be bounded
+        // by byteOffset/byteLength or it'd hand over unrelated pool bytes.
+        const cachedArrayBuffer = cached.buffer.slice(cached.byteOffset, cached.byteOffset + cached.byteLength);
+        const cachedEngine = new adblockRust.Engine(new adblockRust.FilterSet());
+        cachedEngine.deserialize(cachedArrayBuffer);
+        return cachedEngine;
+      } catch {
+        // No cache yet (first time this category combo is selected) or the
+        // cached bytes are stale/unreadable (e.g. an adblock-rs version
+        // bump changed the serialize format) — fall through to a real build.
+      }
+      const text = await fetchFilterListsText(activeFilterListUrls());
+      const filterSet = new adblockRust.FilterSet(false);
+      filterSet.addFilters(text, { rule_types: adblockRust.RuleTypes.NETWORK_ONLY });
+      const engine = new adblockRust.Engine(filterSet);
+      try {
+        await fs.promises.writeFile(cachePath, Buffer.from(engine.serialize()));
+      } catch (err) {
+        console.error('[adblock] failed to write network engine cache (non-fatal — engine still works, just rebuilds every launch)', err);
+      }
+      return engine;
+    }
+    // Custom rules can change any time from the dashboard or the element
+    // picker, so they can't go through the binary cache — fetch + parse
+    // every time, same tradeoff the cosmetic engine below already accepts
+    // for the same reason.
+    const text = await fetchFilterListsText(activeFilterListUrls());
+    const filterSet = new adblockRust.FilterSet(false);
+    filterSet.addFilters([text, customRules].join('\n'), { rule_types: adblockRust.RuleTypes.NETWORK_ONLY });
+    return new adblockRust.Engine(filterSet);
+  }
+
+  // Ghostery's engine, used only for cosmetic filtering now (see the two-
+  // engines comment on the networkEngine/cosmeticEngine declarations above)
+  // — otherwise identical to how the single engine used to be built before
+  // this pass, just relocated into its own function so loadAdBlockEngine can
+  // build both engines in parallel.
+  async function loadCosmeticEngine(app, enabled, customRules) {
+    if (!customRules) {
+      return ElectronBlocker.fromLists(fetch, activeFilterListUrls(), {}, {
+        path: adBlockCacheFileFor(app, enabled),
+        read: (p) => fs.promises.readFile(p),
+        write: (p, buf) => fs.promises.writeFile(p, buf)
+      });
+    }
+    const [lists, resources] = await Promise.all([
+      fetchLists(fetch, activeFilterListUrls()),
+      fetchResources(fetch)
+    ]);
+    const engine = ElectronBlocker.parse([...lists, customRules].join('\n'));
+    if (resources) engine.updateResources(resources, '' + resources.length);
+    return engine;
+  }
+
+  function emptyCategoryCounts() {
+    return { ads: 0, tracking: 0, social: 0, analytics: 0, other: 0 };
+  }
+  // Per-page breakdown by category (shield popup "qué se bloqueó" detail,
+  // Brave-Shields-style) — separate from stats.byCategory in store.js, which
+  // is lifetime-since-install and never resets. Reset alongside the other
+  // per-page maps below on every real navigation.
+  const pageCategoryBlocked = new Map(); // accountId -> {ads,tracking,social,analytics,other}
+
   function resetPageAdBlockStats(accountId) {
     blockedCounts.set(accountId, 0);
     pageDomainsSeen.set(accountId, new Set());
     pageDomainsBlocked.set(accountId, new Set());
     pageRequestsTotal.set(accountId, 0);
+    pageCategoryBlocked.set(accountId, emptyCategoryCounts());
+  }
+
+  // recordAdBlockStat used to call the injected persist() (main.js's fast,
+  // 400ms-debounced write) directly on every single blocked request — on a
+  // page with a steady stream of ads/trackers that meant the FULL store
+  // (accounts, history, passwords, settings, not just these counters) kept
+  // rewriting to disk every ~400ms for as long as browsing continued. This
+  // debounce is deliberately longer (5s) and only covers stat-only changes;
+  // anything else that calls the injected persist() directly (a real
+  // settings/account change) still gets the fast, snappy 400ms path.
+  const STATS_PERSIST_DEBOUNCE_MS = 5000;
+  let statsPersistTimer = null;
+  function persistStatsDebounced() {
+    if (statsPersistTimer) return;
+    statsPersistTimer = setTimeout(() => {
+      statsPersistTimer = null;
+      persist();
+    }, STATS_PERSIST_DEBOUNCE_MS);
+  }
+  // Called from main.js right before flushPersist() on quit — flushPersist()
+  // only knows about its own persistDirty/persistTimer, not this module's
+  // separate slow debounce, so without this a graceful quit could drop up to
+  // 5s of ad-block stats that a crash-safety flush would otherwise catch.
+  function flushAdBlockStatsPersist() {
+    if (statsPersistTimer) {
+      clearTimeout(statsPersistTimer);
+      statsPersistTimer = null;
+      persist();
+    }
   }
 
   function recordAdBlockStat(hostname, category) {
@@ -242,7 +436,7 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
         .slice(0, hosts.length - AD_BLOCK_STATS_HOST_CAP)
         .forEach((h) => delete stats.byHost[h]);
     }
-    persist();
+    persistStatsDebounced();
   }
 
   function recordAdBlockEntry(accountId, entry) {
@@ -253,6 +447,12 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
     }
     diagnostics.pushCapped(log, entry, AD_BLOCK_LOG_CAP);
     recordAdBlockStat(entry.hostname, entry.category);
+    let pageCounts = pageCategoryBlocked.get(accountId);
+    if (!pageCounts) {
+      pageCounts = emptyCategoryCounts();
+      pageCategoryBlocked.set(accountId, pageCounts);
+    }
+    pageCounts[entry.category] = (pageCounts[entry.category] || 0) + 1;
   }
 
   // Async and called after the first window is up — building/loading the
@@ -267,7 +467,7 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
   // hits vs. misses (or the custom-rules network-fetch path) have wildly
   // different latencies, so a rebuild triggered by an OLDER settings change
   // can finish after a NEWER one and silently overwrite it — leaving
-  // adBlockEngine/engineStatus reporting 'ready' for a build that no longer
+  // networkEngine/engineStatus reporting 'ready' for a build that no longer
   // matches the currently-selected filter lists. Each call captures its own
   // generation number and only commits its result if no newer call has
   // started in the meantime; a stale result is simply discarded (the newer
@@ -282,31 +482,31 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
       const { app } = require('electron');
       const enabled = getData().settings.adBlockFilterLists || {};
       const customRules = (getData().settings.adBlockCustomRules || []).join('\n').trim();
-      let engine;
-      if (!customRules) {
-        // Common case (no custom rules): the disk-cached binary engine path,
-        // ~30ms after the first build — see the comment above this function.
-        engine = await ElectronBlocker.fromLists(fetch, activeFilterListUrls(), {}, {
-          path: adBlockCacheFileFor(app, enabled),
-          read: (p) => fs.promises.readFile(p),
-          write: (p, buf) => fs.promises.writeFile(p, buf)
-        });
-      } else {
-        // Custom rules can't go through the binary cache (they can change
-        // any time from the dashboard or the element picker) — fetch +
-        // text-parse every time this runs instead. Same ~1.4s parse cost a
-        // cold cache pays normally, just paid on every reload while any
-        // custom rule exists — accepted tradeoff for correctness over speed
-        // here.
-        const [lists, resources] = await Promise.all([
-          fetchLists(fetch, activeFilterListUrls()),
-          fetchResources(fetch)
-        ]);
-        engine = ElectronBlocker.parse([...lists, customRules].join('\n'));
-        if (resources) engine.updateResources(resources, '' + resources.length);
-      }
+
+      // Both engines built in parallel — same total wall-clock cost as
+      // building just one used to be, not the sum of both. cosmeticEngine is
+      // best-effort: a failure there degrades cosmetic hiding only, and
+      // shouldn't fail protection outright, since networkEngine is what
+      // actually gates protectionLevel/blocking. Promise.allSettled (not
+      // Promise.all) is what makes that split possible — an
+      // ElectronBlocker.fromLists() rejection can't take networkEngine down
+      // with it.
+      const [networkResult, cosmeticResult] = await Promise.allSettled([
+        loadNetworkEngine(app, enabled, customRules),
+        loadCosmeticEngine(app, enabled, customRules)
+      ]);
+
       if (myGeneration !== loadGeneration) return; // superseded by a newer rebuild — discard
-      adBlockEngine = engine;
+
+      if (networkResult.status === 'rejected') throw networkResult.reason;
+      networkEngine = networkResult.value;
+
+      if (cosmeticResult.status === 'fulfilled') {
+        cosmeticEngine = cosmeticResult.value;
+      } else {
+        console.error('[adblock] cosmetic engine failed to load (network blocking above is unaffected)', cosmeticResult.reason);
+      }
+
       engineStatus = 'ready';
       console.log('[adblock] engine ready');
     } catch (err) {
@@ -318,9 +518,9 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
   }
 
   // Called when the user changes adBlockFilterLists from the dashboard —
-  // the old engine keeps serving requests (adBlockEngine isn't cleared)
-  // until the new one finishes loading, so toggling a category never opens
-  // the ADBLOCK_STARTUP_FALLBACK gap the way the very first launch does.
+  // the old engines keep serving requests (neither is cleared) until the new
+  // ones finish loading, so toggling a category never opens the
+  // ADBLOCK_STARTUP_FALLBACK gap the way the very first launch does.
   async function rebuildAdBlockEngine() {
     await loadAdBlockEngine();
   }
@@ -345,15 +545,15 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
     if (cosmeticIpcRegistered) return;
     cosmeticIpcRegistered = true;
     ipcMain.handle('@ghostery/adblocker/inject-cosmetic-filters', (event, url, msg) => {
-      if (!adBlockEngine) return;
+      if (!cosmeticEngine) return;
       if ((getData().settings.protectionLevel || 'standard') === 'off') return;
       const hostname = hostnameFromUrlLike(url);
       if (!hostname) return;
       if (isAllowlistedHost(hostname) || isSitePaused(hostname)) return;
-      return adBlockEngine.onInjectCosmeticFilters(event, url, msg);
+      return cosmeticEngine.onInjectCosmeticFilters(event, url, msg);
     });
     ipcMain.handle('@ghostery/adblocker/is-mutation-observer-enabled', () => {
-      return !!(adBlockEngine && adBlockEngine.config && adBlockEngine.config.enableMutationObserver);
+      return !!(cosmeticEngine && cosmeticEngine.config && cosmeticEngine.config.enableMutationObserver);
     });
   }
 
@@ -416,7 +616,7 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
         callback({});
         return;
       }
-      if (!adBlockEngine) {
+      if (!networkEngine) {
         // Full engine not loaded yet (see the comment on
         // ADBLOCK_STARTUP_FALLBACK) — small built-in list instead of nothing.
         const blocked = matchesStartupFallback(hostname) || (level === 'strict' && details.resourceType === 'ping');
@@ -438,12 +638,18 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
         }
         return;
       }
-      // fromElectronDetails needs `referrer` to know the request's source
-      // page for correct first-party/third-party classification — confirmed
-      // live that filter matching silently returns false without it, even
-      // for an obviously-ad domain like doubleclick.net.
-      const request = fromElectronDetails(details);
-      const blocked = adBlockEngine.match(request).match || (level === 'strict' && details.resourceType === 'ping');
+      // details.referrer needs to be there for correct first-party/third-
+      // party classification — confirmed live (same finding that used to
+      // apply to fromElectronDetails with the old engine) that filter
+      // matching silently returns false without it, even for an obviously-ad
+      // domain like doubleclick.net. Falls back to the request's own URL on
+      // a top-level navigation, where referrer is legitimately empty.
+      const blocked = networkEngine.check(
+        details.url,
+        details.referrer || details.url,
+        mapElectronResourceType(details.resourceType),
+        details.method || 'GET'
+      ) || (level === 'strict' && details.resourceType === 'ping');
       if (blocked) {
         blockedCounts.set(accountId, (blockedCounts.get(accountId) || 0) + 1);
         let blockedSet = pageDomainsBlocked.get(accountId);
@@ -473,14 +679,19 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
     return adBlockLog.get(accountId) || null;
   }
 
+  // Reports networkEngine's readiness, not cosmeticEngine's — networkEngine
+  // is what actually gates block/allow decisions; cosmeticEngine is a
+  // best-effort visual extra (see the two-engines comment on their
+  // declarations above), so its own failure shouldn't read as "protection
+  // isn't working" to the user.
   function isEngineReady() {
-    return !!adBlockEngine;
+    return !!networkEngine;
   }
 
   function getEngineStatus() {
     return {
       status: engineStatus,
-      ready: !!adBlockEngine,
+      ready: !!networkEngine,
       lastError: engineLastError
     };
   }
@@ -493,6 +704,7 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
     pageDomainsSeen.delete(accountId);
     pageDomainsBlocked.delete(accountId);
     pageRequestsTotal.delete(accountId);
+    pageCategoryBlocked.delete(accountId);
     adBlockLog.delete(accountId);
   }
 
@@ -666,6 +878,7 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
         staticallyAllowed,
         blockedOnPage: blockedCounts.get(id) || 0,
         requestsOnPage: pageRequestsTotal.get(id) || 0,
+        blockedByCategoryOnPage: { ...(pageCategoryBlocked.get(id) || emptyCategoryCounts()) },
         totalSinceInstall: stats.total,
         byCategory: { ...stats.byCategory },
         topHosts,
@@ -673,7 +886,7 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
         manualBlocklist: data.settings.adBlockManualBlocklist || [],
         customRules: data.settings.adBlockCustomRules || [],
         filterLists: data.settings.adBlockFilterLists,
-        engineReady: !!adBlockEngine,
+        engineReady: !!networkEngine,
         engineStatus: getEngineStatus()
       };
     });
@@ -690,8 +903,16 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
     getLogForAccount,
     isEngineReady,
     getEngineStatus,
-    cleanupAccount
+    cleanupAccount,
+    flushAdBlockStatsPersist,
+    // Exported for unit tests (test/unit/adblock-stats-persist.test.js) —
+    // otherwise recordAdBlockStat/recordAdBlockEntry are only ever called
+    // internally, reachable in production only through a real blocked
+    // network request inside applyAdBlock's onBeforeRequest handler.
+    recordAdBlockStat,
+    recordAdBlockEntry,
+    getBlockedByCategoryOnPage: (accountId) => ({ ...(pageCategoryBlocked.get(accountId) || emptyCategoryCounts()) })
   };
 }
 
-module.exports = { createAdblockManager, FILTER_LIST_CATEGORIES };
+module.exports = { createAdblockManager, FILTER_LIST_CATEGORIES, mapElectronResourceType };

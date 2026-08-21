@@ -126,6 +126,10 @@ Como el instalador no tiene certificado de firma de código, en algunos equipos 
 
 Construido con [Electron](https://www.electronjs.org/) — motor Chromium real, no una implementación propia — así que cualquier sitio web funciona exactamente igual que en un navegador tradicional.
 
+**Bloqueo de anuncios y rastreadores:** la decisión de red (bloquear/permitir cada request) corre sobre [`adblock-rs`](https://github.com/brave/adblock-rust), el mismo motor nativo en Rust que usa Brave — no una reimplementación propia. El filtrado cosmético (ocultar los huecos vacíos que deja un anuncio bloqueado) sigue corriendo sobre el motor de [`@ghostery/adblocker-electron`](https://github.com/ghostery/adblocker), sin cambios.
+
+**Para clonar y correr desde código fuente:** `adblock-rs` no trae binarios precompilados — `npm install` compila el motor desde Rust la primera vez (`cargo build --release`), así que además de Node hace falta tener instalados [Rust](https://rustup.rs/) y, en Windows, las **Build Tools de C++ de Visual Studio** (workload "Desktop development with C++"). Si te falta alguno de los dos, `npm install` va a fallar con un error de `cargo` o del linker — no es un bug del proyecto, es justo lo que hace falta instalar antes.
+
 ---
 
 ## Herramientas nuevas (v0.3.8)
@@ -156,7 +160,16 @@ Medido con el mismo escenario cada vez (3 cuentas recién abiertas, todas en la 
 
 **Por qué subió la RAM en 0.3.8 en vez de bajar más:** trade-off consciente, no una regresión — los tres flags que agregamos para que las cuentas en segundo plano dejen de desconectarse (ver Changelog) le dicen a Chromium que no les baje prioridad a esas cuentas para nada, así que retiene más memoria en vez de recortarla agresivamente. Estabilidad primero.
 
-Antes de publicar la próxima versión, correr este mismo escenario y agregar una fila — evita repetir el trabajo de armar un worktree de la versión vieja para comparar a mano.
+Desde `dev (post-0.3.8)` en adelante, este mismo escenario corre solo con `node scripts/perf-benchmark.js` (perf audit 2026-08-21) en vez de armarse a mano — ver el script para el detalle exacto de qué mide. **Sus números no son comparables punto a punto con las filas de arriba**: el script fuerza `--disable-gpu --use-angle=warp` (mismos flags que ya usa el harness e2e) y "RAM total" ahí es solo memoria de los procesos renderer por cuenta (`metrics:get`), no el total de `app.getAppMetrics()` incluyendo main/GPU/utility como sí parecen incluir las filas históricas — de ahí el salto grande. Las dos filas siguientes sí son comparables entre sí (mismo script, misma sesión, mismo día):
+
+| Versión | RAM (suma por cuenta) | Procesos (`getAppMetrics().length`) | CPU total | Medido |
+|---|---|---|---|---|
+| dev (pre-perf-audit, HEAD 3276fc8) | 333 MB (promedio de 3 corridas: 339/330/330) | 9 | 1.6% | 2026-08-21 |
+| **dev (post-perf-audit, sin versionar aún)** | 352 MB (promedio de 3 corridas: 370/370/315) | 9.7 | **0.6%** (-64%) | 2026-08-21 |
+
+**CPU bajó a menos de la mitad, de forma consistente en las 3 corridas** — coherente con lo que cambió: overlays de FPS/ping apagados por defecto (antes corrían en las 3 cuentas todo el tiempo), escritura del store ya no bloquea el hilo principal, y el sidebar deja de reconstruirse entero en cada actualización de estado irrelevante. RAM y cantidad de procesos no muestran una tendencia clara en ningún sentido entre las 3 corridas de cada lado — nada de lo que se tocó en esta pasada apuntaba a bajar la memoria estática, y el escenario navega contra el login real del juego en internet, así que esos dos números están dominados por lo que esa página en particular cargó en cada corrida (ads/analytics/CDN), no por el código de Nexa.
+
+Antes de publicar la próxima versión, correr `node scripts/perf-benchmark.js` y agregar una fila — evita repetir el trabajo de armar un worktree de la versión vieja para comparar a mano.
 
 ---
 

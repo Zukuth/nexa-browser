@@ -171,7 +171,8 @@ const adblockManager = createAdblockManager({
   broadcastState: () => broadcastState(),
   getAccount: (id) => getAccount(id)
 });
-const { applyAdBlock, loadAdBlockEngine, rebuildAdBlockEngine, resetPageAdBlockStats } = adblockManager;
+const { applyAdBlock, loadAdBlockEngine, rebuildAdBlockEngine, resetPageAdBlockStats, flushAdBlockStatsPersist } = adblockManager;
+const { injectFpsOverlay, setFpsOverlayVisible, injectPingOverlay, setPingOverlayVisible } = require('./overlay-manager');
 
 function isAllowedExternalSupportUrl(url) {
   try {
@@ -463,6 +464,10 @@ const poppedOutWindows = new Map();
 const PERSIST_DEBOUNCE_MS = 400;
 let persistTimer = null;
 let persistDirty = false;
+// store.save() is async now (see store.js) — this tracks the promise of
+// whatever write is currently running so flushPersist() can actually wait
+// for it instead of returning before the data has landed on disk.
+let persistInFlight = null;
 
 // store.js's save() still expects each password entry to carry its real
 // `password` field (it's the one that encrypts it before writing to disk) —
@@ -475,6 +480,21 @@ function dataForPersist() {
   };
 }
 
+// Opt-in timing log (NEXA_PERF_LOG=1 in the environment) for measuring the
+// real effect of the perf work above/below instead of guessing — silent by
+// default so normal use doesn't add a line to main.log on every write.
+const PERF_LOG = !!process.env.NEXA_PERF_LOG;
+function runPersistSave(label) {
+  const startedAt = Date.now();
+  return store.save(dataForPersist())
+    .then(() => {
+      if (PERF_LOG) console.log(`[perf] ${label} store.save() took ${Date.now() - startedAt}ms`);
+    })
+    .catch((err) => {
+      console.error(`[main] ${label} write failed`, err);
+    });
+}
+
 function persist() {
   persistDirty = true;
   if (persistTimer) return;
@@ -482,20 +502,25 @@ function persist() {
     persistTimer = null;
     if (persistDirty) {
       persistDirty = false;
-      store.save(dataForPersist());
+      persistInFlight = runPersistSave('persist()');
     }
   }, PERSIST_DEBOUNCE_MS);
 }
 
-function flushPersist() {
+// Called on quit (see 'before-quit' below), which now actually awaits this —
+// store.save() no longer blocks the main thread while writing, so the only
+// way to guarantee the last change lands on disk before the process exits is
+// to wait for its promise instead of firing it and immediately quitting.
+async function flushPersist() {
   if (persistTimer) {
     clearTimeout(persistTimer);
     persistTimer = null;
   }
   if (persistDirty) {
     persistDirty = false;
-    store.save(dataForPersist());
+    persistInFlight = runPersistSave('flushPersist()');
   }
+  if (persistInFlight) await persistInFlight;
 }
 
 function getAccount(id) {
@@ -1416,220 +1441,10 @@ function startAutoEcoLoop() {
   }, AUTO_ECO_POLL_MS);
 }
 
-// Real per-tab FPS counter — measures the actual page's own render loop
-// (whatever it's doing with requestAnimationFrame, including Modo Eco's
-// throttle if that account has it on), not nexa-browser's own chrome FPS
-// (that's the separate counter already in the status bar, measuring the
-// host UI's rAF, not any account's content). Runs for every account, not
-// just the game, so the user can see real FPS on any tab. Idempotent via
-// window.__nexaFpsOverlay, safe to re-run on every did-finish-load — reuses
-// the same badge element instead of appending duplicates. `visible` sets the
-// starting display state (data.settings.showFpsOverlay at injection time);
-// toggling the setting later without a reload goes through
-// setFpsOverlayVisible() below instead of re-injecting.
-// Color thresholds mirror what GPU benchmarking overlays (MSI Afterburner/
-// RTSS) already do — green is healthy, yellow is a real but survivable
-// slowdown (matches Modo Eco's 30fps cap on purpose, not a false alarm),
-// red means something is actually wrong.
-const FPS_COLOR_SCRIPT = `
-    function nexaFpsColor(fps) {
-      if (fps >= 45) return '#3ddc57';
-      if (fps >= 20) return '#e0c341';
-      return '#e05555';
-    }
-`;
-function injectFpsOverlay(wc, visible) {
-  wc.executeJavaScript(
-    `(function() {
-      if (window.__nexaFpsOverlay) return;
-      window.__nexaFpsOverlay = true;
-      ${FPS_COLOR_SCRIPT}
-      const badge = document.createElement('div');
-      badge.id = 'nexa-fps-badge';
-      // contain:layout style paint scopes every future text update to just
-      // this element's own box — without it, a fixed-position element whose
-      // content changes width every second (9 FPS vs 123 FPS) can still make
-      // the browser walk up looking for anything that might need to react,
-      // on a page that's already busy rendering a real game. This tells it
-      // up front that nothing outside this box ever needs to know.
-      badge.style.cssText = 'position:fixed;top:6px;right:6px;z-index:2147483647;background:rgba(0,0,0,0.55);color:#3ddc57;font:11px monospace;padding:2px 6px;border-radius:4px;pointer-events:none;contain:layout style paint;display:${visible ? '' : 'none'};';
-      badge.textContent = '… FPS';
-      (document.body || document.documentElement).appendChild(badge);
-      let frames = 0;
-      let last = performance.now();
-      // Toggling the setting off used to only hide the badge with
-      // display:none — the rAF loop itself kept running forever underneath,
-      // still doing real work (a callback every single frame, competing with
-      // the game's own canvas rendering) for an account nobody could even see
-      // a counter on. window.__nexaFpsSetRunning lets setFpsOverlayVisible
-      // below actually stop/restart the loop instead of just hiding its output.
-      let running = ${visible};
-      function loop(now) {
-        if (!running) return;
-        frames += 1;
-        if (now - last >= 1000) {
-          badge.textContent = frames + ' FPS';
-          badge.style.color = nexaFpsColor(frames);
-          frames = 0;
-          last = now;
-        }
-        requestAnimationFrame(loop);
-      }
-      window.__nexaFpsSetRunning = (on) => {
-        const wasRunning = running;
-        running = on;
-        badge.style.display = on ? '' : 'none';
-        if (on && !wasRunning) {
-          frames = 0;
-          last = performance.now();
-          requestAnimationFrame(loop);
-        }
-      };
-      if (running) requestAnimationFrame(loop);
-    })();`
-  ).catch(() => {});
-}
-
-// Toggles the already-injected FPS badge on/off, and — unlike the old
-// display:none-only version — actually stops the rAF loop while off instead
-// of leaving it running invisibly. Used when the user flips "Mostrar FPS" in
-// Configuración while accounts are already open.
-function setFpsOverlayVisible(wc, visible) {
-  wc.executeJavaScript(
-    `(function() {
-      if (window.__nexaFpsSetRunning) window.__nexaFpsSetRunning(${visible});
-    })();`
-  ).catch(() => {});
-}
-
-// Real per-tab latency/ping counter — same idea and same visual style as
-// injectFpsOverlay above, but bottom-right instead of top-right, and
-// measuring round-trip time to the page's own origin instead of render FPS.
-// Uses a same-origin HEAD request (no CORS issues on any site, no extra
-// content downloaded) timed with performance.now(); a GET fallback covers
-// servers that reject HEAD on that route. Runs for every account, not just
-// the game — this is a generic "how's my connection to whatever site is
-// loaded" indicator. Idempotent via window.__nexaPingOverlay, safe to
-// re-run on every did-finish-load. Same green/yellow/red convention as the
-// FPS badge, tuned for a HEAD round-trip instead of a frame rate.
-const PING_COLOR_SCRIPT = `
-    function nexaPingColor(ms) {
-      if (ms <= 100) return '#3ddc57';
-      if (ms <= 300) return '#e0c341';
-      return '#e05555';
-    }
-`;
-function injectPingOverlay(wc, visible) {
-  wc.executeJavaScript(
-    `(function() {
-      if (window.__nexaPingOverlay) return;
-      window.__nexaPingOverlay = true;
-      ${PING_COLOR_SCRIPT}
-      const badge = document.createElement('div');
-      badge.id = 'nexa-ping-badge';
-      // contain:layout style paint — same reasoning as the FPS badge above:
-      // scopes this element's own text updates to its own box instead of
-      // Chromium walking outward looking for anything that might react, on a
-      // page already busy rendering a real game.
-      badge.style.cssText = 'position:fixed;bottom:6px;right:6px;z-index:2147483647;background:rgba(0,0,0,0.55);color:#3ddc57;font:11px monospace;padding:2px 6px;border-radius:4px;pointer-events:none;contain:layout style paint;display:${visible ? '' : 'none'};';
-      badge.textContent = '… ms';
-      (document.body || document.documentElement).appendChild(badge);
-      // Some sites' SPA routing 404s on HEAD for a client-side route (e.g.
-      // dragonballidle.online/play — confirmed live: HEAD -> 404, GET -> 200)
-      // while GET on that same URL succeeds. Chromium logs that 404 to the
-      // console itself at the network layer no matter what the JS around it
-      // does, so the very first tick can't avoid it — but remembering the
-      // failure and skipping straight to GET afterwards stops it from
-      // repeating on every single 2s tick for the rest of the page's life.
-      let headUnsupported = false;
-      async function measure() {
-        // fetch() only supports http(s) — about:blank (every account starts
-        // there before its real src loads) and any other scheme throw
-        // "Fetch API cannot load ... URL scheme is not supported" as a real
-        // console error every 2s regardless of the try/catch around it
-        // (Chromium logs the failed request at the network layer, not just
-        // as a JS exception) — confirmed live as exactly the spam reported.
-        // Skip the tick entirely instead of letting it always fail.
-        if (!location.protocol.startsWith('http')) return;
-        const url = location.href;
-        const start = performance.now();
-        let ok = false;
-        if (!headUnsupported) {
-          try {
-            ok = (await fetch(url, { method: 'HEAD', cache: 'no-store' })).ok;
-          } catch (e) {
-            // network-level failure (offline, blocked) — fall through to GET below.
-          }
-          if (!ok) headUnsupported = true;
-        }
-        if (!ok) {
-          try {
-            ok = (await fetch(url, { method: 'GET', cache: 'no-store' })).ok;
-          } catch (e2) {
-            // offline or blocked — leave the last known value showing.
-          }
-        }
-        if (!ok) return; // HEAD and GET both failed/non-2xx — don't show a bogus number.
-        // Wall-clock around the awaited fetch (the old approach) doesn't
-        // measure network time alone — it also includes however long this
-        // callback had to wait in line for a free tick on the main thread.
-        // On a page doing heavy canvas work (a busy idle-game battle scene,
-        // dozens of sprites, already-low FPS) that queueing delay dwarfs the
-        // real round-trip and shows a "ping" of tens of seconds that has
-        // nothing to do with the network. Resource Timing entries are
-        // stamped by the browser's network stack at the moment each event
-        // actually happened, independent of when JS gets around to reading
-        // them, so pulling the duration from there instead reports real
-        // transfer time even while the main thread is starved. Falls back to
-        // the wall-clock number if the entry isn't found for some reason
-        // (buffer disabled, evicted) rather than showing nothing.
-        const entries = performance.getEntriesByType('resource').filter((e) => e.name === url && e.startTime >= start - 50);
-        const entry = entries[entries.length - 1];
-        const ms = entry ? Math.round(entry.responseEnd - entry.startTime) : Math.round(performance.now() - start);
-        performance.clearResourceTimings();
-        badge.textContent = ms + ' ms';
-        badge.style.color = nexaPingColor(ms);
-      }
-      // Same problem as the FPS badge above: display:none alone left this
-      // setInterval firing a real network request every 3s forever, even
-      // for an account whose ping counter the user explicitly turned off.
-      // window.__nexaPingSetRunning actually starts/stops the timer.
-      // 3000ms, not the original 2000ms — a status badge doesn't need
-      // sub-3s freshness to read as live, and this is one fewer real fetch()
-      // per account per 6s competing with the game's own canvas rendering
-      // on that same thread (same reasoning as the hunt-telemetry poll
-      // interval bump in game-telemetry.js, see POLL_BASE_INTERVAL_MS).
-      let intervalId = null;
-      function start() {
-        if (intervalId) return;
-        measure();
-        intervalId = setInterval(measure, 3000);
-      }
-      function stop() {
-        if (intervalId) {
-          clearInterval(intervalId);
-          intervalId = null;
-        }
-      }
-      window.__nexaPingSetRunning = (on) => {
-        badge.style.display = on ? '' : 'none';
-        if (on) start(); else stop();
-      };
-      if (${visible}) start();
-    })();`
-  ).catch(() => {});
-}
-
-// Same live-toggle pattern as setFpsOverlayVisible, for the ping badge —
-// actually stops the 2s network-request timer while off, not just the
-// visible display.
-function setPingOverlayVisible(wc, visible) {
-  wc.executeJavaScript(
-    `(function() {
-      if (window.__nexaPingSetRunning) window.__nexaPingSetRunning(${visible});
-    })();`
-  ).catch(() => {});
-}
+// FPS/ping per-tab overlays live in overlay-manager.js now (perf/
+// maintainability pass, 2026-08-21 — see the header comment there). This
+// file only calls injectFpsOverlay/setFpsOverlayVisible/injectPingOverlay/
+// setPingOverlayVisible via the destructured import near the top of main.js.
 
 // Replaces the old floating Pokéball button (which toggled visibility by hand,
 // no actual savings) with real persistent settings: hiding the game's chat
@@ -4655,6 +4470,21 @@ ipcMain.handle('metrics:get', () => {
   return result;
 });
 
+// Lighter alternative to metrics:get for when the per-account CPU/RAM row is
+// turned off (settings.showAccountMetrics) — the shield's blocked-ads badge
+// in the topbar still needs live counts, but getBlockedCount() is a cheap
+// in-memory lookup, unlike app.getAppMetrics() which actually samples every
+// open OS process. Keeps that opt-out honest (skips the real per-account
+// sampling cost) without silently breaking a different, still-wanted
+// feature.
+ipcMain.handle('metrics:getBlockedCounts', () => {
+  const result = {};
+  for (const id of views.keys()) {
+    result[id] = { cpu: 0, memoryMB: 0, blocked: adblockManager.getBlockedCount(id) };
+  }
+  return result;
+});
+
 ipcMain.handle('diagnostics:exportReport', async () => {
   const appMetrics = app.getAppMetrics();
   const byPid = new Map(appMetrics.map((m) => [m.pid, m]));
@@ -5475,13 +5305,28 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => {
+// flushPersist() is async (store.save() writes off-thread now) — quitting
+// immediately after calling it, like before, would let the process exit
+// mid-write on a machine slow enough for it to matter. preventDefault() once
+// to hold the quit open just long enough to actually await it, then quit for
+// real; quitConfirmed guards against re-entering this same delay forever
+// (app.quit() below re-fires this very event).
+let quitConfirmed = false;
+app.on('before-quit', (event) => {
+  if (quitConfirmed) return;
+  event.preventDefault();
   appQuitting = true;
   powerManager.shutdownPowerManager();
   if (data.settings.translateMemoryPersist) translate.savePersistedCache(TRANSLATE_MEMORY_FILE);
-  flushPersist();
-  // Bergamot's own README is explicit about this: skipping delete() on a
-  // NodeJS translator leaves its worker thread listening for messages
-  // forever, which can keep the process from exiting cleanly on its own.
-  translate.shutdown();
+  flushAdBlockStatsPersist();
+  flushPersist()
+    .catch((err) => console.error('[main] flushPersist on quit failed', err))
+    .finally(() => {
+      // Bergamot's own README is explicit about this: skipping delete() on a
+      // NodeJS translator leaves its worker thread listening for messages
+      // forever, which can keep the process from exiting cleanly on its own.
+      translate.shutdown();
+      quitConfirmed = true;
+      app.quit();
+    });
 });

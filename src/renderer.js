@@ -39,11 +39,13 @@ const panelLoadingPhase = new Map();
 const railSpacesEl = document.getElementById('rail-spaces');
 const btnAddSpace = document.getElementById('btn-add-space');
 const spaceNameEl = document.getElementById('space-name');
+const spaceColorDotEl = document.getElementById('space-color-dot');
 const btnEditSpace = document.getElementById('btn-edit-space');
 const btnCollapseSidebar = document.getElementById('btn-collapse-sidebar');
 const sidebarEl = document.getElementById('sidebar');
 const topbarEl = document.getElementById('topbar');
 const emptyStateEl = document.getElementById('empty-state');
+const gameAccountsHintEl = document.getElementById('game-accounts-hint');
 const btnEmptyAdd = document.getElementById('btn-empty-add');
 
 const tbBack = document.getElementById('tb-back');
@@ -285,6 +287,7 @@ const setAutoEcoMinutes = document.getElementById('set-auto-eco-minutes');
 const ecoSavingsHint = document.getElementById('eco-savings-hint');
 const setShowFpsOverlay = document.getElementById('set-show-fps');
 const setShowPingOverlay = document.getElementById('set-show-ping');
+const setShowAccountMetrics = document.getElementById('set-show-account-metrics');
 const setHuntTelemetry = document.getElementById('set-hunt-telemetry');
 const setTranslateMemoryPersist = document.getElementById('set-translate-memory-persist');
 const setHwAccel = document.getElementById('set-hw-accel');
@@ -448,12 +451,19 @@ let editingSpaceId = null;
 
 // Same rebuild-mid-drag hazard as dragInProgress above, but for the sidebar
 // account list / space rail (native HTML5 drag-and-drop reorder) — those two
-// lists get torn down and rebuilt (`innerHTML = ''`) by render()'s 1s
-// interval, which would cancel a drag in progress since the dragged element
-// is a live DOM node the browser is tracking.
+// lists get torn down and rebuilt (`innerHTML = ''`) by render(), which would
+// cancel a drag in progress since the dragged element is a live DOM node the
+// browser is tracking. (render() no longer runs on its own ticker — see the
+// comment above the metrics/gameStats setInterval calls near init() — it
+// fires reactively off onStateUpdate instead, which is still frequent enough
+// mid-drag to matter.)
 let listDragInProgress = false;
 let draggedAccountId = null;
 let draggedSpaceId = null;
+// See the sidebarSignature comment inside render() — lets it skip rebuilding
+// the account-list DOM when nothing about the accounts/groups themselves
+// changed since the last time it actually rebuilt.
+let lastSidebarSignature = null;
 
 function reorderIds(ids, draggedId, targetId) {
   const next = ids.filter((id) => id !== draggedId);
@@ -632,7 +642,78 @@ function formatDuration(ms) {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
+// Qualitative read for the per-account CPU row (inspired by Firefox's
+// about:performance "Energy Impact" column) — a bare "7.3%" doesn't say much
+// on its own next to a dozen other accounts; bajo/medio/alto reads at a
+// glance. Thresholds are a starting point (per-account renderer CPU%, not
+// system-wide), not measured against a specific workload.
+function cpuImpactLevel(cpuPercent) {
+  if (cpuPercent < 5) return { key: 'low', labelKey: 'js.metricsImpactLow' };
+  if (cpuPercent < 15) return { key: 'medium', labelKey: 'js.metricsImpactMedium' };
+  return { key: 'high', labelKey: 'js.metricsImpactHigh' };
+}
+
+// Opt-in timing log (localStorage.nexaPerfLog = '1', toggled from devtools)
+// for measuring the real effect of the sidebar-rebuild-skip and other perf
+// work instead of guessing — silent by default, no console noise in normal
+// use.
+const PERF_LOG = localStorage.getItem('nexaPerfLog') === '1';
+
+// Rebuilds just the CPU/RAM and game-stats rows inside each existing
+// .account-item, without touching the rest of the item (name, drag
+// handlers, status dot...) or requiring the full sidebar rebuild that
+// sidebarSignature otherwise skips. Cheap: at most 2 small elements swapped
+// per open account, not a teardown of the whole list — see the comment
+// where render() calls this for why it needs to run unconditionally.
+function refreshAccountMetricsRows() {
+  listEl.querySelectorAll('.account-item[data-account-id]').forEach((item) => {
+    item.querySelector('.account-metrics-row')?.remove();
+    item.querySelector('.account-game-stats-row')?.remove();
+
+    const accountId = item.dataset.accountId;
+    const account = state.accounts.find((a) => a.id === accountId);
+    if (!account || account.closed) return;
+
+    const m = metrics[accountId];
+    if (m && state.settings.showAccountMetrics !== false) {
+      const metricsRow = document.createElement('div');
+      metricsRow.className = 'account-metrics-row';
+      const impact = cpuImpactLevel(m.cpu);
+      metricsRow.innerHTML =
+        `<span>CPU ${m.cpu.toFixed(1)}%</span>` +
+        `<span class="metrics-impact ${impact.key}">${t(impact.labelKey)}</span>` +
+        `<span>RAM ${m.memoryMB} MB</span>`;
+      item.append(metricsRow);
+    }
+
+    // Fase B: only present for accounts on poke.idleworld.online — getGameStats()
+    // returns null for every other account, same shape as getMetrics() returning
+    // nothing for a closed account above.
+    const gs = gameStats[accountId];
+    if (gs) {
+      const gameRow = document.createElement('div');
+      gameRow.className = 'account-game-stats-row';
+      gameRow.title = gs.connected ? t('js.gameConnected') : t('js.gameDisconnected');
+      const dot = gs.connected ? '🟢' : '⚪';
+      const wallet = gs.wallet || {};
+      const trustedGoldSource = ['visual-shop', 'visual-hud', 'visual', 'adjusted'].includes(wallet.goldSource);
+      const walletHtml = wallet.gold != null && trustedGoldSource
+        ? `<span>${currencySymbol('GOLD')}${formatCompactNumber(wallet.gold)}</span>`
+        : '';
+      gameRow.innerHTML =
+        `<span>${dot} ${formatCompactNumber(gs.killsPerHour)} ${t('pokeIdle.killsPerHour')}</span>` +
+        `<span>${formatCompactNumber(gs.xpPerHour)} ${t('pokeIdle.xpPerHour')}</span>` +
+        `<span>${formatCompactNumber(gs.goldPerHour)} 🪙/h</span>` +
+        walletHtml +
+        (gs.captures ? `<span>${gs.captures} ${t('pokeIdle.captures')}</span>` : '') +
+        (gs.shinyCaught ? `<span>✨ ${gs.shinyCaught}</span>` : '');
+      item.append(gameRow);
+    }
+  });
+}
+
 function render() {
+  const __perfStart = PERF_LOG ? performance.now() : 0;
   reconcileWebviews();
   updateTranslateButton();
   // Positions any <webview> just created above. Needed here too (not just
@@ -657,10 +738,43 @@ function render() {
 
   const space = currentSpace();
   spaceNameEl.textContent = space?.name || '';
+  // Extends the color the rail icon already used (space.color, only place it
+  // was applied before this) into the sidebar itself — a dot next to the
+  // space name, and an accent CSS var the active-account highlight below
+  // picks up. Same idea as Firefox Containers' colored tab indicator: which
+  // Space you're in should read at a glance, not just from the rail icon.
+  const spaceAccentColor = space?.color || '#4f8cff';
+  spaceColorDotEl.style.background = spaceAccentColor;
+  sidebarEl.style.setProperty('--space-accent', spaceAccentColor);
 
   const spaceAccounts = currentSpaceAccounts();
   const spaceAccountIndex = new Map(spaceAccounts.map((a, i) => [a.id, i]));
-  if (!listDragInProgress) {
+
+  // render() fires reactively off onStateUpdate — every account/space change,
+  // but also every unrelated one (a permission grant, an ad-block stat tick,
+  // any settings toggle) — yet used to tear down and rebuild every single
+  // account-list DOM node (`innerHTML = ''` below) regardless of whether
+  // anything about the accounts/groups themselves actually changed. This
+  // signature captures everything buildAccountItem's structure/text actually
+  // depends on (order, membership, closed/muted state, color, name, which
+  // group, group collapse state, active account, language); skip the full
+  // rebuild when it's identical to last time, which is most calls in
+  // practice. Deliberately excludes live metrics/gameStats — those already
+  // only ever refresh opportunistically on whatever render() happens to run
+  // next (their own polls don't call render()), so leaving them out of the
+  // signature doesn't change that existing behavior.
+  const sidebarSignature = JSON.stringify({
+    lang: state.settings.language,
+    spaceId: space?.id,
+    activeId: state.settings.activeAccountId,
+    showAccountMetrics: state.settings.showAccountMetrics !== false,
+    accounts: spaceAccounts.map((a) => [a.id, a.groupId || '', a.closed ? 1 : 0, a.muted ? 1 : 0, a.color || '', a.name || '']),
+    groups: (state.groups || []).filter((g) => g.spaceId === space?.id).map((g) => [g.id, g.name, g.collapsed ? 1 : 0])
+  });
+  const sidebarListStale = sidebarSignature !== lastSidebarSignature;
+
+  if (!listDragInProgress && sidebarListStale) {
+  lastSidebarSignature = sidebarSignature;
   listEl.innerHTML = '';
   function buildAccountItem(account) {
     const i = spaceAccountIndex.get(account.id);
@@ -742,37 +856,13 @@ function render() {
     }
     item.append(metaRow);
 
-    const m = metrics[account.id];
-    if (!account.closed && m) {
-      const metricsRow = document.createElement('div');
-      metricsRow.className = 'account-metrics-row';
-      metricsRow.innerHTML = `<span>CPU ${m.cpu.toFixed(1)}%</span><span>RAM ${m.memoryMB} MB</span>`;
-      item.append(metricsRow);
-    }
-
-    // Fase B: only present for accounts on poke.idleworld.online — getGameStats()
-    // returns null for every other account, same shape as getMetrics() returning
-    // nothing for a closed account above.
-    const gs = gameStats[account.id];
-    if (!account.closed && gs) {
-      const gameRow = document.createElement('div');
-      gameRow.className = 'account-game-stats-row';
-      gameRow.title = gs.connected ? t('js.gameConnected') : t('js.gameDisconnected');
-      const dot = gs.connected ? '🟢' : '⚪';
-      const wallet = gs.wallet || {};
-      const trustedGoldSource = ['visual-shop', 'visual-hud', 'visual', 'adjusted'].includes(wallet.goldSource);
-      const walletHtml = wallet.gold != null && trustedGoldSource
-        ? `<span>${currencySymbol('GOLD')}${formatCompactNumber(wallet.gold)}</span>`
-        : '';
-      gameRow.innerHTML =
-        `<span>${dot} ${formatCompactNumber(gs.killsPerHour)} ${t('pokeIdle.killsPerHour')}</span>` +
-        `<span>${formatCompactNumber(gs.xpPerHour)} ${t('pokeIdle.xpPerHour')}</span>` +
-        `<span>${formatCompactNumber(gs.goldPerHour)} 🪙/h</span>` +
-        walletHtml +
-        (gs.captures ? `<span>${gs.captures} ${t('pokeIdle.captures')}</span>` : '') +
-        (gs.shinyCaught ? `<span>✨ ${gs.shinyCaught}</span>` : '');
-      item.append(gameRow);
-    }
+    // Metrics/game-stats rows are NOT built here — metrics and gameStats
+    // update on their own polls independent of any account/group change, so
+    // building them once at item-creation time would go stale for as long
+    // as the sidebar list itself doesn't need a rebuild (see
+    // refreshAccountMetricsRows(), called unconditionally on every render()
+    // right after this block, which fills them in for every item — freshly
+    // built or reused).
 
     item.onclick = () => window.api.activateAccount(account.id);
     item.oncontextmenu = (e) => {
@@ -818,12 +908,33 @@ function render() {
   });
   }
 
+  // Runs every render() regardless of whether the block above actually
+  // rebuilt the list — metrics/gameStats arrive on their own polls (see the
+  // comment near those setInterval calls further down) and would otherwise
+  // only ever refresh when something structural also happened to change.
+  if (!listDragInProgress) refreshAccountMetricsRows();
+
   const allClosed = spaceAccounts.length > 0 && spaceAccounts.every((a) => a.closed);
   btnToggleAll.classList.toggle('all-closed', allClosed);
   btnToggleAll.title = allClosed ? t('sidebar.openAll') : t('sidebar.closeAll');
 
   const hasOpenAccount = spaceAccounts.some((a) => !a.closed);
   emptyStateEl.classList.toggle('hidden', hasOpenAccount);
+
+  // gameStats is only ever populated for accounts main.js has attached game
+  // telemetry to (see game-telemetry.js's isGameUrl scoping) — the same set
+  // of accounts that get the always-on-background-throttling exemption in
+  // syncBackgroundThrottling, so this is a faithful, already-available proxy
+  // for "how many accounts are paying that real CPU cost right now" without
+  // needing a dedicated IPC call just for this hint. Counts across every
+  // space, not just the one being viewed, since the CPU cost isn't scoped to
+  // whichever space happens to be on screen.
+  const openGameAccountCount = (state.accounts || []).filter((a) => !a.closed && gameStats[a.id]).length;
+  gameAccountsHintEl.classList.toggle('hidden', openGameAccountCount < 3);
+  if (openGameAccountCount >= 3) {
+    gameAccountsHintEl.textContent = t('sidebar.gameAccountsHint', { n: openGameAccountCount });
+    gameAccountsHintEl.title = t('sidebar.gameAccountsHintTitle');
+  }
 
   if (!settingsModal.classList.contains('hidden')) {
     renderExtensions();
@@ -854,6 +965,9 @@ function render() {
 
   if (!dragInProgress) renderPanelHeaders();
   renderStatusBar();
+  if (PERF_LOG) {
+    console.log(`[perf] render() took ${(performance.now() - __perfStart).toFixed(1)}ms (sidebar list ${sidebarListStale ? 'rebuilt' : 'skipped'})`);
+  }
 }
 
 function renderStatusBar() {
@@ -2251,6 +2365,46 @@ async function renderShieldPopup() {
   });
   shieldMenu.appendChild(statsRow);
 
+  // Per-page breakdown by category (Brave-Shields-style — its popup splits
+  // ads/trackers/scripts instead of one bare count). getAdBlockPopupData's
+  // blockedByCategoryOnPage resets on every real navigation, same scope as
+  // blockedOnPage above; only shown when there's at least one blocked
+  // request this page, sorted highest-first so the biggest offender leads.
+  const categoryCounts = popup.blockedByCategoryOnPage || {};
+  const categoryEntries = Object.entries({
+    ads: 'js.adblockCategoryAds',
+    tracking: 'js.adblockCategoryTracking',
+    social: 'js.adblockCategorySocial',
+    analytics: 'js.adblockCategoryAnalytics',
+    other: 'js.adblockCategoryOther'
+  })
+    .map(([key, labelKey]) => ({ key, labelKey, count: categoryCounts[key] || 0 }))
+    .filter((entry) => entry.count > 0)
+    .sort((a, b) => b.count - a.count);
+  if (categoryEntries.length > 0) {
+    const categorySection = document.createElement('div');
+    categorySection.className = 'shield-section';
+    const categoryTitle = document.createElement('div');
+    categoryTitle.className = 'shield-section-title';
+    categoryTitle.textContent = t('js.adblockByCategoryTitle');
+    categorySection.appendChild(categoryTitle);
+    const categoryList = document.createElement('div');
+    categoryList.className = 'shield-list';
+    categoryEntries.forEach(({ labelKey, count }) => {
+      const row = document.createElement('div');
+      row.className = 'shield-list-row';
+      const name = document.createElement('span');
+      name.textContent = t(labelKey);
+      const num = document.createElement('span');
+      num.className = 'shield-list-count';
+      num.textContent = String(count);
+      row.append(name, num);
+      categoryList.appendChild(row);
+    });
+    categorySection.appendChild(categoryList);
+    shieldMenu.appendChild(categorySection);
+  }
+
   // Top blocked hosts — already computed server-side for every popup open
   // (getAdBlockPopupData's topHosts/byCategory), but had no consumer here
   // until now. Shown only when there's at least one, right below the raw
@@ -3379,6 +3533,7 @@ function openSettingsModal() {
   setAutoEcoMinutes.value = String((s.autoEco && s.autoEco.minutes) || 30);
   setShowFpsOverlay.checked = s.showFpsOverlay !== false;
   setShowPingOverlay.checked = s.showPingOverlay !== false;
+  setShowAccountMetrics.checked = s.showAccountMetrics !== false;
   setHuntTelemetry.checked = s.huntTelemetryEnabled !== false;
   setTranslateMemoryPersist.checked = !!s.translateMemoryPersist;
   setHwAccel.checked = s.hardwareAcceleration !== false;
@@ -4229,6 +4384,12 @@ setShowPingOverlay.addEventListener('change', () => {
   window.api.updateSettings({ showPingOverlay: setShowPingOverlay.checked });
 });
 
+setShowAccountMetrics.addEventListener('change', () => {
+  window.api.updateSettings({ showAccountMetrics: setShowAccountMetrics.checked });
+  if (!setShowAccountMetrics.checked) metrics = {};
+  render();
+});
+
 setHuntTelemetry.addEventListener('change', () => {
   window.api.updateSettings({ huntTelemetryEnabled: setHuntTelemetry.checked });
 });
@@ -4742,7 +4903,14 @@ async function init() {
 // sidebar's CPU/RAM readout doesn't need sub-5s freshness to be useful. This
 // alone halves that specific cost app-wide, for every account, all the time.
 setInterval(async () => {
-  metrics = await window.api.getMetrics();
+  // settings.showAccountMetrics off skips the expensive app.getAppMetrics()
+  // sampling (real cost proportional to account count) in favor of the
+  // lighter getBlockedCounts(), which still feeds the topbar shield badge —
+  // a different, still-wanted feature — without paying for CPU/RAM numbers
+  // nobody's displaying.
+  metrics = state.settings.showAccountMetrics === false
+    ? await window.api.getBlockedCounts()
+    : await window.api.getMetrics();
 }, 6000);
 
 setInterval(async () => {

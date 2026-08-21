@@ -52,11 +52,13 @@ const test = base.extend({
 
 // .account-remove is `visibility: hidden` until `.account-item:hover` (see
 // style.css). A synthetic CDP mousemove does apply :hover, but the sidebar
-// fully re-renders every second (setInterval(render, 1000) in renderer.js)
-// and the freshly-inserted button doesn't inherit that hover state without a
-// real, continuous pointer position — leaving a real click racing against
-// that render tick. Dispatching the click event directly exercises the same
-// onclick handler without depending on that timing.
+// can still re-render reactively off a state broadcast (render() in
+// renderer.js — no longer its own 1s ticker, see the comment near
+// listDragInProgress there) and the freshly-inserted button doesn't inherit
+// that hover state without a real, continuous pointer position — leaving a
+// real click racing against that render. Dispatching the click event
+// directly exercises the same onclick handler without depending on that
+// timing.
 async function closeAccountAt(page, index) {
   const item = page.locator('.account-item').nth(index);
   await item.hover();
@@ -64,12 +66,11 @@ async function closeAccountAt(page, index) {
 }
 
 // The chrome UI re-renders panel-headers/dividers from scratch on every state
-// broadcast, plus once a second regardless (setInterval(render, 1000) in
-// renderer.js) — a boundingBox() call can land in the single frame where the
-// old node was just torn down and the new one isn't painted yet, returning
-// null. Also, right after a divider drag's mouseup, onUp() synchronously
-// re-renders headers from the still-stale pre-drag panelsGeometry before the
-// async commitSplit()→setSplit IPC round-trip pushes the real, post-drag
+// broadcast (render() in renderer.js) — a boundingBox() call can land in the
+// single frame where the old node was just torn down and the new one isn't
+// painted yet, returning null. Also, right after a divider drag's mouseup,
+// onUp() synchronously re-renders headers from the still-stale pre-drag
+// panelsGeometry before the async commitSplit()→setSplit IPC round-trip pushes the real, post-drag
 // geometry a few ms later — a single read can land in that transient
 // snap-back frame. Poll until the box comes back non-null AND stops
 // changing across consecutive reads, not just until it's non-null once.

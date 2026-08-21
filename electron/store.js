@@ -186,10 +186,22 @@ const DEFAULT_DATA = {
     // startAutoEcoLoop() in main.js.
     autoEco: { enabled: false, minutes: 30 },
     // Per-tab FPS/ping badges (electron/main.js's injectFpsOverlay/
-    // injectPingOverlay) — on by default since they shipped on by default;
-    // both user-toggleable independently in Configuración.
-    showFpsOverlay: true,
-    showPingOverlay: true,
+    // injectPingOverlay) — off by default (flipped from the original
+    // ship-on default, perf audit 2026-08-21): each one is a real rAF loop
+    // or a real fetch() every 3s per open account, competing with the
+    // game's own canvas/network on every single tab whether or not anyone
+    // is actually watching the badge. Still fully user-toggleable in
+    // Configuración, and the injected script already starts/stops the
+    // underlying loop for real (not just display:none) either way.
+    showFpsOverlay: false,
+    showPingOverlay: false,
+    // Per-account CPU/RAM row in the sidebar (renderer.js) — on by default
+    // (unlike the overlays above, this one shipped as an always-visible part
+    // of the account item, not an opt-in extra). Turning it off also stops
+    // the renderer's periodic getMetrics() poll outright, since
+    // app.getAppMetrics() samples every open process and there's no point
+    // paying that cost for a number nobody's displaying.
+    showAccountMetrics: true,
     // Hunt/drops-panel telemetry (electron/game-telemetry.js's per-account
     // polling of the game's own WebSocket frames) — true by default so
     // existing installs see zero behavior change. Turning it off stops the
@@ -227,7 +239,15 @@ const DEFAULT_DATA = {
       backgroundKeepalive: false, // powerSaveBlocker('prevent-app-suspension') while >=1 game account is open
       autoRecovery: true, // recovery levels 1-3 run automatically once `enabled` is true
       lastResortAutoReload: false, // level 4+ automatic full page reload — opt-in, default OFF
-      ecoForHiddenPanels: false,
+      // ecoForHiddenPanels existed here but was never read anywhere — removed
+      // (perf audit 2026-08-21). Its premise (throttle hidden game panels)
+      // conflicts with the documented WS-keepalive requirement above
+      // (main.js: syncBackgroundThrottling) and with the telemetry poll's
+      // deliberate visibility-independent backoff (game-telemetry.js) — both
+      // exist specifically so a backgrounded farming account never drops its
+      // connection or misses a frame. Implementing this setting for real
+      // would mean trading away that guarantee, so it's gone instead of
+      // staying around as a toggle that quietly does nothing.
       disconnectNotifications: true,
       advancedDiagnostics: false,
       memoryGrowthThresholdMb: 200
@@ -299,12 +319,50 @@ function load() {
 // on watchDataFile for why a time-based guess isn't good enough here.
 let lastSavedJson = null;
 
+// Every save() chains onto this instead of running immediately, so two
+// writes triggered close together (a debounced persist() plus a flushPersist()
+// on quit, say) never both touch TMP_FILE at once — each waits for the
+// previous one (success or failure) to finish first. The promise save()
+// returns already reflects the whole chain up to and including its own
+// write, so awaiting the return value of the LATEST call is enough to know
+// every write queued before it has also landed.
+let saveQueue = Promise.resolve();
+
+async function writeOnce(json) {
+  // Write to a temp file then rename over the real one — rename within the
+  // same directory is atomic even in its async form (that guarantee comes
+  // from the filesystem, not from being called synchronously), so a crash/
+  // power-loss mid-save leaves either the old complete file or the new
+  // complete file, never a half-written one.
+  await fs.promises.writeFile(TMP_FILE, json, 'utf-8');
+  await fs.promises.rename(TMP_FILE, DATA_FILE);
+  lastSavedJson = json;
+}
+
+// A transient failure (antivirus/OneDrive briefly holding the file open on
+// Windows is the realistic case here) shouldn't just silently drop a save —
+// retry a couple of times with a short backoff before giving up and logging.
+async function writeWithRetry(json, attempts = 3) {
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      await writeOnce(json);
+      return;
+    } catch (err) {
+      if (i === attempts - 1) {
+        console.error('[store] save() failed after retries — data on disk may be stale', err);
+        throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150 * (i + 1)));
+    }
+  }
+}
+
 function save(data) {
-  // Write to a temp file then rename over the real one — renameSync within the
-  // same directory is atomic, so a crash/power-loss mid-save leaves either the
-  // old complete file or the new complete file, never a half-written one.
-  // Encrypt passwords in the copy being written, not in the live `data` object
-  // the rest of the app keeps using in memory.
+  // Encrypt passwords in the copy being written, not in the live `data`
+  // object the rest of the app keeps using in memory. Serializing here
+  // (before queuing) captures this call's data as of right now, so a later
+  // save() call queued behind it always still writes ITS OWN newer snapshot,
+  // never accidentally reuses an older one.
   const toWrite = {
     ...data,
     passwords: (data.passwords || []).map((p) => ({ ...p, password: encryptPassword(p.password) })),
@@ -315,9 +373,9 @@ function save(data) {
     ))
   };
   const json = JSON.stringify(toWrite, null, 2);
-  fs.writeFileSync(TMP_FILE, json, 'utf-8');
-  fs.renameSync(TMP_FILE, DATA_FILE);
-  lastSavedJson = json;
+  const run = () => writeWithRetry(json);
+  saveQueue = saveQueue.then(run, run);
+  return saveQueue;
 }
 
 // Watches the data file for external modifications (e.g. a second app instance
