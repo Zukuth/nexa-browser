@@ -266,27 +266,19 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
   // One cache file per distinct category combination (16 possible combos of
   // the 4 booleans) so switching categories back and forth doesn't re-fetch
   // ~15MB of filter lists from GitHub every time — only the very first time
-  // a given combination is selected.
-  function adBlockCacheFileFor(app, enabled) {
+  // a given combination is selected. Shared by both engines, distinguished
+  // by `prefix` — their serialize() formats aren't compatible with each
+  // other, so a network-engine cache path always needs a different filename
+  // than the cosmetic-engine one, or one engine's deserialize() would choke
+  // on bytes the other one wrote. The old adblock-engine-cache-*.bin files
+  // (Ghostery, pre-existing) and the newer adblock-rs-engine-cache-*.bin
+  // ones (adblock-rs) never collide as long as the prefixes stay distinct.
+  function cacheFileFor(app, enabled, prefix) {
     const suffix = Object.keys(FILTER_LIST_CATEGORIES)
       .filter((key) => enabled[key])
       .sort()
       .join('-') || 'none';
-    return path.join(app.getPath('userData'), `adblock-engine-cache-${suffix}.bin`);
-  }
-
-  // Same idea as adBlockCacheFileFor above, but a distinct filename — the
-  // two engines' serialize() formats aren't compatible with each other, so
-  // reusing the old name would mean feeding adblock-rs's deserialize() bytes
-  // that were actually written by Ghostery's engine (or vice versa on a
-  // downgrade), which throws. A new prefix keeps them from ever colliding —
-  // the old adblock-engine-cache-*.bin files just become harmless orphans.
-  function adblockRsCacheFileFor(app, enabled) {
-    const suffix = Object.keys(FILTER_LIST_CATEGORIES)
-      .filter((key) => enabled[key])
-      .sort()
-      .join('-') || 'none';
-    return path.join(app.getPath('userData'), `adblock-rs-engine-cache-${suffix}.bin`);
+    return path.join(app.getPath('userData'), `${prefix}-${suffix}.bin`);
   }
 
   async function fetchFilterListsText(urls) {
@@ -314,7 +306,7 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
       throw new Error('adblock-rs native module is not available (see the require() at the top of this file) — network blocking cannot start');
     }
     if (!customRules) {
-      const cachePath = adblockRsCacheFileFor(app, enabled);
+      const cachePath = cacheFileFor(app, enabled, 'adblock-rs-engine-cache');
       try {
         const cached = await fs.promises.readFile(cachePath);
         // deserialize() downcasts strictly to a real ArrayBuffer — a Node
@@ -362,7 +354,7 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
   async function loadCosmeticEngine(app, enabled, customRules) {
     if (!customRules) {
       return ElectronBlocker.fromLists(fetch, activeFilterListUrls(), {}, {
-        path: adBlockCacheFileFor(app, enabled),
+        path: cacheFileFor(app, enabled, 'adblock-engine-cache'),
         read: (p) => fs.promises.readFile(p),
         write: (p, buf) => fs.promises.writeFile(p, buf)
       });
@@ -498,14 +490,20 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
 
       if (myGeneration !== loadGeneration) return; // superseded by a newer rebuild — discard
 
-      if (networkResult.status === 'rejected') throw networkResult.reason;
-      networkEngine = networkResult.value;
-
+      // Commit whichever engine(s) actually succeeded BEFORE checking for a
+      // network failure to throw on — cosmeticEngine used to only get
+      // assigned after that check, so a machine where adblock-rs's native
+      // module never builds (no Rust/MSVC toolchain — loadNetworkEngine()
+      // throws on every single call, forever) silently lost cosmetic ad-slot
+      // hiding too, even though Ghostery's engine built fine every time.
       if (cosmeticResult.status === 'fulfilled') {
         cosmeticEngine = cosmeticResult.value;
       } else {
-        console.error('[adblock] cosmetic engine failed to load (network blocking above is unaffected)', cosmeticResult.reason);
+        console.error('[adblock] cosmetic engine failed to load (network blocking is unaffected either way)', cosmeticResult.reason);
       }
+
+      if (networkResult.status === 'rejected') throw networkResult.reason;
+      networkEngine = networkResult.value;
 
       engineStatus = 'ready';
       console.log('[adblock] engine ready');
@@ -644,12 +642,32 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
       // matching silently returns false without it, even for an obviously-ad
       // domain like doubleclick.net. Falls back to the request's own URL on
       // a top-level navigation, where referrer is legitimately empty.
-      const blocked = networkEngine.check(
-        details.url,
-        details.referrer || details.url,
-        mapElectronResourceType(details.resourceType),
-        details.method || 'GET'
-      ) || (level === 'strict' && details.resourceType === 'ping');
+      //
+      // networkEngine.check() is a native call that THROWS a real JS
+      // exception on a URL/source-URL it can't parse (confirmed against
+      // adblock-rs's own Rust source, js/src/lib.rs's engine_check —
+      // Request::new(...) returns a Result, and Err maps to
+      // cx.throw_error(...)) — a malformed or unusual IDN/punycode hostname
+      // is enough to trigger it. Electron's webRequest contract requires
+      // callback() to be called no matter what, so an uncaught throw here
+      // would leave that one request hanging forever instead of just not
+      // being blocked. Fails open (doesn't block that one request) rather
+      // than closed — consistent with every other "can't evaluate this
+      // request" branch in this function (the ADBLOCK_STARTUP_FALLBACK path
+      // above, an unparseable hostname at the top of this handler) already
+      // choosing to let a request through over risking one it can't judge.
+      let networkMatched = false;
+      try {
+        networkMatched = networkEngine.check(
+          details.url,
+          details.referrer || details.url,
+          mapElectronResourceType(details.resourceType),
+          details.method || 'GET'
+        );
+      } catch (err) {
+        console.error('[adblock] networkEngine.check() threw for', details.url, '— letting this one request through unblocked', err);
+      }
+      const blocked = networkMatched || (level === 'strict' && details.resourceType === 'ping');
       if (blocked) {
         blockedCounts.set(accountId, (blockedCounts.get(accountId) || 0) + 1);
         let blockedSet = pageDomainsBlocked.get(accountId);

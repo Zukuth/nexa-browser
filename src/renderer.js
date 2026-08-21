@@ -659,12 +659,25 @@ function cpuImpactLevel(cpuPercent) {
 // use.
 const PERF_LOG = localStorage.getItem('nexaPerfLog') === '1';
 
-// Rebuilds just the CPU/RAM and game-stats rows inside each existing
-// .account-item, without touching the rest of the item (name, drag
-// handlers, status dot...) or requiring the full sidebar rebuild that
-// sidebarSignature otherwise skips. Cheap: at most 2 small elements swapped
-// per open account, not a teardown of the whole list — see the comment
-// where render() calls this for why it needs to run unconditionally.
+// Rebuilds just the CPU/RAM row, game-stats row, and "open for Xm Ys" text
+// inside each existing .account-item, without touching the rest of the item
+// (name, drag handlers, status dot...) or requiring the full sidebar rebuild
+// that sidebarSignature otherwise skips. Cheap: a handful of small elements
+// touched per open account, not a teardown of the whole list.
+//
+// Called from two places, deliberately: render() (line ~915, whenever it
+// actually runs) AND the existing 1s renderStatusBar ticker below — not just
+// render(). metrics/gameStats update on their OWN independent 6s/5s polls
+// that don't call render() themselves (confirmed live — a session sitting
+// idle with several accounts farming and no other UI interaction produces
+// no onStateUpdate broadcast for long stretches), and account.openedAt never
+// changes after an account opens, so sidebarSignature correctly never flags
+// it as "structural". Without a periodic call independent of render(), the
+// CPU/RAM chip, kills/xp/gold-per-hour row, and "open for Xm Ys" text would
+// all freeze at whatever value was on screen at the last unrelated state
+// broadcast — for the exact "leave several accounts farming" use case this
+// app is built around. The 1s ticker already exists for the status bar
+// clock, so piggybacking on it costs nothing extra to schedule.
 function refreshAccountMetricsRows() {
   listEl.querySelectorAll('.account-item[data-account-id]').forEach((item) => {
     item.querySelector('.account-metrics-row')?.remove();
@@ -673,6 +686,14 @@ function refreshAccountMetricsRows() {
     const accountId = item.dataset.accountId;
     const account = state.accounts.find((a) => a.id === accountId);
     if (!account || account.closed) return;
+
+    // sidebarSignature includes `closed`, so any open<->closed transition
+    // already forces a full rebuild — meaning this span reliably exists
+    // already whenever we get here with an open, openedAt-having account.
+    if (account.openedAt) {
+      const durationEl = item.querySelector('.account-open-duration');
+      if (durationEl) durationEl.textContent = formatDuration(Date.now() - account.openedAt);
+    }
 
     const m = metrics[accountId];
     if (m && state.settings.showAccountMetrics !== false) {
@@ -844,6 +865,7 @@ function render() {
     metaRow.append(statusText);
     if (!account.closed && account.openedAt) {
       const timeText = document.createElement('span');
+      timeText.className = 'account-open-duration';
       timeText.textContent = formatDuration(Date.now() - account.openedAt);
       metaRow.append(timeText);
     }
@@ -4922,10 +4944,15 @@ setInterval(async () => {
 // Full render() already fires reactively off onStateUpdate (real account/space/
 // settings changes) and off the geometry/drag paths above — it doesn't need its
 // own ticker. What genuinely needs a per-second refresh is the status bar clock
-// and the CPU/RAM readout (metrics arrive on their own 3s poll below with no
-// event to hook), and renderStatusBar() alone covers both without rebuilding
-// the rail, sidebar, account list, and panel headers every second regardless
-// of whether anything changed.
-setInterval(renderStatusBar, 1000);
+// (renderStatusBar — the topbar's own aggregate, not any per-account UI) and,
+// separately, the per-account CPU/RAM chip, game-stats row, and "open for Xm
+// Ys" text — see the comment on refreshAccountMetricsRows() for why those
+// specifically need their own tick independent of render(). Neither rebuilds
+// the rail, sidebar list, or panel headers — this is real work avoided, not
+// just deferred.
+setInterval(() => {
+  renderStatusBar();
+  if (!listDragInProgress) refreshAccountMetricsRows();
+}, 1000);
 
 init();

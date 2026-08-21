@@ -4479,7 +4479,8 @@ ipcMain.handle('metrics:get', () => {
 // feature.
 ipcMain.handle('metrics:getBlockedCounts', () => {
   const result = {};
-  for (const id of views.keys()) {
+  for (const [id, view] of views.entries()) {
+    if (view.isDestroyed()) continue; // stale entry mid-cleanup — same guard as metrics:get above
     result[id] = { cpu: 0, memoryMB: 0, blocked: adblockManager.getBlockedCount(id) };
   }
   return result;
