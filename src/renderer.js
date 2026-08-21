@@ -707,29 +707,11 @@ function refreshAccountMetricsRows() {
       item.append(metricsRow);
     }
 
-    // Fase B: only present for accounts on poke.idleworld.online — getGameStats()
-    // returns null for every other account, same shape as getMetrics() returning
-    // nothing for a closed account above.
-    const gs = gameStats[accountId];
-    if (gs) {
-      const gameRow = document.createElement('div');
-      gameRow.className = 'account-game-stats-row';
-      gameRow.title = gs.connected ? t('js.gameConnected') : t('js.gameDisconnected');
-      const dot = gs.connected ? '🟢' : '⚪';
-      const wallet = gs.wallet || {};
-      const trustedGoldSource = ['visual-shop', 'visual-hud', 'visual', 'adjusted'].includes(wallet.goldSource);
-      const walletHtml = wallet.gold != null && trustedGoldSource
-        ? `<span>${currencySymbol('GOLD')}${formatCompactNumber(wallet.gold)}</span>`
-        : '';
-      gameRow.innerHTML =
-        `<span>${dot} ${formatCompactNumber(gs.killsPerHour)} ${t('pokeIdle.killsPerHour')}</span>` +
-        `<span>${formatCompactNumber(gs.xpPerHour)} ${t('pokeIdle.xpPerHour')}</span>` +
-        `<span>${formatCompactNumber(gs.goldPerHour)} 🪙/h</span>` +
-        walletHtml +
-        (gs.captures ? `<span>${gs.captures} ${t('pokeIdle.captures')}</span>` : '') +
-        (gs.shinyCaught ? `<span>✨ ${gs.shinyCaught}</span>` : '');
-      item.append(gameRow);
-    }
+    // The kills/xp/gold-per-hour sidebar row that used to render here (Fase
+    // B, gs = gameStats[accountId]) was removed at the user's request —
+    // gameStats itself, the capture pipeline behind it, and everything else
+    // that reads it (Poke Idle panel team/growth-calc, freeze detection,
+    // alert sounds) are untouched and still work; only this DOM row is gone.
   });
 }
 

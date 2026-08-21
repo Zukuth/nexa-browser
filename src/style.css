@@ -1096,16 +1096,6 @@ html, body {
 .metrics-impact.medium { color: #e0c341; background: rgba(224, 195, 65, 0.16); }
 .metrics-impact.high { color: #e05555; background: rgba(224, 85, 85, 0.16); }
 
-.account-game-stats-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  font-size: 10px;
-  color: #8fd6a0;
-  padding-left: 18px;
-  padding-top: 2px;
-}
-
 .account-remove {
   background: none;
   border: none;
@@ -1198,7 +1188,6 @@ html, body {
 #sidebar.collapsed .account-name,
 #sidebar.collapsed .account-meta-row,
 #sidebar.collapsed .account-metrics-row,
-#sidebar.collapsed .account-game-stats-row,
 #sidebar.collapsed .account-status-dot {
   display: none;
 }
@@ -5188,12 +5177,16 @@ body.layout-animated .panel-header {
 }
 
 /* Poke drawer density and status-bar safe area.
-   Keep this at EOF: it intentionally overrides the older large-panel skins. */
+   Keep this at EOF: it intentionally overrides the older large-panel skins
+   above (2596, 4148) — this is the one that actually controls the rendered
+   width at normal desktop sizes; those two are effectively dead for
+   width/min-width/max-width. Narrowed at the user's request (2026-08-21) —
+   was min(54vw, 980px)/500px/calc(100vw - 420px). */
 .poke-drawer {
   top: 42px;
   bottom: 28px;
-  width: min(54vw, 980px);
-  min-width: 500px;
+  width: min(34vw, 560px);
+  min-width: 420px;
   max-width: calc(100vw - 420px);
 }
 
