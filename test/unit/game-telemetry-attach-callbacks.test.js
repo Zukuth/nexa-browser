@@ -5,9 +5,9 @@ const gameTelemetry = require('../../electron/game-telemetry');
 
 // Minimal fake of Electron's webContents — supports the handful of calls
 // attachCapture()'s JS-based path actually makes (executeJavaScript to
-// inject the patch, then poll it every 250ms; isDestroyed/once for
-// teardown). _queueFrame lets a test push a raw WS payload the way the
-// injected page-side patch would, for the next poll tick to pick up.
+// inject the patch, then poll it every POLL_BASE_INTERVAL_MS; isDestroyed/
+// once for teardown). _queueFrame lets a test push a raw WS payload the way
+// the injected page-side patch would, for the next poll tick to pick up.
 // _destroy() both fires the 'destroyed' listener (as Electron would) and
 // must be called at the end of every test here — attachCapture's poll
 // interval is a REAL setInterval, and a real timer left running keeps
@@ -34,9 +34,11 @@ function createFakeWc() {
   };
 }
 
-// The interval-based poll runs every 250ms — wait a bit past that so the
-// fake's queued frame gets drained and processed.
-function waitForPoll(ms = 300) {
+// The interval-based poll runs every POLL_BASE_INTERVAL_MS — wait a bit past
+// that so the fake's queued frame gets drained and processed. Derived from
+// the real exported constant (not a hardcoded number) so this doesn't
+// silently start racing the poll interval again the next time it's tuned.
+function waitForPoll(ms = gameTelemetry.POLL_BASE_INTERVAL_MS + 50) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 

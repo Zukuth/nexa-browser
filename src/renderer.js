@@ -285,6 +285,7 @@ const setAutoEcoMinutes = document.getElementById('set-auto-eco-minutes');
 const ecoSavingsHint = document.getElementById('eco-savings-hint');
 const setShowFpsOverlay = document.getElementById('set-show-fps');
 const setShowPingOverlay = document.getElementById('set-show-ping');
+const setHuntTelemetry = document.getElementById('set-hunt-telemetry');
 const setTranslateMemoryPersist = document.getElementById('set-translate-memory-persist');
 const setHwAccel = document.getElementById('set-hw-accel');
 const setExportSpaces = document.getElementById('set-export-spaces');
@@ -3378,6 +3379,7 @@ function openSettingsModal() {
   setAutoEcoMinutes.value = String((s.autoEco && s.autoEco.minutes) || 30);
   setShowFpsOverlay.checked = s.showFpsOverlay !== false;
   setShowPingOverlay.checked = s.showPingOverlay !== false;
+  setHuntTelemetry.checked = s.huntTelemetryEnabled !== false;
   setTranslateMemoryPersist.checked = !!s.translateMemoryPersist;
   setHwAccel.checked = s.hardwareAcceleration !== false;
   setDefaultUrl.value = s.defaultStartUrl || 'https://www.google.com';
@@ -4225,6 +4227,10 @@ setShowFpsOverlay.addEventListener('change', () => {
 
 setShowPingOverlay.addEventListener('change', () => {
   window.api.updateSettings({ showPingOverlay: setShowPingOverlay.checked });
+});
+
+setHuntTelemetry.addEventListener('change', () => {
+  window.api.updateSettings({ huntTelemetryEnabled: setHuntTelemetry.checked });
 });
 
 setTranslateMemoryPersist.addEventListener('change', () => {

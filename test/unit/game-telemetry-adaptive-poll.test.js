@@ -5,7 +5,7 @@ const gameTelemetry = require('../../electron/game-telemetry');
 
 const { shouldPollTick, POLL_IDLE_STREAK_THRESHOLD, POLL_IDLE_SKIP_TICKS } = gameTelemetry;
 
-describe('shouldPollTick (adaptive 250ms telemetry polling)', () => {
+describe('shouldPollTick (adaptive telemetry polling, base tick = POLL_BASE_INTERVAL_MS)', () => {
   test('polls every single tick while the queue has been active recently (below the idle streak threshold)', () => {
     for (let tick = 1; tick <= 20; tick++) {
       assert.equal(shouldPollTick(tick, 0), true);

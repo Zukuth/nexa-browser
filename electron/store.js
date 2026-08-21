@@ -190,6 +190,16 @@ const DEFAULT_DATA = {
     // both user-toggleable independently in Configuración.
     showFpsOverlay: true,
     showPingOverlay: true,
+    // Hunt/drops-panel telemetry (electron/game-telemetry.js's per-account
+    // polling of the game's own WebSocket frames) — true by default so
+    // existing installs see zero behavior change. Turning it off stops the
+    // polling interval outright for every game account (see
+    // attachGameCaptureFor in main.js), trading the hunt/drops panel's live
+    // data (and, if settings.stability.enabled is also on, its
+    // FRAME_RECEIVED heartbeat signal) for one less thing competing with the
+    // game's own canvas render thread. Both trade-offs are surfaced in the
+    // Configuración hint, not hidden.
+    huntTelemetryEnabled: true,
     hardwareAcceleration: true,
     // Set true the first time translate:page ever succeeds for this user —
     // gates the startup model preload in main.js so a fresh install never

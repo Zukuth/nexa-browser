@@ -814,22 +814,35 @@ function updateWallet(accountId, wallet) {
 
 // accountId -> intervalId. The interval polls window.__nexaFrameQueue
 // (populated by the injected WebSocket.prototype patch, see
-// game-socket-capture.js) every 250ms, since there's no direct IPC channel
-// out of the page's main world.
+// game-socket-capture.js) every POLL_BASE_INTERVAL_MS, since there's no
+// direct IPC channel out of the page's main world.
 const jsCaptureIntervals = new Map();
 
-// Adaptive polling: the 250ms base tick (jsCaptureIntervals' setInterval)
-// stays fixed — cheap, it's just a main-process JS timer, no IPC of its own.
-// What actually costs something is the executeJavaScript() round-trip inside
-// each tick, so THAT'S what backs off during a genuinely quiet stretch
-// (several consecutive ticks with nothing in the frame queue — normal for an
-// account parked/idle-farming with nothing happening right now), and snaps
-// back to every tick the moment a real frame shows up again. Tied to queue
-// activity, not to whether the account is the visible panel — a backgrounded
-// account that's actively farming still gets polled at full speed, only
-// genuinely quiet accounts (visible or not) slow down.
-const POLL_IDLE_STREAK_THRESHOLD = 8; // ~2s of consecutive empty ticks before backing off
-const POLL_IDLE_SKIP_TICKS = 4; // once backed off, effective ~1s interval (4 * 250ms)
+// Adaptive polling: the base tick (jsCaptureIntervals' setInterval) stays
+// fixed — cheap on its own, it's just a main-process JS timer, no IPC of its
+// own. What actually costs something is the executeJavaScript() round-trip
+// inside each tick (a real cross-process call into that account's own
+// renderer, on the SAME thread the game's canvas renders on), so THAT'S what
+// backs off during a genuinely quiet stretch (several consecutive ticks with
+// nothing in the frame queue — normal for an account parked/idle-farming
+// with nothing happening right now), and snaps back to every tick the moment
+// a real frame shows up again. Tied to queue activity, not to whether the
+// account is the visible panel — a backgrounded account that's actively
+// farming still gets polled at full speed, only genuinely quiet accounts
+// (visible or not) slow down.
+//
+// 400ms, not the original 250ms — confirmed live (perf overlay work,
+// 2026-08-21) that during active combat/farming this executeJavaScript()
+// round-trip runs on the exact same thread as the game's own canvas
+// rendering and measurably competes with it (visible FPS dips on the
+// account being observed). 250ms meant up to 4 round-trips/s with zero
+// backoff while actively farming, by design (see above). 400ms cuts that to
+// 2.5/s — a real ~37% cut in worst-case round-trips — while the hunt/drops
+// panel this feeds still reads as instant to a human (nobody notices
+// 250ms vs 400ms freshness on a stats panel).
+const POLL_BASE_INTERVAL_MS = 400;
+const POLL_IDLE_STREAK_THRESHOLD = 8; // ~3.2s of consecutive empty ticks before backing off
+const POLL_IDLE_SKIP_TICKS = 4; // once backed off, effective ~1.6s interval (4 * 400ms)
 const pollAdaptiveState = new Map(); // accountId -> { tickCount, emptyStreak }
 
 function shouldPollTick(tickCount, emptyStreak, {
@@ -889,7 +902,7 @@ function attachCaptureViaJs(wc, accountId, { onFrame } = {}) {
         try { onFrame(msg); } catch (err) { console.error('[game-telemetry] onFrame handler failed for', accountId, err); }
       }
     }
-  }, 250);
+  }, POLL_BASE_INTERVAL_MS);
   jsCaptureIntervals.set(accountId, intervalId);
 
   wc.once('destroyed', () => detachCaptureViaJs(accountId));
@@ -913,6 +926,14 @@ function detachCaptureViaJs(accountId) {
 // elements now, see wireAccountWebContents in main.js).
 function attachCapture(wc, accountId, { onFrame } = {}) {
   return attachCaptureViaJs(wc, accountId, { onFrame });
+}
+
+// Public counterpart to attachCapture — lets a caller (main.js's
+// huntTelemetryEnabled toggle) stop the polling interval for an account
+// without waiting for its webContents to be destroyed. Idempotent: a no-op
+// if the account was never attached or is already detached.
+function detachCapture(accountId) {
+  detachCaptureViaJs(accountId);
 }
 
 // Recovery-level-3 action (see game-connection-manager.js / main.js's
@@ -999,6 +1020,7 @@ function isLikelyFrozen(state, thresholdMs, now = Date.now()) {
 module.exports = {
   isGameUrl,
   attachCapture,
+  detachCapture,
   reattachCapture,
   getStats,
   getAllStats,
@@ -1025,6 +1047,7 @@ module.exports = {
   _pendingFrameWaiterCount: (accountId, type) => pendingFrameWaiters.get(`${accountId}:${type}`)?.size || 0,
   emptyLive,
   shouldPollTick,
+  POLL_BASE_INTERVAL_MS,
   POLL_IDLE_STREAK_THRESHOLD,
   POLL_IDLE_SKIP_TICKS
 };

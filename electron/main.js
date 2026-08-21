@@ -1527,7 +1527,11 @@ function injectPingOverlay(wc, visible) {
       ${PING_COLOR_SCRIPT}
       const badge = document.createElement('div');
       badge.id = 'nexa-ping-badge';
-      badge.style.cssText = 'position:fixed;bottom:6px;right:6px;z-index:2147483647;background:rgba(0,0,0,0.55);color:#3ddc57;font:11px monospace;padding:2px 6px;border-radius:4px;pointer-events:none;display:${visible ? '' : 'none'};';
+      // contain:layout style paint — same reasoning as the FPS badge above:
+      // scopes this element's own text updates to its own box instead of
+      // Chromium walking outward looking for anything that might react, on a
+      // page already busy rendering a real game.
+      badge.style.cssText = 'position:fixed;bottom:6px;right:6px;z-index:2147483647;background:rgba(0,0,0,0.55);color:#3ddc57;font:11px monospace;padding:2px 6px;border-radius:4px;pointer-events:none;contain:layout style paint;display:${visible ? '' : 'none'};';
       badge.textContent = '… ms';
       (document.body || document.documentElement).appendChild(badge);
       // Some sites' SPA routing 404s on HEAD for a client-side route (e.g.
@@ -1587,14 +1591,19 @@ function injectPingOverlay(wc, visible) {
         badge.style.color = nexaPingColor(ms);
       }
       // Same problem as the FPS badge above: display:none alone left this
-      // setInterval firing a real network request every 2s forever, even
+      // setInterval firing a real network request every 3s forever, even
       // for an account whose ping counter the user explicitly turned off.
       // window.__nexaPingSetRunning actually starts/stops the timer.
+      // 3000ms, not the original 2000ms — a status badge doesn't need
+      // sub-3s freshness to read as live, and this is one fewer real fetch()
+      // per account per 6s competing with the game's own canvas rendering
+      // on that same thread (same reasoning as the hunt-telemetry poll
+      // interval bump in game-telemetry.js, see POLL_BASE_INTERVAL_MS).
       let intervalId = null;
       function start() {
         if (intervalId) return;
         measure();
-        intervalId = setInterval(measure, 2000);
+        intervalId = setInterval(measure, 3000);
       }
       function stop() {
         if (intervalId) {
@@ -3454,6 +3463,7 @@ const SETTINGS_UPDATE_WHITELIST = new Set([
   'autoEco',
   'showFpsOverlay',
   'showPingOverlay',
+  'huntTelemetryEnabled',
   'defaultStartUrl',
   'supportPaypalUrl',
   'defaultZoom',
@@ -3500,6 +3510,22 @@ ipcMain.handle('settings:update', (_e, fields) => {
   }
   if ('showPingOverlay' in fields) {
     for (const wc of views.values()) if (!wc.isDestroyed()) setPingOverlayVisible(wc, fields.showPingOverlay !== false);
+  }
+  // Live-apply for already-open accounts, same pattern as the overlay
+  // toggles above. Turning it off stops the polling interval outright
+  // (gameTelemetry.detachCapture, not just hiding something) for every open
+  // game account; turning it back on re-attaches via attachGameCaptureFor —
+  // the exact function did-finish-load already calls, so this stays in sync
+  // with the stability-onFrame wiring instead of duplicating it.
+  if ('huntTelemetryEnabled' in fields) {
+    for (const [accountId, wc] of views.entries()) {
+      if (wc.isDestroyed()) continue;
+      if (fields.huntTelemetryEnabled === false) {
+        gameTelemetry.detachCapture(accountId);
+      } else if (gameTelemetry.isGameUrl(wc.getURL())) {
+        attachGameCaptureFor(wc, accountId);
+      }
+    }
   }
   persist();
   broadcastState();
@@ -4399,7 +4425,17 @@ function feedConnectionEvent(accountId, event) {
 // CDP-only concept (the debugger session dying) — the JS-based capture
 // (game-telemetry.js) doesn't "detach", its interval either keeps polling
 // or the webContents got destroyed, which it already handles on its own.
+//
+// data.settings.huntTelemetryEnabled (default true, see store.js) gates the
+// whole thing: off means no capture interval ever attaches for this
+// account, i.e. zero executeJavaScript() round-trips competing with the
+// game's own render thread — at the cost of the hunt/drops panel having no
+// data, and (only if settings.stability.enabled is also on) losing the
+// FRAME_RECEIVED heartbeat signal the connection-manager uses to notice a
+// stuck account. Both trade-offs are called out in the Configuración hint
+// text, not hidden — see settings.huntTelemetryHint in src/i18n-data.js.
 function attachGameCaptureFor(wc, accountId) {
+  if (data.settings.huntTelemetryEnabled === false) return;
   if (!stabilityEnabled()) {
     gameTelemetry.attachCapture(wc, accountId);
     return;
