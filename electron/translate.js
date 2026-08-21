@@ -349,7 +349,31 @@ const TERM_OVERRIDES = {
     'td bem': { es: 'todo bien', en: 'all good' },
     dnv: { es: 'de nuevo', en: 'again' },
     glr: { es: 'gente', en: 'guys' },
-    fmz: { es: 'todo bien', en: 'all good' }
+    fmz: { es: 'todo bien', en: 'all good' },
+    // Fourth batch — standard-dictionary Portuguese words (not slang), added
+    // specifically to widen glossaryOverrideWhenSameAsTarget's coverage: the
+    // reported bug is franc confidently misreading real Portuguese chat text
+    // as Spanish ('es', this app's usual target), which makes it look
+    // "already translated" and skip forever. Chosen for having NO Spanish
+    // spelling overlap at all (so an exact match here can never misfire on
+    // genuine Spanish chat) — unlike the batches above, these weren't pulled
+    // from a live-captured chat sample, so treat them as a first pass to
+    // refine against real chat text later, the same way every batch above was.
+    'então': { es: 'entonces', en: 'so' },
+    muito: { es: 'muy', en: 'very' },
+    bom: { es: 'bueno', en: 'good' },
+    boa: { es: 'buena', en: 'good' },
+    onde: { es: 'dónde', en: 'where' },
+    'cadê': { es: '¿dónde está?', en: 'where is' },
+    'né': { es: '¿no?', en: 'right?' },
+    'aí': { es: 'ahí', en: 'there' },
+    'irmão': { es: 'hermano', en: 'brother' },
+    'também': { es: 'también', en: 'also' },
+    adeus: { es: 'adiós', en: 'goodbye' },
+    desculpa: { es: 'disculpa', en: 'sorry' },
+    obrigado: { es: 'gracias', en: 'thanks' },
+    obrigada: { es: 'gracias', en: 'thanks' },
+    galera: { es: 'gente', en: 'folks' }
   },
   // English source — this app's UI/game targets also include English pages,
   // so from=en, to=es needs the same treatment. Confirmed live the same
@@ -447,6 +471,22 @@ function glossaryLanguageFor(text) {
     if (TERM_OVERRIDES[lang][lower]) return lang;
   }
   return null;
+}
+
+// franc's real false-positive case (confirmed live, e.g. "Onde que vai pora
+// breedar?" detected as 'es'): a WRONG but confident guess that happens to
+// equal the target language is indistinguishable, on its own, from a message
+// that's genuinely already in the target language — so it gets skipped as
+// "already translated" instead of flagged as mistranslated. glossaryLanguageFor
+// was only ever consulted when franc had NO opinion (returned null); a
+// confident-but-wrong 'to' guess never reached it. An exact glossary match is
+// curated, hand-verified, single-word/short-phrase evidence — stronger than
+// franc's guess — so it's allowed to override a from===to result too, not
+// just fill in for a null one.
+function glossaryOverrideWhenSameAsTarget(from, to, text) {
+  if (from !== to) return from;
+  const glossaryGuess = glossaryLanguageFor(text);
+  return (glossaryGuess && glossaryGuess !== to) ? glossaryGuess : from;
 }
 
 // Generic safety net for the MT engine repeating itself ("Diario diario",
@@ -1151,6 +1191,7 @@ module.exports = {
   setOpenAccountCount,
   isSupportedLanguage,
   glossaryLanguageFor,
+  glossaryOverrideWhenSameAsTarget,
   loadPersistedCache,
   savePersistedCache,
   showSelectionLoadingScript,

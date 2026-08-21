@@ -1675,9 +1675,15 @@ async function translateSelectionAt(id, x, y) {
     // into another from===to no-op. 'pt' — every game this app targets —
     // is the same last-resort default used everywhere else in this file
     // for exactly this "genuinely can't tell" case.
-    const from = translate.isSupportedLanguage(detected) ? detected
+    let from = translate.isSupportedLanguage(detected) ? detected
       : (translate.isSupportedLanguage(extracted.from) && extracted.from !== to) ? extracted.from
       : 'pt';
+    // Same franc false-positive as translateChatMessages/resolveFragmentFrom:
+    // a confident-but-wrong 'to' guess on real Portuguese text (e.g. "fiquei
+    // top5 cade minha tag OP" landing on 'es') makes translateBatch's own
+    // from===to short-circuit silently no-op the whole selection. An exact
+    // glossary match overrides it here too.
+    from = translate.glossaryOverrideWhenSameAsTarget(from, to, extracted.fragments.join(' '));
     // Reuses the exact same translate:downloadProgress channel the main
     // "Traducir página" flow uses — the renderer opens the SAME modal for
     // it regardless of what triggered the download (see onTranslateDownloadProgress
@@ -4698,19 +4704,23 @@ async function translateChatMessages(id) {
       // even if it had one, so this is checked before falling back to
       // per-user history.
       if (!from) from = translate.glossaryLanguageFor(text);
+      // Confirmed live: franc has real false positives for short/slangy
+      // Portuguese chat text landing on 'es' (e.g. "Onde que vai pora
+      // breedar?" detected as Spanish) — since 'es' is also this app's
+      // usual target language, that misdetection made the message look
+      // "already translated" and skip forever. An exact glossary match is
+      // stronger evidence than franc's guess, so it's checked first, before
+      // falling back to this user's history.
+      from = translate.glossaryOverrideWhenSameAsTarget(from, to, text);
       const histEntry = username && history.get(username);
       if (!from && histEntry && histEntry.count >= CHAT_HISTORY_CONFIDENCE_THRESHOLD) {
         // franc couldn't tell on its own (too short) — fall back to what
         // this same player has reliably written in before.
         from = histEntry.lang;
       }
-      // Confirmed live: franc has real false positives for short/slangy
-      // Portuguese chat text landing on 'es' (e.g. "Onde que vai pora
-      // breedar?" detected as Spanish) — since 'es' is also this app's
-      // usual target language, that misdetection made the message look
-      // "already translated" and skip forever. A confident, already-built
-      // history for this exact user in a different supported language is
-      // stronger evidence than a single franc guess on a short message.
+      // A confident, already-built history for this exact user in a
+      // different supported language is stronger evidence than a single
+      // franc guess on a short message, when no glossary word settled it.
       if (from === to && histEntry && histEntry.count >= CHAT_HISTORY_CONFIDENCE_THRESHOLD && histEntry.lang !== to) {
         from = histEntry.lang;
       }
@@ -4818,6 +4828,11 @@ async function resolveFragmentFrom(text, to, pageLangFallback) {
   // occasionally got misdetected this way and were wrongly left untranslated.
   if (!translate.isSupportedLanguage(from)) from = null;
   if (!from) from = translate.glossaryLanguageFor(text);
+  // Same misdetection franc has for Portuguese chat text (see
+  // translateChatMessages): a confident-but-wrong 'to' guess reads
+  // identically to "already translated" and never reaches translateBatch at
+  // all. An exact glossary match overrides it the same way here.
+  from = translate.glossaryOverrideWhenSameAsTarget(from, to, text);
   // pageLangFallback (<html lang>) is a much weaker signal than real
   // content detection — confirmed live that dragonballidle.online's
   // <html lang> is a fixed "es" regardless of actual content — so it's
