@@ -405,7 +405,40 @@ const TERM_OVERRIDES = {
     hum: { es: 'mmm', en: 'hmm' },
     'bagulho chato': { es: 'cosa molesta', en: 'annoying thing' },
     chega: { es: 'basta', en: 'enough' },
-    pow: { es: 'uy', en: 'whoa' }
+    pow: { es: 'uy', en: 'whoa' },
+    // Sixth batch — another real chat capture the user pasted, this time
+    // from a Ragnarok-style Idle chat and a second Pokémon-idle market
+    // channel. Same method: every candidate checked live against the real
+    // models first. "orra"/"mlq"/"aff"/"aki"/"eai"/"seloko"/"precinho"/
+    // "identificou" (en)/"nemhum"/"brosinho" all came back unchanged (OOV);
+    // "carai" -> "Guy Hola"/"Guy Hi" (nonsense, not the "damn!"/"wow"
+    // exclamation); "identificou" -> "de la identificación" in Spanish
+    // specifically (the noun, not the "¿identificaste?" question this
+    // almost always is standalone). Two real bugs were confirmed live but
+    // deliberately left OUT for the same reason "mano" was: "compensa"
+    // (garbled to "Pagar pagos"/"Payouts") and "topado" (unchanged) are both
+    // also real, legitimate Spanish words on their own ("compensa" = "it
+    // compensates"/colloquial "is it worth it?"; "topado" = "bumped into",
+    // from "topar") — adding either here would risk misclassifying real
+    // Spanish chat as Portuguese.
+    orra: { es: 'uy', en: 'whoa' },
+    carai: { es: 'caramba', en: 'damn' },
+    mlq: { es: 'chico', en: 'dude' },
+    brabo: { es: 'increíble', en: 'awesome' },
+    aff: { es: 'uf', en: 'ugh' },
+    // "aki" (informal spelling of "aqui") is sometimes also how Spanish
+    // speakers informally spell "aquí" — unlike every other entry in this
+    // batch this one isn't fully collision-free, but even in that
+    // misclassified case the ES override value ("aquí") is exactly what a
+    // genuine Spanish "aki" should read as anyway, so the worst case is a
+    // harmless no-op re-translation, not a wrong one.
+    aki: { es: 'aquí', en: 'here' },
+    eai: { es: 'qué tal', en: 'hey' },
+    nemhum: { es: 'ninguno', en: 'none' },
+    seloko: { es: 'qué locura', en: 'crazy' },
+    precinho: { es: 'precio bajito', en: 'cheap price' },
+    identificou: { es: '¿identificaste?', en: 'identified' },
+    brosinho: { es: 'amigo', en: 'buddy' }
   },
   // English source — this app's UI/game targets also include English pages,
   // so from=en, to=es needs the same treatment. Confirmed live the same
