@@ -350,15 +350,18 @@ const TERM_OVERRIDES = {
     dnv: { es: 'de nuevo', en: 'again' },
     glr: { es: 'gente', en: 'guys' },
     fmz: { es: 'todo bien', en: 'all good' },
-    // Fourth batch — standard-dictionary Portuguese words (not slang), added
-    // specifically to widen glossaryOverrideWhenSameAsTarget's coverage: the
-    // reported bug is franc confidently misreading real Portuguese chat text
-    // as Spanish ('es', this app's usual target), which makes it look
-    // "already translated" and skip forever. Chosen for having NO Spanish
-    // spelling overlap at all (so an exact match here can never misfire on
-    // genuine Spanish chat) — unlike the batches above, these weren't pulled
-    // from a live-captured chat sample, so treat them as a first pass to
-    // refine against real chat text later, the same way every batch above was.
+    // Fourth batch — standard-dictionary Portuguese words, added specifically
+    // to widen glossaryOverrideWhenSameAsTarget's coverage: the reported bug
+    // is franc confidently misreading real Portuguese chat text as Spanish
+    // ('es', this app's usual target), which makes it look "already
+    // translated" and skip forever. Chosen for having NO Spanish spelling
+    // overlap at all (so an exact match here can never misfire on genuine
+    // Spanish chat). Confirmed live against the real pt->es/pt->en models
+    // afterward: the model already gets every one of these right on its own
+    // (e.g. "obrigado" -> "gracias"/"thanks", nothing garbled) — so unlike
+    // every other entry in this table, they're kept here purely for the
+    // language-detection signal, not because the translation itself needs
+    // correcting.
     'então': { es: 'entonces', en: 'so' },
     muito: { es: 'muy', en: 'very' },
     bom: { es: 'bueno', en: 'good' },
@@ -373,7 +376,36 @@ const TERM_OVERRIDES = {
     desculpa: { es: 'disculpa', en: 'sorry' },
     obrigado: { es: 'gracias', en: 'thanks' },
     obrigada: { es: 'gracias', en: 'thanks' },
-    galera: { es: 'gente', en: 'folks' }
+    galera: { es: 'gente', en: 'folks' },
+    // Fifth batch — pulled from a real chat capture the user pasted directly
+    // from dragonballidle.online and poke.idleworld.online, then each
+    // candidate checked live against the actual pt->es/pt->en models (not
+    // guessed): "ata"/"tabom"/"ata blz"/"bora"/"nn"/"valeuu"/"rapaziada" all
+    // came back completely unchanged (OOV); "nem compensa" -> "ni compensa"
+    // (took "nem" too literally, lost the "not worth it" idiom); "hum" ->
+    // "Húmedo"/"Humid" (read as the adjective "humid", not the filler
+    // sound); "bagulho chato" -> "Salsa aburrida" ("boring sauce" — nonsense,
+    // "bagulho" isn't "sauce"); "chega" -> "Llega"/"He arrives" (the literal
+    // verb form, not the "enough!"/"stop it" interjection this almost always
+    // is as a standalone chat reply); "pow" -> "Vaquero"/"Pow" (translated as
+    // an unrelated loanword, not the BR surprise/emphasis interjection).
+    // "mano" was deliberately left out despite also coming back unchanged —
+    // it collides with the common Spanish word for "hand", so adding it here
+    // would risk misclassifying real Spanish chat as Portuguese. "so
+    // isso"/"só isso" and "que susto" were also tested and already translate
+    // correctly on their own, so no override was needed for those.
+    ata: { es: 'ok', en: 'ok' },
+    tabom: { es: 'todo bien', en: 'ok' },
+    'ata blz': { es: 'todo bien', en: 'ok, cool' },
+    bora: { es: 'vamos', en: 'let\'s go' },
+    nn: { es: 'no', en: 'no' },
+    valeuu: { es: 'gracias', en: 'thanks' },
+    rapaziada: { es: 'muchachos', en: 'guys' },
+    'nem compensa': { es: 'no vale la pena', en: 'not worth it' },
+    hum: { es: 'mmm', en: 'hmm' },
+    'bagulho chato': { es: 'cosa molesta', en: 'annoying thing' },
+    chega: { es: 'basta', en: 'enough' },
+    pow: { es: 'uy', en: 'whoa' }
   },
   // English source — this app's UI/game targets also include English pages,
   // so from=en, to=es needs the same treatment. Confirmed live the same
