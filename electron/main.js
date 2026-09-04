@@ -683,8 +683,11 @@ function handleDownloads(ses) {
       if (now - lastBroadcast > 400) {
         lastBroadcast = now;
         broadcastState();
+        // Same throttle as the broadcast right above — 'updated' can fire
+        // many times a second on a fast connection, and this is a
+        // synchronous native Windows taskbar call, not a free one.
+        updateTaskbarProgress();
       }
-      updateTaskbarProgress();
     });
 
     item.on('done', (_e, state) => {
@@ -733,6 +736,8 @@ const SHORTCUTS = [
   { combo: 'Ctrl + K', key: 'shortcut.commandPalette' },
   { combo: 'Ctrl + W', key: 'shortcut.closeActive' },
   { combo: 'Ctrl + Shift + T', key: 'shortcut.reopenClosed' },
+  { combo: 'F12', key: 'shortcut.openDevTools' },
+  { combo: 'Ctrl + Alt + T', key: 'shortcut.toggleChatAutoTranslate' },
   { combo: 'Ctrl + B', key: 'shortcut.toggleSidebar' },
   { combo: 'Ctrl + D', key: 'shortcut.bookmarkPage' },
   { combo: 'Ctrl + Shift + Supr', key: 'shortcut.clearSessionData' },
@@ -844,6 +849,22 @@ function toggleMuteAccount(id) {
   persist();
   broadcastGeometryOnly();
   broadcastState();
+}
+
+// Shared by showPageContextMenu's context-menu item and the Ctrl+Alt+T
+// shortcut in handleAccountShortcut — used to be copy-pasted in both
+// places, which is exactly how a real bug shipped once already (the
+// shortcut handler collided with an unrelated pre-existing Ctrl+Shift+T
+// binding, confirmed live). One function means one place to fix next time.
+function toggleChatAutoTranslate(wc, accountId) {
+  const account = getAccount(accountId);
+  if (!account) return;
+  let hostname = '';
+  try { hostname = new URL(wc?.getURL() || '').hostname; } catch { /* about:blank etc. */ }
+  if (!translate.chatSelectorsForHost(hostname)) return;
+  account.chatAutoTranslate = !account.chatAutoTranslate;
+  if (!account.chatAutoTranslate) chatUserLanguageHistory.delete(accountId);
+  persist();
 }
 
 function toggleMuteAllAccounts() {
@@ -960,23 +981,14 @@ function handleAccountShortcut(input, account) {
   // to flip account.chatAutoTranslate is showPageContextMenu's own menu
   // item, which never gets a chance to appear on a page that calls
   // preventDefault() on its own contextmenu event (confirmed live on
-  // baiakidle.com). Mirrors that handler's exact logic (chatSelectorsForHost
-  // gate, history reset on turning off, persist) so a site with no known
-  // chat DOM still silently no-ops here too, same as the menu item not
-  // appearing at all for it.
+  // baiakidle.com).
   // Ctrl+Alt+T, NOT Ctrl+Shift+T — that combo was already taken by
   // reopenLastClosedAccount() below. Confirmed live this was a real bug:
   // this handler runs first and unconditionally returns true, so it had
   // been silently swallowing every Ctrl+Shift+T on any page with known
   // chat selectors, making "reopen last closed account" unreachable there.
   if (ctrl && !shift && alt && key === 't') {
-    let hostname = '';
-    try { hostname = new URL(view?.getURL() || '').hostname; } catch { /* about:blank etc. */ }
-    if (translate.chatSelectorsForHost(hostname)) {
-      account.chatAutoTranslate = !account.chatAutoTranslate;
-      if (!account.chatAutoTranslate) chatUserLanguageHistory.delete(account.id);
-      persist();
-    }
+    toggleChatAutoTranslate(view, account.id);
     return true;
   }
   if (ctrl && !shift && !alt && key === ',') {
@@ -1905,12 +1917,7 @@ function showPageContextMenu(wc, params, accountId) {
       items.push(
         {
           label: mt(lang, enabled ? 'ctx.chatAutoTranslateOff' : 'ctx.chatAutoTranslateOn'),
-          click: () => {
-            if (!account) return;
-            account.chatAutoTranslate = !enabled;
-            if (!account.chatAutoTranslate) chatUserLanguageHistory.delete(accountId);
-            persist();
-          }
+          click: () => toggleChatAutoTranslate(wc, accountId)
         },
         { type: 'separator' }
       );

@@ -462,11 +462,19 @@ const TERM_OVERRIDES = {
     // works) came back as "trabaja" (as in a job) — wrong sense; the
     // correct Spanish is the identical cognate "funciona". "vtnc" (a crude
     // brush-off, short for "vai tomar no cu") came back completely
-    // unchanged.
+    // unchanged. "funciona" itself was DROPPED from this table after a
+    // review caught a real risk the other entries here don't have: it's
+    // spelled and means the same thing in Spanish, and TERM_OVERRIDES has
+    // no 'es' table, so glossaryLanguageFor() would read a genuine Spanish
+    // speaker's own "funciona" as proof of Portuguese and pollute their
+    // chatUserLanguageHistory entry — corrupting THEIR later messages, not
+    // just this one. Unlike "aki" (also collision-prone but safe because
+    // the override value is identical to what a genuine Spanish "aki"
+    // should read as anyway), a wrong 'pt' history entry has a delayed,
+    // silent blast radius the aki case doesn't.
     krl: { es: 'carajo', en: 'damn' },
     poha: { es: 'mierda', en: 'damn' },
     zoeira: { es: 'broma', en: 'joking around' },
-    funciona: { es: 'funciona', en: 'it works' },
     vtnc: { es: 'vete a la mierda', en: 'get lost' },
     // Real standalone chat message ("Ja Volto Man"), not a guess at a
     // phrase — came back completely unchanged. "man" here is the same
@@ -479,10 +487,14 @@ const TERM_OVERRIDES = {
     // "não") and "hj" (informal "hoje") both came back completely unchanged
     // (OOV); "hj" is a real standalone message in the capture ("hj a
     // noite." from a player replying to "when's the update"). "att"
-    // (common gaming abbreviation for "atualização"/update) also OOV.
+    // (common gaming abbreviation for "atualização"/update, also OOV) was
+    // DROPPED after a later review: "Att."/"Atte." is a common Spanish
+    // formal-message sign-off (short for "Atentamente"), so — same risk as
+    // "funciona" above — a genuine Spanish speaker signing off with "att"
+    // would get misread as Portuguese and pollute their own
+    // chatUserLanguageHistory, not just mistranslate this one message.
     naoo: { es: 'no', en: 'no' },
     hj: { es: 'hoy', en: 'today' },
-    att: { es: 'actualización', en: 'update' },
     // Ninth batch — second real capture from the same ragnaidle.com.br
     // chat, after chat auto-translate was already confirmed working on
     // most of it live. "neh" (another informal spelling of "né"/"ne",
@@ -565,18 +577,20 @@ const BRAND_NAMES = new Set(['discord', 'youtube', 'facebook', 'instagram', 'twi
 // didn't cover went to the real model, which HALLUCINATED extra k's onto
 // the end instead of leaving it alone or genuinely translating it.
 const KKK_LAUGH_RE = /^k{3,}$/i;
-function kkkLaughTranslation(to) {
-  if (to === 'es') return 'jajaja';
-  if (to === 'en') return 'hahaha';
-  return null;
-}
 
 function overrideTranslation(from, to, text) {
   const trimmed = text.trim();
   const lower = trimmed.toLowerCase();
   if (BRAND_NAMES.has(lower)) return text;
-  if (from === 'pt' && KKK_LAUGH_RE.test(lower)) return kkkLaughTranslation(to);
-  const entry = TERM_OVERRIDES[from] && TERM_OVERRIDES[from][lower];
+  // Routed through the SAME entry lookup as every dictionary word below
+  // (not an early return with its own bare-string result) so a laugh run
+  // gets the same capitalization/whitespace preservation as everything
+  // else — confirmed live this was lost with an early return: " Kkkkk\n"
+  // came back as a flat lowercase "jajaja" with the surrounding whitespace
+  // and the emphasis capitalization both dropped.
+  const entry = (from === 'pt' && KKK_LAUGH_RE.test(lower))
+    ? { es: 'jajaja', en: 'hahaha' }
+    : TERM_OVERRIDES[from] && TERM_OVERRIDES[from][lower];
   if (entry && entry[to]) {
     // Preserve the original fragment's leading/trailing whitespace and
     // capitalization style so the override doesn't visibly clash with
@@ -1301,8 +1315,11 @@ function extractChatMessagesScript(selectors) {
       if (tagEl && tagEl.textContent) username = username.replace(tagEl.textContent, '');
       // Strips a trailing " [123]:" level/colon suffix so "Zukuth [90]:"
       // and a later "Zukuth [91]:" (leveled up between messages) both key
-      // to the same "Zukuth".
-      username = username.replace(/\\s*\\[\\d+\\]\\s*:?\\s*$/, '').trim();
+      // to the same "Zukuth". Separate second pass strips a BARE trailing
+      // colon with no bracket — ragnaidle.com.br's .player-name textContent
+      // is plain "User:" (see CHAT_SITE_SELECTORS' comment), which the
+      // bracket-only regex above never matches on its own.
+      username = username.replace(/\\s*\\[\\d+\\]\\s*:?\\s*$/, '').replace(/:\\s*$/, '').trim();
       const entry = { node: textEl, text: textEl.textContent, username: username || null };
       window.__nexaChatOriginals.push(entry);
       newItems.push(entry);
