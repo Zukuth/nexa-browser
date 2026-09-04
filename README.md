@@ -166,8 +166,11 @@ Desde `dev (post-0.3.8)` en adelante, este mismo escenario corre solo con `node 
 |---|---|---|---|---|
 | dev (pre-perf-audit, HEAD 3276fc8) | 333 MB (promedio de 3 corridas: 339/330/330) | 9 | 1.6% | 2026-08-21 |
 | **dev (post-perf-audit, sin versionar aún)** | 352 MB (promedio de 3 corridas: 370/370/315) | 9.7 | **0.6%** (-64%) | 2026-08-21 |
+| dev (post-Electron 44.2 + crashReporter local, sin versionar aún) | 375 MB (1 sola corrida, no promedio de 3) | 11 | 1.1% | 2026-09-04 |
 
 **CPU bajó a menos de la mitad, de forma consistente en las 3 corridas** — coherente con lo que cambió: overlays de FPS/ping apagados por defecto (antes corrían en las 3 cuentas todo el tiempo), escritura del store ya no bloquea el hilo principal, y el sidebar deja de reconstruirse entero en cada actualización de estado irrelevante. RAM y cantidad de procesos no muestran una tendencia clara en ningún sentido entre las 3 corridas de cada lado — nada de lo que se tocó en esta pasada apuntaba a bajar la memoria estática, y el escenario navega contra el login real del juego en internet, así que esos dos números están dominados por lo que esa página en particular cargó en cada corrida (ads/analytics/CDN), no por el código de Nexa.
+
+**Fila 2026-09-04 — no es una regresión confirmada, es una sola corrida.** Subió de 9.7 a 11 procesos, lo cual coincide 1 a 1 con `crashReporter.start()` (agrega un proceso `crashpad_handler` nativo aparte, comportamiento estándar de Electron aun con `uploadToServer:false`) — hipótesis razonable para ese +1.3, no confirmada corriendo sin el crash reporter. El resto del salto (RAM y CPU) puede venir de la actualización a Electron 44.2 (Chromium más nuevo) o simplemente de la variabilidad de qué cargó esa vez el login real del juego, igual que se explica arriba. Antes de la próxima versión, correr 3 corridas y promediar como en la fila de arriba para tener un número confiable en vez de este de referencia rápida.
 
 Antes de publicar la próxima versión, correr `node scripts/perf-benchmark.js` y agregar una fila — evita repetir el trabajo de armar un worktree de la versión vieja para comparar a mano.
 
