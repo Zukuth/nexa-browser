@@ -473,7 +473,16 @@ const TERM_OVERRIDES = {
     // English-loanword address term as "mano"/"mlq", dropped in the
     // translation the way a Spanish speaker would actually say this rather
     // than kept as a literal "hombre".
-    'ja volto': { es: 'ya vuelvo', en: 'be right back' }
+    'ja volto': { es: 'ya vuelvo', en: 'be right back' },
+    // Eighth batch — real chat capture from a Ragnarok-Online-style idle
+    // (ragnaidle.com.br), same method: checked live first. "naoo" (emphatic
+    // "não") and "hj" (informal "hoje") both came back completely unchanged
+    // (OOV); "hj" is a real standalone message in the capture ("hj a
+    // noite." from a player replying to "when's the update"). "att"
+    // (common gaming abbreviation for "atualização"/update) also OOV.
+    naoo: { es: 'no', en: 'no' },
+    hj: { es: 'hoy', en: 'today' },
+    att: { es: 'actualización', en: 'update' }
   },
   // English source — this app's UI/game targets also include English pages,
   // so from=en, to=es needs the same treatment. Confirmed live the same
@@ -532,10 +541,13 @@ const TERM_OVERRIDES = {
     'добыча': { es: 'botín' }
   }
 };
-// Brand/product names the MT engine has been observed mistranslating as if
-// they were ordinary words — passed through unchanged instead of sent to
-// the translator at all, regardless of source/target language.
-const BRAND_NAMES = new Set(['discord', 'youtube', 'facebook', 'instagram', 'twitter', 'x', 'tiktok', 'telegram', 'whatsapp', 'paypal']);
+// Brand/product names (plus game-specific proper nouns/event names that
+// behave identically — never a "real" word to translate, just a name the MT
+// engine has been observed mangling as if it were one) — passed through
+// unchanged instead of sent to the translator at all, regardless of
+// source/target language. 'woe' confirmed live: "War of Emperium", a named
+// Ragnarok Online event, came back as "aflio" — a fabricated non-word.
+const BRAND_NAMES = new Set(['discord', 'youtube', 'facebook', 'instagram', 'twitter', 'x', 'tiktok', 'telegram', 'whatsapp', 'paypal', 'woe']);
 
 // Any run of 3+ "k"s (the Portuguese hard-C laugh spelling), regardless of
 // exact length — see the comment where the old kkk/kkkk/kkkkk table entries
