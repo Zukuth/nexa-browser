@@ -757,9 +757,20 @@ let lastClosedAccountId = null;
 // Only ever used to pick the INITIAL value — once chatAutoTranslate is a
 // real boolean (set here, via the toggle, or via the shortcut) it's never
 // silently overridden again, so a user's explicit "off" always sticks.
+// Shared by every chat-related hostname lookup (defaultChatAutoTranslate,
+// toggleChatAutoTranslate, showPageContextMenu's chat-toggle gate,
+// translateChatMessages) — used to be independently reimplemented at each
+// call site. NOT the same as the pre-existing hostnameOf() helper further
+// down this file: that one strips a leading "www." for its own callers,
+// which would silently break matching against CHAT_SITE_SELECTORS'
+// 'www.ragnaidle.com.br' key.
+function chatHostnameOf(url) {
+  try { return new URL(url || '').hostname; } catch { return ''; }
+}
+
 function defaultChatAutoTranslate(url) {
   try {
-    return !!translate.chatSelectorsForHost(new URL(url).hostname);
+    return !!translate.chatSelectorsForHost(chatHostnameOf(url));
   } catch {
     return false;
   }
@@ -859,9 +870,7 @@ function toggleMuteAccount(id) {
 function toggleChatAutoTranslate(wc, accountId) {
   const account = getAccount(accountId);
   if (!account) return;
-  let hostname = '';
-  try { hostname = new URL(wc?.getURL() || '').hostname; } catch { /* about:blank etc. */ }
-  if (!translate.chatSelectorsForHost(hostname)) return;
+  if (!translate.chatSelectorsForHost(chatHostnameOf(wc?.getURL()))) return;
   account.chatAutoTranslate = !account.chatAutoTranslate;
   if (!account.chatAutoTranslate) chatUserLanguageHistory.delete(accountId);
   persist();
@@ -1909,9 +1918,7 @@ function showPageContextMenu(wc, params, accountId) {
   // and having it silently do nothing on unsupported sites would be
   // confusing, not helpful.
   {
-    let hostname = '';
-    try { hostname = new URL(wc.getURL()).hostname; } catch { /* about:blank etc. */ }
-    if (translate.chatSelectorsForHost(hostname)) {
+    if (translate.chatSelectorsForHost(chatHostnameOf(wc.getURL()))) {
       const account = getAccount(accountId);
       const enabled = !!(account && account.chatAutoTranslate);
       items.push(

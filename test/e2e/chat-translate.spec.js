@@ -5,6 +5,7 @@ const { test, expect } = require('./fixtures');
 
 const CHAT_PORT = 8939;
 const HIDDEN_CHAT_PORT = 8942;
+const RAGNAIDLE_CHAT_PORT = 8943;
 
 // Base implementation, not the finished feature — see CHAT_SITE_SELECTORS
 // in translate.js. Only Dragon Ball Idle's real chat DOM has been
@@ -120,5 +121,56 @@ test.describe('Chat auto-translate pauses when the panel is minimized', () => {
     expect(result.ok).toBe(true);
     expect(result.translated).toBe(0);
     expect(result.hidden).toBe(true);
+  });
+});
+
+// Regression coverage for extractChatMessagesScript's sel.text-less
+// fallback (CHAT_SITE_SELECTORS['127.0.0.1'] / ['www.ragnaidle.com.br'] —
+// see translate.js) — the message body on this site is a bare Text node,
+// not wrapped in its own element the way Dragon Ball Idle's/Poke Idle
+// World's markup is, so this exercises a genuinely different extraction
+// path than every other test in this file.
+test.describe('Chat auto-translate (sel.text-less fallback, ragnaidle.com.br shape)', () => {
+  let server;
+  test.beforeAll(() => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'ragnaidle-chat.html'));
+    server = http.createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(html);
+    });
+    return new Promise((resolve) => server.listen(RAGNAIDLE_CHAT_PORT, '127.0.0.1', resolve));
+  });
+  test.afterAll(() => new Promise((resolve) => server.close(resolve)));
+
+  test('extracts message text from a bare Text node (no wrapping element), leaves the username element untouched, and merges a split text node instead of dropping it', async ({ page }) => {
+    const active = (await page.evaluate(() => window.api.getState())).settings.activeAccountId;
+    await page.evaluate(
+      ({ id, port }) => window.api.navigateAccount(id, `http://127.0.0.1:${port}/`),
+      { id: active, port: RAGNAIDLE_CHAT_PORT }
+    );
+    await expect.poll(async () => {
+      const s = await page.evaluate(() => window.api.getState());
+      return s.accounts.find((a) => a.id === active)?.url;
+    }).toContain(`127.0.0.1:${RAGNAIDLE_CHAT_PORT}`);
+
+    // Fixture has 3 .chat-line rows (all Portuguese) and one .chat-drop
+    // system message the selector deliberately doesn't match yet (see
+    // CHAT_SITE_SELECTORS' own comment) — seen/translated should both be 3,
+    // not 4. The webview's own DOM isn't reachable through Playwright's
+    // Electron support (see the file header comment above), so — same as
+    // every other test in this file — this asserts on the IPC-level result
+    // rather than the literal translated text.
+    //
+    // The third row's message body is split across two Text nodes by an
+    // inline <img> (extractChatMessagesScript's extraNodes case): if that
+    // concatenation were broken and only the fallback grabbed the LAST node
+    // as its own separate row, sel.message's `.chat-line` count wouldn't
+    // change (still one <div>), but a regression that made the extraction
+    // throw instead of merging would drop seen/translated below 3 — this
+    // is the failure mode this test actually catches.
+    const result = await page.evaluate((id) => window.api.translateChatOnce(id), active);
+    expect(result.ok).toBe(true);
+    expect(result.seen).toBe(3);
+    expect(result.translated).toBe(3);
   });
 });

@@ -1,0 +1,27 @@
+<!doctype html>
+<!-- Mirrors the REAL DOM structure confirmed live against
+     www.ragnaidle.com.br/play's chat panel (real outerHTML pasted from an
+     actual logged-in session's DevTools, not guessed): a .chat-body
+     container holding .chat-line rows, each with a <b class="player-name">
+     element for "User:" and the message body as a bare sibling Text node —
+     no wrapping element for the text at all. See CHAT_SITE_SELECTORS in
+     translate.js and extractChatMessagesScript's sel.text-less fallback.
+     .chat-drop is a real sibling shape for system/achievement messages,
+     included here to confirm the .chat-line-only selector correctly
+     ignores it. -->
+<html lang="pt">
+<head><meta charset="utf-8"><title>Ragnaidle chat fixture</title></head>
+<body>
+  <div class="chat-body">
+    <div class="chat-line"><b class="player-name vip-name t2">BabyDoll:</b> este jogo e necessario ter uma prist de suporte?</div>
+    <div class="chat-line"><b class="player-name">zigfreed:</b> naoo</div>
+    <!-- Split text-node case: inline markup (an emoji <img>) breaks the
+         message body into TWO sibling Text nodes instead of one, exercising
+         extractChatMessagesScript's extraNodes concatenation (and
+         applyChatTranslationsScript blanking the earlier node) instead of
+         only the single-trailing-text-node shape the other two rows have. -->
+    <div class="chat-line"><b class="player-name">Reddan:</b> o ragidle ta em beta <img class="emoji" src="kek.png" alt="kek"> reiniciara nao neh</div>
+    <div class="chat-drop">Illyasviel alcancou o 1100 andar da Torre de Thanatos!</div>
+  </div>
+</body>
+</html>

@@ -369,18 +369,17 @@ const TERM_OVERRIDES = {
     boa: { es: 'buena', en: 'good' },
     onde: { es: 'dónde', en: 'where' },
     'cadê': { es: '¿dónde está?', en: 'where is' },
-    'né': { es: '¿no?', en: 'right?' },
-    // Same word, informal spelling without the accent — extremely common in
-    // fast chat typing. Confirmed live this is a real gap, not a duplicate:
-    // 'né' alone never matches 'ne' (exact lowercase match), so a standalone
-    // "ne" message fell straight through to the real model untranslated.
-    // Only fixes a message that's EXACTLY "ne" (like every entry here,
+    // The informal spelling without the accent ("ne") used to be its own
+    // duplicate entry here — now covered by NORMALIZED_PT (see
+    // normalizeGlossaryKey above), which strips accents before falling
+    // back to a lookup, so "né" alone covers both spellings. Still only
+    // fixes a message that's EXACTLY this word (like every entry here,
     // overrideTranslation matches the whole fragment, not a substring) — a
     // longer message like "espero ne mano" still goes to the real model,
     // which confirmed live can hallucinate around this word ("Espero que ne
     // zeo") rather than just leaving it be; that's a real-model quality
     // issue this table has no reach into, not something this entry covers.
-    ne: { es: '¿no?', en: 'right?' },
+    'né': { es: '¿no?', en: 'right?' },
     'aí': { es: 'ahí', en: 'there' },
     'irmão': { es: 'hermano', en: 'brother' },
     'também': { es: 'también', en: 'also' },
@@ -411,7 +410,10 @@ const TERM_OVERRIDES = {
     'ata blz': { es: 'todo bien', en: 'ok, cool' },
     bora: { es: 'vamos', en: 'let\'s go' },
     nn: { es: 'no', en: 'no' },
-    valeuu: { es: 'gracias', en: 'thanks' },
+    // "valeuu" (emphatic repeated-letter spelling of "valeu", line 313)
+    // used to be its own duplicate entry — now covered by NORMALIZED_PT,
+    // which collapses a repeated trailing letter before falling back to a
+    // lookup.
     rapaziada: { es: 'muchachos', en: 'guys' },
     'nem compensa': { es: 'no vale la pena', en: 'not worth it' },
     hum: { es: 'mmm', en: 'hmm' },
@@ -484,16 +486,17 @@ const TERM_OVERRIDES = {
     'ja volto': { es: 'ya vuelvo', en: 'be right back' },
     // Eighth batch — real chat capture from a Ragnarok-Online-style idle
     // (ragnaidle.com.br), same method: checked live first. "naoo" (emphatic
-    // "não") and "hj" (informal "hoje") both came back completely unchanged
-    // (OOV); "hj" is a real standalone message in the capture ("hj a
-    // noite." from a player replying to "when's the update"). "att"
-    // (common gaming abbreviation for "atualização"/update, also OOV) was
-    // DROPPED after a later review: "Att."/"Atte." is a common Spanish
-    // formal-message sign-off (short for "Atentamente"), so — same risk as
-    // "funciona" above — a genuine Spanish speaker signing off with "att"
-    // would get misread as Portuguese and pollute their own
-    // chatUserLanguageHistory, not just mistranslate this one message.
-    naoo: { es: 'no', en: 'no' },
+    // repeated-letter spelling of "não", line 310 — now covered by
+    // NORMALIZED_PT instead of its own duplicate entry) and "hj" (informal
+    // "hoje") both came back completely unchanged (OOV); "hj" is a real
+    // standalone message in the capture ("hj a noite." from a player
+    // replying to "when's the update"). "att" (common gaming abbreviation
+    // for "atualização"/update, also OOV) was DROPPED after a later
+    // review: "Att."/"Atte." is a common Spanish formal-message sign-off
+    // (short for "Atentamente"), so — same risk as "funciona" above — a
+    // genuine Spanish speaker signing off with "att" would get misread as
+    // Portuguese and pollute their own chatUserLanguageHistory, not just
+    // mistranslate this one message.
     hj: { es: 'hoy', en: 'today' },
     // Ninth batch — second real capture from the same ragnaidle.com.br
     // chat, after chat auto-translate was already confirmed working on
@@ -578,6 +581,25 @@ const BRAND_NAMES = new Set(['discord', 'youtube', 'facebook', 'instagram', 'twi
 // the end instead of leaving it alone or genuinely translating it.
 const KKK_LAUGH_RE = /^k{3,}$/i;
 
+// Generalizes informal spelling variants of an already-covered PT word —
+// dropped accents ("né"->"ne") and an emphatic repeated trailing letter
+// ("naoo"->"não", "valeuu"->"valeu") — the same class of problem
+// KKK_LAUGH_RE was added to solve for laughs, applied here to the rest of
+// TERM_OVERRIDES.pt instead of hand-adding one entry per spelling. Built
+// once at module load into a normalized-key -> entry map so a lookup miss
+// on the exact table only costs one extra Map.get, not a full rescan.
+function normalizeGlossaryKey(s) {
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/(.)\1+$/, '$1');
+}
+const NORMALIZED_PT = (() => {
+  const map = new Map();
+  for (const key of Object.keys(TERM_OVERRIDES.pt)) {
+    const norm = normalizeGlossaryKey(key);
+    if (!map.has(norm)) map.set(norm, TERM_OVERRIDES.pt[key]);
+  }
+  return map;
+})();
+
 function overrideTranslation(from, to, text) {
   const trimmed = text.trim();
   const lower = trimmed.toLowerCase();
@@ -590,7 +612,8 @@ function overrideTranslation(from, to, text) {
   // and the emphasis capitalization both dropped.
   const entry = (from === 'pt' && KKK_LAUGH_RE.test(lower))
     ? { es: 'jajaja', en: 'hahaha' }
-    : TERM_OVERRIDES[from] && TERM_OVERRIDES[from][lower];
+    : (TERM_OVERRIDES[from] && TERM_OVERRIDES[from][lower])
+      || (from === 'pt' && NORMALIZED_PT.get(normalizeGlossaryKey(lower)));
   if (entry && entry[to]) {
     // Preserve the original fragment's leading/trailing whitespace and
     // capitalization style so the override doesn't visibly clash with
@@ -620,6 +643,7 @@ function glossaryLanguageFor(text) {
   for (const lang of Object.keys(TERM_OVERRIDES)) {
     if (TERM_OVERRIDES[lang][lower]) return lang;
   }
+  if (NORMALIZED_PT.has(normalizeGlossaryKey(lower))) return 'pt';
   return null;
 }
 
@@ -1253,7 +1277,13 @@ const CHAT_SITE_SELECTORS = {
   // system messages, no username prefix at all) share the same panel but
   // weren't inspected — only .chat-line (real player messages) is wired up
   // for now.
-  'www.ragnaidle.com.br': { message: '.chat-body .chat-line', who: '.player-name' }
+  'www.ragnaidle.com.br': { message: '.chat-body .chat-line', who: '.player-name' },
+  // Same shape as www.ragnaidle.com.br above (no `text` key, exercising the
+  // sel.text-less fallback) but served from a distinct hostname so its e2e
+  // test can run without touching the 'localhost' mapping the Dragon Ball
+  // Idle fixtures already depend on — '127.0.0.1' is never a real game
+  // domain either, same reasoning as 'localhost' itself.
+  '127.0.0.1': { message: '.chat-body .chat-line', who: '.player-name' }
 };
 
 function chatSelectorsForHost(hostname) {
@@ -1292,19 +1322,26 @@ function extractChatMessagesScript(selectors) {
     const newItems = [];
     messages.forEach((msgEl) => {
       let textEl;
+      let extraNodes = [];
       if (sel.text) {
         textEl = msgEl.querySelector(sel.text);
       } else {
         // No wrapping element for the message body on this site — confirmed
         // live on ragnaidle.com.br: '<b class="player-name">User:</b> message
         // text', where the text after the name is a bare sibling Text node,
-        // not wrapped in anything sel.text could select. Falls back to the
-        // LAST non-empty direct Text-node child of the message element
-        // itself. Text.textContent reads/writes the same as
-        // Element.textContent, so applyChatTranslationsScript's
-        // entry.node.textContent = text needs no change to handle this case.
+        // not wrapped in anything sel.text could select. Uses the LAST
+        // non-empty direct Text-node child as the write-back target (Text.
+        // textContent reads/writes the same as Element.textContent, so
+        // applyChatTranslationsScript's entry.node.textContent = text needs
+        // no change to handle this case), but if inline markup between text
+        // segments produced MORE than one such node (a link, an emoji
+        // <img>, a <br>), every earlier one is captured in extraNodes too so
+        // its text is still included below instead of silently dropped —
+        // applyChatTranslationsScript blanks those out and writes the whole
+        // translated string into the last node.
         const textNodes = Array.from(msgEl.childNodes).filter((n) => n.nodeType === Node.TEXT_NODE && n.nodeValue && n.nodeValue.trim());
         textEl = textNodes[textNodes.length - 1] || null;
+        extraNodes = textNodes.slice(0, -1);
       }
       if (!textEl || !textEl.textContent || !textEl.textContent.trim()) return;
       if (window.__nexaChatKnownTxt.has(textEl)) return;
@@ -1320,7 +1357,10 @@ function extractChatMessagesScript(selectors) {
       // is plain "User:" (see CHAT_SITE_SELECTORS' comment), which the
       // bracket-only regex above never matches on its own.
       username = username.replace(/\\s*\\[\\d+\\]\\s*:?\\s*$/, '').replace(/:\\s*$/, '').trim();
-      const entry = { node: textEl, text: textEl.textContent, username: username || null };
+      const text = extraNodes.length
+        ? extraNodes.map((n) => n.nodeValue).join('') + textEl.textContent
+        : textEl.textContent;
+      const entry = { node: textEl, extraNodes, text, username: username || null };
       window.__nexaChatOriginals.push(entry);
       newItems.push(entry);
     });
@@ -1356,7 +1396,14 @@ function applyChatTranslationsScript(translations) {
       // translate looked like it did nothing on the very first site this
       // shipped for: extraction, detection, and translateBatch all
       // genuinely succeeded, but that write never landed.
-      if (entry && entry.node.isConnected) entry.node.textContent = text;
+      if (!entry || !entry.node.isConnected) return;
+      // extraNodes holds any EARLIER text-node segments the sel.text-less
+      // fallback merged into this same translated string (see
+      // extractChatMessagesScript) — blanked out so the combined
+      // translation, written whole into the last node below, doesn't end
+      // up duplicated alongside their original-language leftovers.
+      if (entry.extraNodes) entry.extraNodes.forEach((n) => { if (n.isConnected) n.nodeValue = ''; });
+      entry.node.textContent = text;
     });
   })()`;
 }
