@@ -48,8 +48,14 @@ const PROMPTABLE_PERMISSIONS = new Set(
 // specifically (instead of the same blanket ALLOWED_PERMISSIONS every other
 // site gets) cuts attack surface and avoids spurious OS permission prompts,
 // without touching normal browsing, where camera/mic requests are expected
-// (video calls, etc.).
-const GAME_DENIED_PERMISSIONS = new Set(['media', 'geolocation']);
+// (video calls, etc.). 'openExternal' denied here too: it silently lets a
+// page trigger opening an arbitrary non-http URI scheme (a custom protocol
+// handler, e.g. a vulnerable installed app) with zero user-visible prompt —
+// fine for a site the user deliberately navigated to, but game accounts run
+// third-party, potentially-compromised game code the user never chose to
+// trust with that. Games have no legitimate reason to open external
+// protocol handlers on their own.
+const GAME_DENIED_PERMISSIONS = new Set(['media', 'geolocation', 'openExternal']);
 
 const PERMISSION_PROMPT_PRELOAD = path.join(__dirname, 'permission-prompt-preload.js');
 const PERMISSION_PROMPT_HTML = path.join(__dirname, '../src/permission-prompt.html');

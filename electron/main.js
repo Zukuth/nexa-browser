@@ -874,6 +874,7 @@ function toggleChatAutoTranslate(wc, accountId) {
   account.chatAutoTranslate = !account.chatAutoTranslate;
   if (!account.chatAutoTranslate) chatUserLanguageHistory.delete(accountId);
   persist();
+  broadcastState();
 }
 
 function toggleMuteAllAccounts() {
@@ -1005,15 +1006,7 @@ function handleAccountShortcut(input, account) {
     return true;
   }
   if (ctrl && !shift && !alt && key === 'w') {
-    closeAccountView(account).then((closed) => {
-      if (!closed) return;
-      if (data.settings.activeAccountId === account.id) {
-        data.settings.activeAccountId = openAccountsInCurrentSpace()[0]?.id || null;
-      }
-      persist();
-      renderLayout();
-      broadcastState();
-    });
+    closeAccountAndAdvance(account);
     return true;
   }
   if (ctrl && shift && !alt && key === 't') {
@@ -2310,6 +2303,10 @@ function removeAccountCompletely(id) {
   translateWatching.delete(id);
   translationEnabled.delete(id);
   chatUserLanguageHistory.delete(id);
+  frozenNotifiedAt.delete(id);
+  translateAppliedTempEco.delete(id);
+  pageTranslateInFlight.delete(id);
+  chatTranslateInFlight.delete(id);
   if (data.settings.activeAccountId === id) {
     data.settings.activeAccountId = accountsInCurrentSpace()[0]?.id || null;
   }
@@ -2324,9 +2321,12 @@ ipcMain.handle('accounts:remove', (_e, { id }) => {
   return data;
 });
 
-ipcMain.handle('accounts:duplicate', (_e, { id }) => {
+// Shared by accounts:duplicate and the account context-menu's "Duplicar
+// cuenta" item — used to be copy-pasted in both, same pattern already fixed
+// once this session for chatAutoTranslate's toggle (see its comment above).
+function duplicateAccount(id) {
   const source = getAccount(id);
-  if (!source) return data;
+  if (!source) return;
   const copy = {
     id: crypto.randomUUID(),
     name: `${displayName(source)} ${mt(data.settings.language || 'es', 'ctx.copySuffix')}`,
@@ -2341,6 +2341,10 @@ ipcMain.handle('accounts:duplicate', (_e, { id }) => {
   persist();
   renderLayout();
   broadcastState();
+}
+
+ipcMain.handle('accounts:duplicate', (_e, { id }) => {
+  duplicateAccount(id);
   return data;
 });
 
@@ -2520,22 +2524,7 @@ ipcMain.on('accounts:contextmenu', (_e, payload) => {
     },
     {
       label: mt(lang, 'ctx.duplicateAccount'),
-      click: () => {
-        const copy = {
-          id: crypto.randomUUID(),
-          name: `${displayName(account)} ${mt(lang, 'ctx.copySuffix')}`,
-          url: account.url,
-          spaceId: account.spaceId,
-          color: account.color,
-          muted: false,
-          openedAt: Date.now()
-        };
-        const index = data.accounts.findIndex((a) => a.id === id);
-        data.accounts.splice(index + 1, 0, copy);
-        persist();
-        renderLayout();
-        broadcastState();
-      }
+      click: () => duplicateAccount(id)
     },
     { type: 'separator' },
     {
@@ -2793,6 +2782,24 @@ function closeAccountView(account) {
   });
 }
 
+// Shared by the Ctrl+W shortcut and the accounts:closeOne IPC handler — used
+// to be copy-pasted in both (same close → reassign active → persist →
+// renderLayout → broadcastState sequence), the same pattern that already
+// caused a real bug once this session (see toggleChatAutoTranslate's
+// comment above). Returns whether the account actually closed.
+async function closeAccountAndAdvance(account) {
+  const closed = await closeAccountView(account);
+  if (closed) {
+    if (data.settings.activeAccountId === account.id) {
+      data.settings.activeAccountId = openAccountsInCurrentSpace()[0]?.id || null;
+    }
+    persist();
+    renderLayout();
+    broadcastState();
+  }
+  return closed;
+}
+
 ipcMain.handle('accounts:activate', (_e, { id }) => {
   const account = getAccount(id);
   if (!account) return data;
@@ -2911,15 +2918,7 @@ ipcMain.handle('accounts:openInNewWindow', (_e, { id }) => {
 ipcMain.handle('accounts:closeOne', async (_e, { id }) => {
   const account = getAccount(id);
   if (!account) return data;
-  const closed = await closeAccountView(account);
-  if (closed) {
-    if (data.settings.activeAccountId === id) {
-      data.settings.activeAccountId = openAccountsInCurrentSpace()[0]?.id || null;
-    }
-    persist();
-    renderLayout();
-    broadcastState();
-  }
+  await closeAccountAndAdvance(account);
   return data;
 });
 
@@ -4020,13 +4019,6 @@ function requireGameWebContents(id) {
   return { wc };
 }
 
-// Tracked so the memory optimizer (Etapa 6) never clears a session's cache
-// mid-purchase — a purchase in flight makes several sequential
-// executeJavaScript/CDP round-trips against this exact account's webContents,
-// and a cache wipe landing in the middle of that is exactly the kind of
-// self-inflicted hiccup this whole stability effort exists to eliminate.
-const purchaseInFlight = new Set();
-
 // Personal Depot's Pokémon subtab (Equipo/Box) only ever read whatever
 // `pokes` frame the server happened to push on its own — same passive-only
 // bug the family depot had before its own forceRefresh fix. If no `pokes`
@@ -4133,8 +4125,7 @@ async function optimizeMemorySafe() {
         cacheSizeMb,
         thresholdMb,
         accountState,
-        isLoading: !!(wc && !wc.isDestroyed() && typeof wc.isLoadingMainFrame === 'function' && wc.isLoadingMainFrame()),
-        purchaseInFlight: purchaseInFlight.has(account.id)
+        isLoading: !!(wc && !wc.isDestroyed() && typeof wc.isLoadingMainFrame === 'function' && wc.isLoadingMainFrame())
       });
       if (skip) {
         result.sessionsSkipped++;
@@ -4162,7 +4153,7 @@ async function optimizeMemorySafe() {
     //    heap. The active account is left untouched so farming isn't broken.
     const activeId = data.settings.activeAccountId;
     for (const [accountId, wc] of views.entries()) {
-      if (accountId === activeId || wc.isDestroyed() || purchaseInFlight.has(accountId)) continue;
+      if (accountId === activeId || wc.isDestroyed()) continue;
       try {
         // Works if the game exposes gc() — best-effort, no CDP involved
         // (game accounts no longer attach the CDP debugger at all since the
@@ -4202,7 +4193,6 @@ async function optimizeMemoryDeepClean() {
     const clearedSessions = new Set();
     for (const account of data.accounts) {
       const wc = views.get(account.id);
-      if (purchaseInFlight.has(account.id)) continue; // never mid-purchase, even for a deep clean
       const ses = wc && !wc.isDestroyed() ? wc.session : session.fromPartition(accountPartition(account.id));
       const key = ses.storagePath || account.id;
       if (clearedSessions.has(key)) continue;
@@ -4219,7 +4209,7 @@ async function optimizeMemoryDeepClean() {
     } catch {}
     const activeId = data.settings.activeAccountId;
     for (const [accountId, wc] of views.entries()) {
-      if (accountId === activeId || wc.isDestroyed() || purchaseInFlight.has(accountId)) continue;
+      if (accountId === activeId || wc.isDestroyed()) continue;
       try {
         const purged = await wc.executeJavaScript(
           '(() => { try { if (typeof window.gc === "function") { window.gc(); return true; } return false; } catch (e) { return false; } })()'
@@ -4747,6 +4737,13 @@ const translationEnabled = new Map();
 // to detect on its own again).
 const chatUserLanguageHistory = new Map();
 const CHAT_HISTORY_CONFIDENCE_THRESHOLD = 1;
+// Caps each account's inner username->{lang,count} map — unlike
+// data.history (300) and data.downloads (200), this had no eviction at all,
+// so an account sitting in an active game chat channel for days/weeks (this
+// app's whole premise) grew it forever, one entry per distinct username ever
+// seen. Map preserves insertion order, so the oldest-seen username is
+// evicted first — good enough for a soft cap, not meant to be true LRU.
+const CHAT_HISTORY_MAX_USERS_PER_ACCOUNT = 500;
 
 // Returns a small result object (not just fire-and-forget) — the watch
 // loop below ignores it, but this is also exposed directly over IPC (see
@@ -4837,8 +4834,14 @@ async function translateChatMessages(id) {
       if (!translate.isSupportedLanguage(from)) continue;
       if (username) {
         const existing = history.get(username);
-        if (existing && existing.lang === from) existing.count += 1;
-        else history.set(username, { lang: from, count: 1 });
+        if (existing && existing.lang === from) {
+          existing.count += 1;
+        } else {
+          if (history.size >= CHAT_HISTORY_MAX_USERS_PER_ACCOUNT) {
+            history.delete(history.keys().next().value);
+          }
+          history.set(username, { lang: from, count: 1 });
+        }
       }
       if (!groups.has(from)) groups.set(from, []);
       groups.get(from).push({ index: extracted.startIndex + i, text });
@@ -5169,14 +5172,23 @@ ipcMain.handle('translate:restore', async (_e, { id }) => {
 // same flicker complaint, and there's no reason to spend extra CPU/IPC on
 // it just because the page-translate loop needed to tighten up.
 const PAGE_TRANSLATE_WATCH_MS = 400;
+// Guards against a tick starting a SECOND overlapping drain for the same
+// account while an earlier tick's is still running — confirmed live this is
+// reachable: translateFragmentsMixed's first-ever load of a language pair's
+// model can take several seconds (real model download), easily longer than
+// this loop's own 400ms period, so without this the next tick(s) would pile
+// on duplicate executeJavaScript/translateBatch calls and race their writes.
+const pageTranslateInFlight = new Set();
 function startPageTranslateWatchLoop() {
   setInterval(async () => {
     for (const [id, { pageLang, to }] of translateWatching) {
+      if (pageTranslateInFlight.has(id)) continue;
       const wc = views.get(id);
       if (!wc || wc.isDestroyed()) {
         translateWatching.delete(id);
         continue;
       }
+      pageTranslateInFlight.add(id);
       try {
         // Drains repeatedly (capped) within a single tick instead of one
         // pass per tick — confirmed live against a real game
@@ -5200,6 +5212,8 @@ function startPageTranslateWatchLoop() {
         }
       } catch (err) {
         console.error('[translate] watch-loop drain failed for', id, err);
+      } finally {
+        pageTranslateInFlight.delete(id);
       }
     }
   }, PAGE_TRANSLATE_WATCH_MS);
@@ -5211,10 +5225,20 @@ function startPageTranslateWatchLoop() {
 // translation, never page translation. translateChatMessages() itself
 // no-ops instantly (before touching the page at all) for every account
 // that isn't opted in, so this stays cheap regardless of account count.
+// Same overlapping-tick risk as pageTranslateInFlight above — a first-time
+// model download inside translateChatMessages can outlast this loop's own
+// 800ms period, and translateChatMessages() isn't awaited here (fire-and-
+// forget, so one slow account never blocks the others' ticks), so nothing
+// else stops a second call for that SAME account starting before the first
+// resolves.
+const chatTranslateInFlight = new Set();
 function startChatAutoTranslateLoop() {
   setInterval(() => {
     for (const account of data.accounts) {
-      if (!account.closed && account.chatAutoTranslate) translateChatMessages(account.id);
+      if (account.closed || !account.chatAutoTranslate) continue;
+      if (chatTranslateInFlight.has(account.id)) continue;
+      chatTranslateInFlight.add(account.id);
+      translateChatMessages(account.id).finally(() => chatTranslateInFlight.delete(account.id));
     }
   }, 800);
 }
