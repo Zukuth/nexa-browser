@@ -288,7 +288,16 @@ function createExtensionsManager({ getData, persist, broadcastState, mt, getMain
     }
 
     if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true });
-    await extractZip(zipPath, { dir: destDir });
+    // Unlike the pre/post validation blocks around it, this had no
+    // try/catch at all — a mid-extraction failure (disk full, AV
+    // quarantine, a corrupt CRX) left zipPath orphaned in app.getPath('temp')
+    // forever, with no cleanup path anywhere else in this module.
+    try {
+      await extractZip(zipPath, { dir: destDir });
+    } catch (err) {
+      fs.unlinkSync(zipPath);
+      throw err;
+    }
     fs.unlinkSync(zipPath);
 
     try {
@@ -393,18 +402,34 @@ function createExtensionsManager({ getData, persist, broadcastState, mt, getMain
       return { ok: true };
     });
 
-    ipcMain.handle('extensions:toggle', (_e, { id, enabled }) => {
+    ipcMain.handle('extensions:toggle', async (_e, { id, enabled }) => {
       const data = getData();
       const ext = data.settings.extensions.find((e) => e.id === id);
       if (!ext) return data;
-      ext.enabled = enabled;
       if (enabled) {
-        for (const view of views.values()) {
-          view.session.extensions
-            .loadExtension(ext.path)
-            .catch((err) => console.error('[ext] FAILED to re-enable', ext.name, err));
+        // Confirmed (not fire-and-forget) before flipping ext.enabled — the
+        // old version set it unconditionally and never awaited the
+        // loadExtension calls, so a broken install (folder partially
+        // deleted, manifest corrupted after an update) left the toggle
+        // showing "on" forever with no working extension and nothing but a
+        // console.error to explain why. Any session succeeding is enough
+        // (only fails the toggle if EVERY open account's loadExtension
+        // rejected); an empty views set (no accounts open yet) has nothing
+        // to fail against, so it stays optimistic — new accounts load
+        // enabled extensions on their own as they attach.
+        const sessions = Array.from(views.values());
+        if (sessions.length > 0) {
+          const results = await Promise.allSettled(
+            sessions.map((view) => view.session.extensions.loadExtension(ext.path))
+          );
+          if (!results.some((r) => r.status === 'fulfilled')) {
+            console.error('[ext] FAILED to re-enable', ext.name, '— every open account rejected loadExtension:', results[0].reason);
+            return data; // ext.enabled left untouched — UI reflects the real state
+          }
         }
+        ext.enabled = true;
       } else {
+        ext.enabled = false;
         unloadExtensionFromAllSessions(id);
         closeExtensionPopup(id);
       }

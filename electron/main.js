@@ -5345,6 +5345,20 @@ app.whenReady().then(() => {
   }
   store.watchDataFile(() => {
     console.warn('[main] data file externally modified; a restart is recommended to avoid state divergence');
+    // A console.warn nobody reads (no devtools open in normal use) was the
+    // only signal this ever gave — real risk it protects against: the next
+    // save() from THIS process wholesale overwrites whatever the external
+    // tool (OneDrive sync, a manual edit) just wrote, silently. A real
+    // reload+merge is genuinely risky to get right blind (could itself lose
+    // whichever side's changes are newer, or mishandle encrypted password
+    // fields) — surfacing it to the user so THEY can decide whether to
+    // restart is the safe, proportionate fix instead.
+    if (Notification.isSupported()) {
+      new Notification({
+        title: 'Nexa Browser',
+        body: 'Se detectó un cambio externo en los datos guardados. Reiniciá la app para evitar perder cambios.'
+      }).show();
+    }
   });
   gameTelemetry.startHeartbeat();
   gameTelemetry.setBallsLowThreshold(data.settings.pokeIdleAlerts?.ballsThreshold ?? 20);

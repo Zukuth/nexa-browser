@@ -519,8 +519,35 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
   // the old engines keep serving requests (neither is cleared) until the new
   // ones finish loading, so toggling a category never opens the
   // ADBLOCK_STARTUP_FALLBACK gap the way the very first launch does.
-  async function rebuildAdBlockEngine() {
-    await loadAdBlockEngine();
+  //
+  // Debounced (not a straight passthrough to loadAdBlockEngine): the 4
+  // adblock:set* IPC handlers below each call this directly and
+  // unconditionally, so ticking 3 "Avanzado" checkboxes in quick succession
+  // used to kick off 3 separate full engine builds — each one potentially a
+  // real network fetch of filter lists (~MBs) for a not-yet-cached category
+  // combo, with loadGeneration's own staleness guard (see loadAdBlockEngine)
+  // only ever discarding the redundant RESULTS after the redundant WORK
+  // already happened. Every call within the debounce window resets the
+  // timer and shares the same pending promise, so rapid changes settle into
+  // exactly one real rebuild — reading whatever settings are current at the
+  // moment it actually runs, not whatever each individual caller saw.
+  const ADBLOCK_REBUILD_DEBOUNCE_MS = 400;
+  let rebuildDebounceTimer = null;
+  let rebuildPendingPromise = null;
+  function rebuildAdBlockEngine() {
+    if (rebuildDebounceTimer) clearTimeout(rebuildDebounceTimer);
+    if (!rebuildPendingPromise) {
+      rebuildPendingPromise = new Promise((resolve) => {
+        rebuildDebounceTimer = setTimeout(() => {
+          rebuildDebounceTimer = null;
+          loadAdBlockEngine().finally(() => {
+            rebuildPendingPromise = null;
+            resolve();
+          });
+        }, ADBLOCK_REBUILD_DEBOUNCE_MS);
+      });
+    }
+    return rebuildPendingPromise;
   }
 
   // One session per account (persist:account-<id>) — register the cosmetic

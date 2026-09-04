@@ -463,6 +463,14 @@ let draggedSpaceId = null;
 // the account-list DOM when nothing about the accounts/groups themselves
 // changed since the last time it actually rebuilt.
 let lastSidebarSignature = null;
+// Same skip-if-unchanged pattern as sidebarSignature, applied to
+// renderPanelHeaders()/renderRail() — audit finding: unlike the account
+// list, these two never got it, so every render() call (including ones with
+// nothing to do with panels/spaces at all — a download-progress tick, an
+// unrelated settings toggle) tore down and rebuilt every panel header/space
+// icon and its handlers from scratch.
+let lastPanelHeadersSignature = null;
+let lastRailSignature = null;
 
 function reorderIds(ids, draggedId, targetId) {
   const next = ids.filter((id) => id !== draggedId);
@@ -1001,6 +1009,17 @@ function renderStatusBar() {
 }
 
 function renderRail() {
+  const railSignature = JSON.stringify({
+    currentSpaceId: state.settings.currentSpaceId,
+    spaces: state.spaces.map((s) => [s.id, s.name, s.color || '', s.icon || '']),
+    // Only the COUNT per space feeds the badge — not which accounts, so
+    // adding/removing an account elsewhere never invalidates this on its own
+    // unless the count itself changed.
+    counts: state.spaces.map((s) => state.accounts.filter((a) => a.spaceId === s.id).length)
+  });
+  if (railSignature === lastRailSignature) return;
+  lastRailSignature = railSignature;
+
   railSpacesEl.innerHTML = '';
   state.spaces.forEach((space) => {
     const icon = document.createElement('div');
@@ -1050,6 +1069,22 @@ function renderRail() {
 }
 
 function renderPanelHeaders() {
+  const isFree = state.settings.layoutMode === 'free';
+  const panelHeadersSignature = JSON.stringify({
+    lang: state.settings.language,
+    layoutMode: state.settings.layoutMode,
+    panels: panelsGeometry.map((p) => [
+      p.id, p.rect.x, p.rect.y, p.rect.width, p.rect.height,
+      isFree ? p.fullRect.x : 0, isFree ? p.fullRect.y : 0, isFree ? p.fullRect.width : 0, isFree ? p.fullRect.height : 0,
+      p.color || '', p.name, p.url || '', p.muted ? 1 : 0, p.maximized ? 1 : 0, p.zoom || 1,
+      panelLoadingPhase.get(p.id) || ''
+    ])
+  });
+  const panelHeadersStale = panelHeadersSignature !== lastPanelHeadersSignature;
+
+  // Focus/selection are transient DOM state, not part of the signature —
+  // they only ever matter for restoring an in-progress address-bar edit
+  // after a rebuild, which is a no-op if nothing gets rebuilt below.
   const focused = document.activeElement;
   const isUrlFocused = focused && focused.classList && focused.classList.contains('panel-url');
   const focusedPanelId = isUrlFocused ? focused.dataset.id : null;
@@ -1057,8 +1092,9 @@ function renderPanelHeaders() {
   const focusedSelStart = isUrlFocused ? focused.selectionStart : null;
   const focusedSelEnd = isUrlFocused ? focused.selectionEnd : null;
 
+  if (panelHeadersStale) {
+  lastPanelHeadersSignature = panelHeadersSignature;
   panelHeadersEl.innerHTML = '';
-  const isFree = state.settings.layoutMode === 'free';
   panelsGeometry.forEach((panel, i) => {
     const header = document.createElement('div');
     header.className = 'panel-header';
@@ -1171,6 +1207,7 @@ function renderPanelHeaders() {
       panelHeadersEl.appendChild(resizeHandle);
     }
   });
+  }
 
   renderSplitDividers();
 }
@@ -1200,6 +1237,19 @@ function reconcileWebviews() {
   Array.from(panelWebviewsEl.children).forEach((el) => {
     if (!openIds.has(el.dataset.id)) el.remove();
   });
+  // panelLoadingPhase entries are only ever removed on did-stop-loading (see
+  // onWebviewDidStopLoading below) — if an account is REMOVED (not just
+  // closed) while its webview is still mid-connect, that event never fires
+  // for it and the entry would otherwise stay orphaned in the Map forever
+  // (account ids are UUIDs, never reused). All-accounts (not just open ones)
+  // since a merely-closed account should still keep a real in-progress phase
+  // if it somehow has one; only a fully-removed id is stale here.
+  if (panelLoadingPhase.size) {
+    const allIds = new Set(state.accounts.map((a) => a.id));
+    for (const id of panelLoadingPhase.keys()) {
+      if (!allIds.has(id)) panelLoadingPhase.delete(id);
+    }
+  }
   state.accounts.forEach((account) => {
     if (account.closed || document.getElementById('wv-' + account.id)) return;
     const wv = document.createElement('webview');
@@ -1593,17 +1643,24 @@ function closeSpaceModal() {
   popModal();
 }
 
-function renderSwatches() {
-  spaceColorsEl.innerHTML = '';
+// Shared by renderSwatches() (space color picker) and renderAccountSwatches()
+// (account color picker) — used to be two near-identical copies of this
+// loop, differing only in the target container/selection var/callback.
+function renderColorSwatches(container, selectedColor, onSelect) {
+  container.innerHTML = '';
   SPACE_COLORS.forEach((color) => {
     const sw = document.createElement('div');
-    sw.className = 'swatch-color' + (color === modalColor ? ' selected' : '');
+    sw.className = 'swatch-color' + (color === selectedColor ? ' selected' : '');
     sw.style.background = color;
-    sw.onclick = () => {
-      modalColor = color;
-      renderSwatches();
-    };
-    spaceColorsEl.appendChild(sw);
+    sw.onclick = () => onSelect(color);
+    container.appendChild(sw);
+  });
+}
+
+function renderSwatches() {
+  renderColorSwatches(spaceColorsEl, modalColor, (color) => {
+    modalColor = color;
+    renderSwatches();
   });
 
   spaceIconsEl.innerHTML = '';
@@ -2102,16 +2159,9 @@ function closeAccountModal() {
 }
 
 function renderAccountSwatches() {
-  accountColorsEl.innerHTML = '';
-  SPACE_COLORS.forEach((color) => {
-    const sw = document.createElement('div');
-    sw.className = 'swatch-color' + (color === accountModalColor ? ' selected' : '');
-    sw.style.background = color;
-    sw.onclick = () => {
-      accountModalColor = color;
-      renderAccountSwatches();
-    };
-    accountColorsEl.appendChild(sw);
+  renderColorSwatches(accountColorsEl, accountModalColor, (color) => {
+    accountModalColor = color;
+    renderAccountSwatches();
   });
 }
 

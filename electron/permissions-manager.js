@@ -98,9 +98,19 @@ function createPermissionsManager({ getData, persist, broadcastState, mt, getMai
       // adblock cosmetic-filter preload script registered on it (Ghostery's
       // registerPreloadScript applies session-wide, not per-frame-origin),
       // which would inject third-party content-manipulation code into this
-      // trusted Allow/Deny prompt. A fresh, unique in-memory partition keeps
-      // the prompt fully isolated from anything the account's page can reach.
-      const promptSession = session.fromPartition(`permission-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      // trusted Allow/Deny prompt. A shared, fixed in-memory partition (not
+      // a fresh randomly-named one per prompt, as this used to be) still
+      // keeps it fully isolated from anything any account's page can reach
+      // — the isolation only needs to be FROM account sessions, not a new
+      // one per prompt — while avoiding an unbounded accumulation of
+      // Session objects over a long-running app: Electron has no public API
+      // to destroy an arbitrary named partition once created, so a new name
+      // every time meant one more permanently-live object per prompt for
+      // the rest of the process's life. This prompt only ever loads the
+      // static local PERMISSION_PROMPT_HTML with query params — no real
+      // page content or per-account state — so concurrent prompts sharing
+      // one partition can't cross-contaminate anything that matters.
+      const promptSession = session.fromPartition('permission-prompt-shared');
       const popup = createAnchoredPopup(getMainWindow, {
         width: 380,
         height: 150,
