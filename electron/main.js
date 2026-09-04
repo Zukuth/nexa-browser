@@ -1972,12 +1972,25 @@ function updateHistoryTitle(url, title) {
   }
 }
 
+// did-navigate/did-navigate-in-page (see wireDidAttachWebview) fire "many
+// times a minute" for a hash-routing/SPA-style game, per account. account.url
+// stays immediately accurate below (other code reads it directly and expects
+// it current, and persist() is already internally debounced — see
+// PERSIST_DEBOUNCE_MS — so calling it often is cheap) but the actual
+// cross-process nav:update IPC send is real per-call cost with no data lost
+// by delaying it slightly, so it's the one throttled here, per account (not
+// globally — one busy account's navigations shouldn't starve another's).
+const NAV_UPDATE_THROTTLE_MS = 500;
+const lastNavUpdateSentAt = new Map();
 function notifyNav(id, url) {
   const account = getAccount(id);
   if (!account) return;
   account.url = url;
   pushHistory(url, null);
   persist();
+  const now = Date.now();
+  if (now - (lastNavUpdateSentAt.get(id) || 0) < NAV_UPDATE_THROTTLE_MS) return;
+  lastNavUpdateSentAt.set(id, now);
   if (mainWindowAlive()) mainWindow.webContents.send('nav:update', { id, url });
 }
 
@@ -2145,18 +2158,6 @@ function createWindow() {
     console.log(`[renderer] ${message} (${sourceId}:${line})`);
   });
 
-  // Explicit capture from the host UI's own window.onerror/unhandledrejection
-  // (wired in renderer.js), landing in the same log as everything else here
-  // instead of depending on Chromium happening to also print the exception
-  // as a console error (which the console-message listener above would then
-  // catch, but only incidentally — not guaranteed for every error shape).
-  // QA audit finding (2026-08-08): the account webviews already have
-  // extensive crash/error coverage (render-process-gone, unresponsive,
-  // crash-classifier); the host chrome itself had none of its own.
-  ipcMain.on('renderer:error', (_e, info) => {
-    console.error('[renderer-error]', info && info.kind, info && info.message, info && info.stack);
-  });
-
   // Right-click Cut/Copy/Paste/Select all for our own chrome's editable
   // fields (address bar, command palette, settings inputs, etc). Electron
   // doesn't provide this by default the way a real browser does — only the
@@ -2307,6 +2308,7 @@ function removeAccountCompletely(id) {
   translateAppliedTempEco.delete(id);
   pageTranslateInFlight.delete(id);
   chatTranslateInFlight.delete(id);
+  lastNavUpdateSentAt.delete(id);
   if (data.settings.activeAccountId === id) {
     data.settings.activeAccountId = accountsInCurrentSpace()[0]?.id || null;
   }
@@ -4592,8 +4594,8 @@ ipcMain.handle('diagnostics:exportReport', async () => {
   const byPid = new Map(appMetrics.map((m) => [m.pid, m]));
   const memoryStats = [];
   const accountConnectionStates = [];
-  const networkSnapshots = [];
   const adBlockLogFlat = [];
+  const netCheckAccountIds = [];
 
   for (const account of data.accounts) {
     if (account.closed) continue;
@@ -4609,13 +4611,21 @@ ipcMain.handle('diagnostics:exportReport', async () => {
     if (connectionManagers.has(account.id)) {
       accountConnectionStates.push({ accountId: account.id, ...connectionManagers.get(account.id).getState() });
     }
-    if (gameTelemetry.isGameUrl(wc.getURL())) {
-      const snapshot = await networkHealth.checkAccountNetwork(account.id, { hostname: 'poke.idleworld.online' });
-      networkSnapshots.push({ accountId: account.id, ...snapshot });
-    }
+    if (gameTelemetry.isGameUrl(wc.getURL())) netCheckAccountIds.push(account.id);
     const log = adblockManager.getLogForAccount(account.id);
     if (log) adBlockLogFlat.push(...log);
   }
+
+  // Probed in parallel instead of one account at a time — each check is an
+  // independent network round-trip (DNS/HTTPS to the game's own host), so
+  // sequential awaiting made total report latency scale with how many game
+  // accounts were open instead of just the slowest single probe.
+  const networkSnapshots = await Promise.all(
+    netCheckAccountIds.map(async (accountId) => {
+      const snapshot = await networkHealth.checkAccountNetwork(accountId, { hostname: 'poke.idleworld.online' });
+      return { accountId, ...snapshot };
+    })
+  );
 
   return diagnostics.buildReport({ accountConnectionStates, networkSnapshots, adBlockLog: adBlockLogFlat, memoryStats });
 });
@@ -5428,6 +5438,23 @@ app.whenReady().then(() => {
         : '';
     mainWindow.webContents.send('update:downloaded', { version: info.version, releaseNotes });
   });
+  // Explicit capture from the host UI's own window.onerror/unhandledrejection
+  // (wired in renderer.js), landing in the same log as everything else here
+  // instead of depending on Chromium happening to also print the exception
+  // as a console error (which the console-message listener above would then
+  // catch, but only incidentally — not guaranteed for every error shape).
+  // QA audit finding (2026-08-08): the account webviews already have
+  // extensive crash/error coverage (render-process-gone, unresponsive,
+  // crash-classifier); the host chrome itself had none of its own.
+  // Registered here (once, at app startup) rather than inside createWindow()
+  // — that function runs again from 'activate' below whenever the app
+  // reopens with zero windows, which used to re-register this listener each
+  // time, stacking a duplicate on every reopen (a later renderer:error would
+  // then log once per prior window creation).
+  ipcMain.on('renderer:error', (_e, info) => {
+    console.error('[renderer-error]', info && info.kind, info && info.message, info && info.stack);
+  });
+
   createWindow();
   mainWindow.webContents.once('did-finish-load', () => {
     renderLayout();
