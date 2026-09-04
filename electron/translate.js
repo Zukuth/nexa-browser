@@ -1142,7 +1142,19 @@ const CHAT_SITE_SELECTORS = {
   // never a real game domain, so this can't accidentally activate chat
   // auto-translate against an actual site by coincidence, and the feature
   // stays opt-in per account regardless (account.chatAutoTranslate).
-  'localhost': { message: '.msgs .msg', who: '.who', text: '.txt' }
+  'localhost': { message: '.msgs .msg', who: '.who', text: '.txt' },
+  // Confirmed live against a real logged-in baiakidle.com/jogar/ session —
+  // a Tibia-like idle RPG whose chat lines carry a "[GUILD] Name [CLASS]
+  // [level]:" prefix inside .chat-name itself (not split into separate
+  // elements the way dragonballidle's .who is), plus a real system-message
+  // variant (.chat-line.sys) that has no .chat-name at all. Both are fine
+  // as-is: extractChatMessagesScript already treats a missing `who` match
+  // as anonymous (username: null) rather than failing, and the existing
+  // trailing "[123]:" stripper in main.js's translateChatMessages still
+  // collapses the level suffix run-to-run, which is all the per-user
+  // history matching actually needs — a perfectly clean display name was
+  // never a requirement here.
+  'baiakidle.com': { message: '#chat-msgs .chat-line', who: '.chat-name', text: '.chat-text' }
 };
 
 function chatSelectorsForHost(hostname) {

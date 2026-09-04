@@ -1666,18 +1666,6 @@ body.layout-animated .panel-header {
   white-space: nowrap;
 }
 
-#btn-edit-space {
-  background: transparent;
-  border: none;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 13px;
-}
-
-#btn-edit-space:hover {
-  color: var(--text);
-}
-
 #btn-collapse-sidebar {
   background: transparent;
   border: none;

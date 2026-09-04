@@ -592,7 +592,13 @@ function startPokeIdleAlertLoop() {
       const account = getAccount(accountId);
       if (!account) continue;
       const notif = buildPokeIdleNotification(cfg, displayName(account), s.lastEvent);
-      if (notif) new Notification(notif).show();
+      if (notif) {
+        new Notification(notif).show();
+        // Flashes the taskbar icon so a shiny/rare catch or a disconnect is
+        // noticeable even when Nexa is minimized or behind another window —
+        // Windows stops the flash on its own once the user focuses it back.
+        if (mainWindowAlive() && !mainWindow.isFocused()) mainWindow.flashFrame(true);
+      }
     }
   }, 5000);
 }
@@ -609,6 +615,28 @@ const downloadItems = new Map();
 // doesn't accumulate duplicate listeners — each duplicate would create an
 // extra data.downloads record and extra broadcastState() call per download.
 const downloadSessionsWired = new WeakSet();
+
+// Mirrors download progress onto the taskbar icon (Windows' native progress
+// ring) so it's visible while Nexa is minimized or behind another window —
+// aggregates every still-progressing download into one bar instead of only
+// reflecting whichever item last fired an 'updated' event, since users can
+// have several downloads running at once across different accounts.
+function updateTaskbarProgress() {
+  if (!mainWindowAlive()) return;
+  const active = data.downloads.filter((d) => d.state === 'progressing');
+  if (active.length === 0) {
+    mainWindow.setProgressBar(-1);
+    return;
+  }
+  const allPaused = active.every((d) => d.paused);
+  const received = active.reduce((sum, d) => sum + d.receivedBytes, 0);
+  const total = active.reduce((sum, d) => sum + (d.totalBytes || 0), 0);
+  if (total > 0) {
+    mainWindow.setProgressBar(received / total, { mode: allPaused ? 'paused' : 'normal' });
+  } else {
+    mainWindow.setProgressBar(2, { mode: 'indeterminate' });
+  }
+}
 
 function handleDownloads(ses) {
   if (downloadSessionsWired.has(ses)) return;
@@ -644,6 +672,7 @@ function handleDownloads(ses) {
     downloadItems.set(record.id, item);
     persist();
     broadcastState();
+    updateTaskbarProgress();
 
     let lastBroadcast = 0;
     item.on('updated', (_e, state) => {
@@ -655,6 +684,7 @@ function handleDownloads(ses) {
         lastBroadcast = now;
         broadcastState();
       }
+      updateTaskbarProgress();
     });
 
     item.on('done', (_e, state) => {
@@ -665,6 +695,7 @@ function handleDownloads(ses) {
       downloadItems.delete(record.id);
       persist();
       broadcastState();
+      updateTaskbarProgress();
     });
   });
 }
@@ -711,15 +742,35 @@ const SHORTCUTS = [
 
 let lastClosedAccountId = null;
 
+// Games this app already knows the chat DOM for (CHAT_SITE_SELECTORS in
+// translate.js) get chat auto-translate on from the moment the account is
+// created — confirmed live this matters on sites that block their own
+// contextmenu event (baiakidle.com): showPageContextMenu's toggle and the
+// Ctrl+Shift+T fallback shortcut both never fire on a page the user hasn't
+// interacted with yet, so a brand-new account pointed at a known game would
+// otherwise sit untranslated until the user discovered either workaround.
+// Only ever used to pick the INITIAL value — once chatAutoTranslate is a
+// real boolean (set here, via the toggle, or via the shortcut) it's never
+// silently overridden again, so a user's explicit "off" always sticks.
+function defaultChatAutoTranslate(url) {
+  try {
+    return !!translate.chatSelectorsForHost(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
 function quickAddAccount() {
   const space = getCurrentSpace();
+  const url = space?.defaultUrl || data.settings.defaultStartUrl || 'about:blank';
   const account = {
     id: crypto.randomUUID(),
     name: null,
-    url: space?.defaultUrl || data.settings.defaultStartUrl || 'about:blank',
+    url,
     spaceId: space?.id || 'default',
     color: null,
-    openedAt: Date.now()
+    openedAt: Date.now(),
+    chatAutoTranslate: defaultChatAutoTranslate(url)
   };
   data.accounts.push(account);
   data.settings.activeAccountId = account.id;
@@ -890,6 +941,37 @@ function handleAccountShortcut(input, account) {
   }
   if (key === 'f11') {
     mainWindow.setFullScreen(!mainWindow.isFullScreen());
+    return true;
+  }
+  // Some games call preventDefault() on their own contextmenu event to
+  // block right-click entirely (confirmed live on baiakidle.com — anti-
+  // inspect, not a bug) — that also swallows Nexa's own 'Inspeccionar'
+  // context-menu item, since wc.on('context-menu', ...) only ever fires
+  // when Chromium's native menu request goes through. before-input-event
+  // fires at the native/browser-process level BEFORE the page's own JS
+  // ever sees the keystroke, so F12 reaches openDevTools() here regardless
+  // of what the page does with keydown — the one reliable way in this app
+  // to open DevTools on a page that blocks the usual route.
+  if (!ctrl && !shift && !alt && key === 'f12') {
+    view?.openDevTools({ mode: 'detach' });
+    return true;
+  }
+  // Same contextmenu-blocked-site problem as F12 above: the only other way
+  // to flip account.chatAutoTranslate is showPageContextMenu's own menu
+  // item, which never gets a chance to appear on a page that calls
+  // preventDefault() on its own contextmenu event (confirmed live on
+  // baiakidle.com). Mirrors that handler's exact logic (chatSelectorsForHost
+  // gate, history reset on turning off, persist) so a site with no known
+  // chat DOM still silently no-ops here too, same as the menu item not
+  // appearing at all for it.
+  if (ctrl && shift && !alt && key === 't') {
+    let hostname = '';
+    try { hostname = new URL(view?.getURL() || '').hostname; } catch { /* about:blank etc. */ }
+    if (translate.chatSelectorsForHost(hostname)) {
+      account.chatAutoTranslate = !account.chatAutoTranslate;
+      if (!account.chatAutoTranslate) chatUserLanguageHistory.delete(account.id);
+      persist();
+    }
     return true;
   }
   if (ctrl && !shift && !alt && key === ',') {
@@ -1999,6 +2081,8 @@ function broadcastGeometryOnly() {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
+    name: 'main-window',
+    windowStatePersistence: true,
     width: 1280,
     height: 800,
     show: false,
@@ -2140,6 +2224,7 @@ ipcMain.handle('accounts:add', (_e, { name, url, spaceId, color }) => {
     color: color || '#4f8cff',
     openedAt: Date.now()
   };
+  account.chatAutoTranslate = defaultChatAutoTranslate(account.url);
   data.accounts.push(account);
   data.settings.activeAccountId = account.id;
   data.settings.layoutMode = 'single';
@@ -2166,6 +2251,7 @@ ipcMain.handle('account:navigate', (_e, { id, url }) => {
   const wc = ensureView(account);
   if (!wc) return { ok: false, error: 'La vista de esta cuenta todavía no está lista.' };
   account.url = target;
+  if (account.chatAutoTranslate === undefined) account.chatAutoTranslate = defaultChatAutoTranslate(target);
   persist();
   wc.loadURL(target);
   broadcastState();

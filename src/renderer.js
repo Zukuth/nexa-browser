@@ -40,7 +40,6 @@ const railSpacesEl = document.getElementById('rail-spaces');
 const btnAddSpace = document.getElementById('btn-add-space');
 const spaceNameEl = document.getElementById('space-name');
 const spaceColorDotEl = document.getElementById('space-color-dot');
-const btnEditSpace = document.getElementById('btn-edit-space');
 const btnCollapseSidebar = document.getElementById('btn-collapse-sidebar');
 const sidebarEl = document.getElementById('sidebar');
 const topbarEl = document.getElementById('topbar');
@@ -1622,12 +1621,14 @@ function renderSwatches() {
 
 btnAddSpace.addEventListener('click', () => {
   // Instant creation with a random color/icon — no form to fill in first;
-  // rename or restyle later via the pencil icon if you want.
+  // rename or restyle later via right-click on its icon in the rail if you
+  // want (see ctx.editSpace in main.js — the sidebar-header pencil button
+  // that used to open the same modal was removed, it just duplicated this
+  // and made the header layout cramped).
   const color = SPACE_COLORS[Math.floor(Math.random() * SPACE_COLORS.length)];
   const icon = SPACE_ICONS[Math.floor(Math.random() * SPACE_ICONS.length)];
   window.api.addSpace({ name: `Espacio ${state.spaces.length + 1}`, color, icon });
 });
-btnEditSpace.addEventListener('click', () => openSpaceModal(currentSpace()));
 
 window.api.onPromptNewGroup(async ({ accountId, spaceId }) => {
   const name = prompt(t('groupPrompt.name'));
