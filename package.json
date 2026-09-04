@@ -28,7 +28,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
-    "electron": "^43.4.0",
+    "electron": "^44.2.0",
     "electron-builder": "^26.15.3",
     "patch-package": "^8.0.1",
     "ws": "^8.21.1"
