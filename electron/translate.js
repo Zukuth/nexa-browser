@@ -1215,7 +1215,21 @@ const CHAT_SITE_SELECTORS = {
   // collapses the level suffix run-to-run, which is all the per-user
   // history matching actually needs — a perfectly clean display name was
   // never a requirement here.
-  'baiakidle.com': { message: '#chat-msgs .chat-line', who: '.chat-name', text: '.chat-text' }
+  'baiakidle.com': { message: '#chat-msgs .chat-line', who: '.chat-name', text: '.chat-text' },
+  // Confirmed live against a real logged-in www.ragnaidle.com.br session —
+  // a Ragnarok-Online-style idle whose chat lines are
+  // '<div class="chat-line"><b class="player-name ...">User:</b> message
+  // text</div>' — the username IS its own element (.player-name, extra
+  // classes like "vip-name"/"t2" vary per player so only the stable
+  // .player-name is matched), but the message body is a bare Text node
+  // sibling with no wrapping element at all. No `text` key here on purpose
+  // — extractChatMessagesScript's sel.text-less fallback (see its own
+  // comment) picks up that trailing Text node instead of needing one to
+  // query for. .chat-drop / .chat-sys (achievement and announcement
+  // system messages, no username prefix at all) share the same panel but
+  // weren't inspected — only .chat-line (real player messages) is wired up
+  // for now.
+  'www.ragnaidle.com.br': { message: '.chat-body .chat-line', who: '.player-name' }
 };
 
 function chatSelectorsForHost(hostname) {
@@ -1253,7 +1267,21 @@ function extractChatMessagesScript(selectors) {
     }
     const newItems = [];
     messages.forEach((msgEl) => {
-      const textEl = msgEl.querySelector(sel.text);
+      let textEl;
+      if (sel.text) {
+        textEl = msgEl.querySelector(sel.text);
+      } else {
+        // No wrapping element for the message body on this site — confirmed
+        // live on ragnaidle.com.br: '<b class="player-name">User:</b> message
+        // text', where the text after the name is a bare sibling Text node,
+        // not wrapped in anything sel.text could select. Falls back to the
+        // LAST non-empty direct Text-node child of the message element
+        // itself. Text.textContent reads/writes the same as
+        // Element.textContent, so applyChatTranslationsScript's
+        // entry.node.textContent = text needs no change to handle this case.
+        const textNodes = Array.from(msgEl.childNodes).filter((n) => n.nodeType === Node.TEXT_NODE && n.nodeValue && n.nodeValue.trim());
+        textEl = textNodes[textNodes.length - 1] || null;
+      }
       if (!textEl || !textEl.textContent || !textEl.textContent.trim()) return;
       if (window.__nexaChatKnownTxt.has(textEl)) return;
       window.__nexaChatKnownTxt.add(textEl);
@@ -1288,16 +1316,19 @@ function applyChatTranslationsScript(translations) {
     translations.forEach(({ index, text }) => {
       const entry = originals[index];
       // entry.node here is the .txt ELEMENT itself (from
-      // msgEl.querySelector(sel.text) in extractChatMessagesScript), not a
-      // text node — unlike every other translate flow in this file, which
-      // walks to actual Text nodes via a TreeWalker. Element.nodeValue is
-      // always null and silently no-ops on assignment (it's only ever
-      // meaningful on Text/Comment/CDATA nodes) — confirmed live this was
-      // exactly why chat translate looked like it did nothing: extraction,
-      // detection, and translateBatch all genuinely succeeded, but this
-      // write never landed. textContent is correct for an element whose
-      // real DOM shape is confirmed to be a plain <span> with no nested
-      // markup (see CHAT_SITE_SELECTORS' source comment).
+      // msgEl.querySelector(sel.text) in extractChatMessagesScript) on
+      // sites that have one, or a bare Text node (the sel.text-less
+      // fallback) on sites that don't — either way NOT reached via a
+      // TreeWalker the way every other translate flow in this file handles
+      // text nodes. textContent is the right property for both cases: for
+      // an Element it's confirmed to be a plain <span>-like node with no
+      // nested markup (see CHAT_SITE_SELECTORS' source comments), and for a
+      // Text node it reads/writes identically to nodeValue. Using nodeValue
+      // here instead would silently no-op on the Element case (always null
+      // on non-text nodes) — confirmed live this was exactly why chat
+      // translate looked like it did nothing on the very first site this
+      // shipped for: extraction, detection, and translateBatch all
+      // genuinely succeeded, but that write never landed.
       if (entry && entry.node.isConnected) entry.node.textContent = text;
     });
   })()`;
