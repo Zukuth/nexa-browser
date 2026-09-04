@@ -746,7 +746,7 @@ let lastClosedAccountId = null;
 // translate.js) get chat auto-translate on from the moment the account is
 // created — confirmed live this matters on sites that block their own
 // contextmenu event (baiakidle.com): showPageContextMenu's toggle and the
-// Ctrl+Shift+T fallback shortcut both never fire on a page the user hasn't
+// Ctrl+Alt+T fallback shortcut both never fire on a page the user hasn't
 // interacted with yet, so a brand-new account pointed at a known game would
 // otherwise sit untranslated until the user discovered either workaround.
 // Only ever used to pick the INITIAL value — once chatAutoTranslate is a
@@ -964,7 +964,12 @@ function handleAccountShortcut(input, account) {
   // gate, history reset on turning off, persist) so a site with no known
   // chat DOM still silently no-ops here too, same as the menu item not
   // appearing at all for it.
-  if (ctrl && shift && !alt && key === 't') {
+  // Ctrl+Alt+T, NOT Ctrl+Shift+T — that combo was already taken by
+  // reopenLastClosedAccount() below. Confirmed live this was a real bug:
+  // this handler runs first and unconditionally returns true, so it had
+  // been silently swallowing every Ctrl+Shift+T on any page with known
+  // chat selectors, making "reopen last closed account" unreachable there.
+  if (ctrl && !shift && alt && key === 't') {
     let hostname = '';
     try { hostname = new URL(view?.getURL() || '').hostname; } catch { /* about:blank etc. */ }
     if (translate.chatSelectorsForHost(hostname)) {
