@@ -313,12 +313,13 @@ const TERM_OVERRIDES = {
     valeu: { es: 'gracias', en: 'thanks' },
     brigado: { es: 'gracias', en: 'thanks' },
     flw: { es: 'chau', en: 'bye' },
-    // Laughter — kept as the equivalent SLANG a Spanish-speaking chat
-    // actually uses, not a literal transliteration of the Portuguese
-    // typing convention (repeated "k" for a hard-C laugh sound).
-    kkk: { es: 'jaja', en: 'haha' },
-    kkkk: { es: 'jajaja', en: 'hahaha' },
-    kkkkk: { es: 'jajajaja', en: 'hahahaha' },
+    // Laughter (repeated "k" for a hard-C laugh sound) used to be three
+    // hardcoded entries here (kkk/kkkk/kkkkk) — replaced by the KKK_LAUGH_RE
+    // regex below overrideTranslation handles ANY run length, after
+    // confirming live that a length outside those three doesn't just fall
+    // through untranslated: the real model actively HALLUCINATES more k's
+    // onto the end ("kkkkkkkkkk", 10 k's, came back as
+    // "kkkkkkkkkkkkkkkkk", 17 k's) instead of leaving it alone.
     rs: { es: 'jeje', en: 'haha' },
     rsrs: { es: 'jeje', en: 'haha' },
     pq: { es: 'porque', en: 'because' },
@@ -369,6 +370,17 @@ const TERM_OVERRIDES = {
     onde: { es: 'dónde', en: 'where' },
     'cadê': { es: '¿dónde está?', en: 'where is' },
     'né': { es: '¿no?', en: 'right?' },
+    // Same word, informal spelling without the accent — extremely common in
+    // fast chat typing. Confirmed live this is a real gap, not a duplicate:
+    // 'né' alone never matches 'ne' (exact lowercase match), so a standalone
+    // "ne" message fell straight through to the real model untranslated.
+    // Only fixes a message that's EXACTLY "ne" (like every entry here,
+    // overrideTranslation matches the whole fragment, not a substring) — a
+    // longer message like "espero ne mano" still goes to the real model,
+    // which confirmed live can hallucinate around this word ("Espero que ne
+    // zeo") rather than just leaving it be; that's a real-model quality
+    // issue this table has no reach into, not something this entry covers.
+    ne: { es: '¿no?', en: 'right?' },
     'aí': { es: 'ahí', en: 'there' },
     'irmão': { es: 'hermano', en: 'brother' },
     'também': { es: 'también', en: 'also' },
@@ -438,7 +450,30 @@ const TERM_OVERRIDES = {
     seloko: { es: 'qué locura', en: 'crazy' },
     precinho: { es: 'precio bajito', en: 'cheap price' },
     identificou: { es: '¿identificaste?', en: 'identified' },
-    brosinho: { es: 'amigo', en: 'buddy' }
+    brosinho: { es: 'amigo', en: 'buddy' },
+    // Seventh batch — real Tibia-like idle chat capture, same method: every
+    // candidate checked live against the real pt->es model first. "krl" and
+    // "poha" (vulgar intensifiers, short for "caralho"/"porra") both came
+    // back completely unchanged (OOV) — kept at a comparable register in
+    // Spanish rather than softened, since a faithful translation of real
+    // chat means translating the informal/vulgar register too, not just the
+    // polite half. "zoeira" (joking around) came back as "Zosier" — a
+    // fabricated non-word, worse than leaving it alone. "funciona" (it
+    // works) came back as "trabaja" (as in a job) — wrong sense; the
+    // correct Spanish is the identical cognate "funciona". "vtnc" (a crude
+    // brush-off, short for "vai tomar no cu") came back completely
+    // unchanged.
+    krl: { es: 'carajo', en: 'damn' },
+    poha: { es: 'mierda', en: 'damn' },
+    zoeira: { es: 'broma', en: 'joking around' },
+    funciona: { es: 'funciona', en: 'it works' },
+    vtnc: { es: 'vete a la mierda', en: 'get lost' },
+    // Real standalone chat message ("Ja Volto Man"), not a guess at a
+    // phrase — came back completely unchanged. "man" here is the same
+    // English-loanword address term as "mano"/"mlq", dropped in the
+    // translation the way a Spanish speaker would actually say this rather
+    // than kept as a literal "hombre".
+    'ja volto': { es: 'ya vuelvo', en: 'be right back' }
   },
   // English source — this app's UI/game targets also include English pages,
   // so from=en, to=es needs the same treatment. Confirmed live the same
@@ -502,10 +537,23 @@ const TERM_OVERRIDES = {
 // the translator at all, regardless of source/target language.
 const BRAND_NAMES = new Set(['discord', 'youtube', 'facebook', 'instagram', 'twitter', 'x', 'tiktok', 'telegram', 'whatsapp', 'paypal']);
 
+// Any run of 3+ "k"s (the Portuguese hard-C laugh spelling), regardless of
+// exact length — see the comment where the old kkk/kkkk/kkkkk table entries
+// used to live, above, for why a regex replaced them: a length the table
+// didn't cover went to the real model, which HALLUCINATED extra k's onto
+// the end instead of leaving it alone or genuinely translating it.
+const KKK_LAUGH_RE = /^k{3,}$/i;
+function kkkLaughTranslation(to) {
+  if (to === 'es') return 'jajaja';
+  if (to === 'en') return 'hahaha';
+  return null;
+}
+
 function overrideTranslation(from, to, text) {
   const trimmed = text.trim();
   const lower = trimmed.toLowerCase();
   if (BRAND_NAMES.has(lower)) return text;
+  if (from === 'pt' && KKK_LAUGH_RE.test(lower)) return kkkLaughTranslation(to);
   const entry = TERM_OVERRIDES[from] && TERM_OVERRIDES[from][lower];
   if (entry && entry[to]) {
     // Preserve the original fragment's leading/trailing whitespace and
@@ -532,6 +580,7 @@ function overrideTranslation(from, to, text) {
 // be tried first.
 function glossaryLanguageFor(text) {
   const lower = text.trim().toLowerCase();
+  if (KKK_LAUGH_RE.test(lower)) return 'pt';
   for (const lang of Object.keys(TERM_OVERRIDES)) {
     if (TERM_OVERRIDES[lang][lower]) return lang;
   }
