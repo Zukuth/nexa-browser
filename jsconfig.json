@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "checkJs": false,
+    "allowJs": true,
+    "target": "ES2023",
+    "module": "commonjs",
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["electron/**/*.js", "src/**/*.js", "scripts/**/*.js"],
+  "exclude": ["node_modules", "build", "test-results", "playwright-report"]
+}

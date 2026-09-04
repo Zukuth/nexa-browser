@@ -1,6 +1,8 @@
 node_modules/
 build/
 test-results/
+playwright-report/
+coverage/
 *.log
 .tmp-game-js/
 .tmp-justpokedex/

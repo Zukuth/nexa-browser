@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      dev-dependencies:
+        dependency-type: "development"
+    ignore:
+      # Electron is upgraded deliberately (bundles Chromium/Node together,
+      # needs a manual run-and-verify pass) rather than via an automated PR.
+      - dependency-name: "electron"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

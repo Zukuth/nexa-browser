@@ -15,7 +15,12 @@ module.exports = [
     // scratchpad session, not part of this project — present in the repo's
     // working tree before this ESLint setup even started, never committed.
     ignores: [
-      'node_modules/**', 'build/**', 'test-results/**', 'playwright-report/**', '.claude/**',
+      'node_modules/**',
+      'build/**',
+      'test-results/**',
+      'playwright-report/**',
+      'coverage/**',
+      '.claude/**',
       'UsersZukuth*.js'
     ]
   },
@@ -30,7 +35,10 @@ module.exports = [
       globals: { ...globals.node }
     },
     rules: {
-      'no-unused-vars': ['warn', { args: 'none', varsIgnorePattern: '^_', ignoreRestSiblings: true }],
+      'no-unused-vars': [
+        'warn',
+        { args: 'none', varsIgnorePattern: '^_', ignoreRestSiblings: true }
+      ],
       eqeqeq: ['warn', 'smart'],
       'no-empty': ['error', { allowEmptyCatch: true }]
     }
@@ -48,7 +56,10 @@ module.exports = [
       globals: { ...globals.node, ...globals.browser }
     },
     rules: {
-      'no-unused-vars': ['warn', { args: 'none', varsIgnorePattern: '^_', ignoreRestSiblings: true }],
+      'no-unused-vars': [
+        'warn',
+        { args: 'none', varsIgnorePattern: '^_', ignoreRestSiblings: true }
+      ],
       eqeqeq: ['warn', 'smart'],
       'no-empty': ['error', { allowEmptyCatch: true }]
     }
@@ -69,7 +80,10 @@ module.exports = [
       globals: { ...globals.browser, module: 'readonly', require: 'readonly' }
     },
     rules: {
-      'no-unused-vars': ['warn', { args: 'none', varsIgnorePattern: '^_', ignoreRestSiblings: true }],
+      'no-unused-vars': [
+        'warn',
+        { args: 'none', varsIgnorePattern: '^_', ignoreRestSiblings: true }
+      ],
       eqeqeq: ['warn', 'smart'],
       'no-empty': ['error', { allowEmptyCatch: true }]
     }
@@ -85,7 +99,10 @@ module.exports = [
       globals: { ...globals.browser, ...globals.node }
     },
     rules: {
-      'no-unused-vars': ['warn', { args: 'none', varsIgnorePattern: '^_', ignoreRestSiblings: true }],
+      'no-unused-vars': [
+        'warn',
+        { args: 'none', varsIgnorePattern: '^_', ignoreRestSiblings: true }
+      ],
       eqeqeq: ['warn', 'smart'],
       'no-empty': ['error', { allowEmptyCatch: true }]
     }
@@ -107,7 +124,10 @@ module.exports = [
       globals: { ...globals.node, ...globals.browser }
     },
     rules: {
-      'no-unused-vars': ['warn', { args: 'none', varsIgnorePattern: '^_', ignoreRestSiblings: true }],
+      'no-unused-vars': [
+        'warn',
+        { args: 'none', varsIgnorePattern: '^_', ignoreRestSiblings: true }
+      ],
       eqeqeq: ['warn', 'smart'],
       'no-empty': ['error', { allowEmptyCatch: true }],
       // Playwright's own fixture convention: `async ({}, use) => {...}`
@@ -127,7 +147,10 @@ module.exports = [
       globals: { ...globals.node, ...globals.browser }
     },
     rules: {
-      'no-unused-vars': ['warn', { args: 'none', varsIgnorePattern: '^_', ignoreRestSiblings: true }],
+      'no-unused-vars': [
+        'warn',
+        { args: 'none', varsIgnorePattern: '^_', ignoreRestSiblings: true }
+      ],
       eqeqeq: ['warn', 'smart'],
       'no-empty': ['error', { allowEmptyCatch: true }]
     }
