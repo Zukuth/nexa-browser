@@ -12,6 +12,7 @@
     "start:electron": "electron .",
     "dist": "electron-builder",
     "test": "node --experimental-test-module-mocks --test test/unit/*.test.js",
+    "lint": "eslint .",
     "test:e2e": "playwright test --workers=1",
     "test:smoke": "playwright test test/e2e/live-health.spec.js",
     "test:soak": "node scripts/soak.js",
@@ -27,9 +28,12 @@
     "franc-min": "^6.2.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.61.1",
     "electron": "^44.2.0",
     "electron-builder": "^26.15.3",
+    "eslint": "^10.10.0",
+    "globals": "^17.12.0",
     "patch-package": "^8.0.1",
     "ws": "^8.21.1"
   },

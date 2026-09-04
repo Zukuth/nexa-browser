@@ -970,7 +970,7 @@ function getAllStats() {
 function startHeartbeat() {
   setInterval(() => {
     const now = Date.now();
-    for (const [accountId, state] of stateByAccount.entries()) {
+    for (const state of stateByAccount.values()) {
       if (state.lastFrameTs == null) continue;
       const stale = now - state.lastFrameTs > HEARTBEAT_STALE_MS;
       const wasStale = state.lastEvent && state.lastEvent.type === 'disconnected';

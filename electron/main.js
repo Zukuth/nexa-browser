@@ -1,9 +1,9 @@
-const { app, BrowserWindow, ipcMain, session, Menu, shell, dialog, clipboard, Notification, net } = require('electron');
+const { app, BrowserWindow, ipcMain, session, Menu, shell, dialog, clipboard, Notification, net, crashReporter } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const store = require('./store');
-const { GAP, GRID_MAX_PANELS, MIN_SPLIT_FRAC, resolveFracs, cellsForMode, freeCells, normalizeFracsWithMin } = require('./layout-utils');
+const { MIN_SPLIT_FRAC, cellsForMode, freeCells, normalizeFracsWithMin } = require('./layout-utils');
 const gameTelemetry = require('./game-telemetry');
 const pokeFormulas = require('./poke-formulas');
 const networkHealth = require('./network-health');
@@ -54,6 +54,19 @@ const nativeConsoleLog = console.log.bind(console);
 // file. Log file lives under app.getPath('userData')/logs/main.log.
 log.initialize();
 Object.assign(console, log.functions);
+
+// Native crash dumps (a full crash — process died, not a caught JS
+// exception electron-log above already covers) — local-only on purpose:
+// uploadToServer:false means nothing ever leaves the machine, no third-
+// party service, no consent/privacy dialog needed. This app stores
+// passwords (encrypted) and game-account data, so a Sentry-style
+// auto-upload-by-default service wasn't the right default here. Dumps land
+// in userData/crashDumps as .dmp files (Windows minidump format) — not
+// human-readable on their own, but real ones to hand over if a user
+// reports a crash and can zip that folder. app.setPath must run before
+// crashReporter.start() picks up the default location.
+app.setPath('crashDumps', path.join(app.getPath('userData'), 'crashDumps'));
+crashReporter.start({ uploadToServer: false, compress: true });
 autoUpdater.logger = log;
 autoUpdater.autoDownload = true;
 // The NSIS differential updater shells out to a PowerShell helper script to
@@ -150,8 +163,6 @@ function recordCrash(accountId) {
   crashCounts.set(accountId, { count, lastAt: Date.now() });
   return count;
 }
-let lastFocusedAccountId = null;
-
 // Real password values never live on `data.passwords` — only id/name/url/
 // username do. `data` is what state:get/state:update hand the renderer
 // wholesale on every change (and what dozens of IPC handlers return as-is),
@@ -1333,9 +1344,6 @@ function wireAccountWebContents(wc, account, hostWebContents) {
   wc.on('unresponsive', () => feedConnectionEvent(account.id, { type: 'RENDERER_UNRESPONSIVE' }));
   wc.on('responsive', () => feedConnectionEvent(account.id, { type: 'RENDERER_RESPONSIVE' }));
   wc.on('context-menu', (_e, params) => showPageContextMenu(wc, params, account.id));
-  wc.on('focus', () => {
-    lastFocusedAccountId = account.id;
-  });
   wc.on('before-input-event', (event, input) => {
     if (handleAccountShortcut(input, account)) event.preventDefault();
   });
@@ -1835,7 +1843,10 @@ async function pickElementToBlock(wc, lang) {
     return;
   }
   if (!result || !result.ok || !result.selector) return;
-  let hostname = '';
+  // No initializer — every path either overwrites this in the try or
+  // returns before it's ever read, so the ESLint-flagged `= ''` default was
+  // provably dead code, not a real fallback.
+  let hostname;
   try {
     hostname = new URL(wc.getURL()).hostname;
   } catch {

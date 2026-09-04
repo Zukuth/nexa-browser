@@ -160,7 +160,7 @@ describe('game-test-double-server (never touches the real game)', () => {
 
   test('killCount tracks how many kill frames were sent', async () => {
     const server = createGameTestDoubleServer();
-    const port = await server.listen();
+    await server.listen();
     try {
       server.sendKillFrame();
       server.sendKillFrame();

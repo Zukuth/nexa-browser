@@ -2110,7 +2110,7 @@ stabilityTestNetworkBtn?.addEventListener('click', async () => {
   try {
     const result = await window.api.testStabilityNetwork(account.id);
     stabilityNetworkTestResultEl.textContent = formatNetworkTestResult(result);
-  } catch (err) {
+  } catch {
     stabilityNetworkTestResultEl.textContent = t('stability.networkTestFailed');
   } finally {
     stabilityTestNetworkBtn.disabled = false;
@@ -3031,11 +3031,6 @@ bmExport.addEventListener('click', async () => {
 // Compact K/M/B suffix for the game-stats row — xp/h routinely runs into
 // the millions on high-level accounts, and the raw digit count doesn't fit
 // a sidebar row.
-// Currency symbol for the sidebar's per-account gold/hour wallet display.
-function currencySymbol(currency) {
-  return currency === 'DIAMONDS' ? '♦' : '$';
-}
-
 function formatCompactNumber(n) {
   if (n == null) return '0';
   const abs = Math.abs(n);
@@ -4197,19 +4192,16 @@ function maybePlayGameAlertSounds() {
   }
 }
 let creatureCatalogCache = null;
-let creatureCatalogMeta = null;
 let creatureCatalogPromise = null;
 function ensureCreatureCatalogRenderer(forceRefresh = false) {
   if (forceRefresh) {
     creatureCatalogCache = null;
-    creatureCatalogMeta = null;
     creatureCatalogPromise = null;
   }
   if (creatureCatalogCache) return Promise.resolve(creatureCatalogCache);
   if (!creatureCatalogPromise) {
     creatureCatalogPromise = window.api.getCreatureCatalog(forceRefresh).then((payload) => {
       const list = Array.isArray(payload) ? payload : (payload && payload.creatures) || [];
-      creatureCatalogMeta = Array.isArray(payload) ? null : (payload && payload.meta) || null;
       creatureCatalogCache = list;
       return list;
     });
