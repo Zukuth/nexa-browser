@@ -482,7 +482,17 @@ const TERM_OVERRIDES = {
     // (common gaming abbreviation for "atualização"/update) also OOV.
     naoo: { es: 'no', en: 'no' },
     hj: { es: 'hoy', en: 'today' },
-    att: { es: 'actualización', en: 'update' }
+    att: { es: 'actualización', en: 'update' },
+    // Ninth batch — second real capture from the same ragnaidle.com.br
+    // chat, after chat auto-translate was already confirmed working on
+    // most of it live. "neh" (another informal spelling of "né"/"ne",
+    // extra vowel) came back completely unchanged. "cabei" (dropped-"a"
+    // spelling of "acabei", "I just [did X]") came back as "Me apto" — a
+    // fabricated, meaningless phrase. "qnd" (common abbreviation for
+    // "quando") also came back completely unchanged.
+    neh: { es: '¿no?', en: 'right?' },
+    cabei: { es: 'acabo', en: 'I just got' },
+    qnd: { es: 'cuándo', en: 'when' }
   },
   // English source — this app's UI/game targets also include English pages,
   // so from=en, to=es needs the same treatment. Confirmed live the same
