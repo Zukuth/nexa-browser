@@ -4775,9 +4775,20 @@ const CHAT_HISTORY_MAX_USERS_PER_ACCOUNT = 500;
 async function translateChatMessages(id) {
   const wc = views.get(id);
   if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  // account.url (set optimistically by account:navigate, then reasserted by
+  // notifyNav on the real did-navigate event) instead of wc.getURL(): the
+  // latter only updates once Electron actually commits the new navigation,
+  // which lags account.url by however long the page takes to load. This
+  // auto-translate poll runs every 800ms and often lands in that gap right
+  // after navigating — confirmed live via e2e (translateChatOnce called
+  // straight after a navigate call intermittently saw the OLD hostname,
+  // wrongly reporting unsupported:true for a site chat translation DOES
+  // support). account.url reflects user intent immediately and is always
+  // eventually correct, so it's the more reliable source here.
+  const account = getAccount(id);
   let hostname;
   try {
-    hostname = new URL(wc.getURL()).hostname;
+    hostname = new URL((account && account.url) || wc.getURL()).hostname;
   } catch {
     return { ok: false, error: 'URL inválida' };
   }
