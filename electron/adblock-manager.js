@@ -813,7 +813,7 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
     // protectionLevel is deliberately left at 'off' below (moving the
     // slider shouldn't silently re-enable blocking out from under an
     // explicit off toggle).
-    ipcMain.handle('adblock:setMode', async (_e, { mode }) => {
+    ipcMain.handle('adblock:setMode', (_e, { mode }) => {
       const data = getData();
       if (!ADBLOCK_MODE_PRESETS[mode]) return { ok: false };
       data.settings.adBlockMode = mode;
@@ -823,7 +823,18 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
       if (masterOn) data.settings.protectionLevel = preset.protectionLevel;
       persist();
       broadcastState();
-      if (masterOn) await rebuildAdBlockEngine();
+      // Not awaited — the setting itself is already confirmed (persisted +
+      // broadcast) above; the actual engine rebuild is real, potentially
+      // network-bound work that the caller doesn't need to block on. Real
+      // bug this fixed, confirmed live: the renderer's shield-popup click
+      // handlers await this whole IPC round-trip before re-rendering
+      // themselves, so blocking here on the (now debounced, see
+      // rebuildAdBlockEngine's comment) rebuild delayed that re-render past
+      // when a fast second click could land — the popup's closures were
+      // still holding the PRE-toggle masterEnabled value, so a quick
+      // off-then-on double-click silently repeated "off" instead of turning
+      // protection back on.
+      if (masterOn) rebuildAdBlockEngine().catch((err) => console.error('[adblock] rebuild after mode change failed', err));
       return { ok: true };
     });
 
@@ -834,7 +845,7 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
     // checkbox customization the user layered on top instead of silently
     // reverting it to the mode's preset every time protection is toggled
     // off and back on.
-    ipcMain.handle('adblock:setMasterEnabled', async (_e, { enabled }) => {
+    ipcMain.handle('adblock:setMasterEnabled', (_e, { enabled }) => {
       const data = getData();
       if (enabled) {
         const preset = ADBLOCK_MODE_PRESETS[data.settings.adBlockMode] || ADBLOCK_MODE_PRESETS.normal;
@@ -844,7 +855,8 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
       }
       persist();
       broadcastState();
-      await rebuildAdBlockEngine();
+      // Not awaited — see the comment on adblock:setMode above.
+      rebuildAdBlockEngine().catch((err) => console.error('[adblock] rebuild after master toggle failed', err));
       return { ok: true };
     });
 
@@ -854,13 +866,16 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
     // nothing observable changes until the user re-enables protection, and
     // for custom rules a rebuild means a real network refetch of every
     // filter list.
-    ipcMain.handle('adblock:setCustomRules', async (_e, { text }) => {
+    ipcMain.handle('adblock:setCustomRules', (_e, { text }) => {
       const data = getData();
       const lines = String(text || '').split('\n').map((l) => l.trimEnd());
       data.settings.adBlockCustomRules = lines.filter((l) => l.trim().length > 0);
       persist();
       broadcastState();
-      if ((data.settings.protectionLevel || 'standard') !== 'off') await rebuildAdBlockEngine();
+      // Not awaited — see the comment on adblock:setMode above.
+      if ((data.settings.protectionLevel || 'standard') !== 'off') {
+        rebuildAdBlockEngine().catch((err) => console.error('[adblock] rebuild after custom rules change failed', err));
+      }
       return { ok: true };
     });
 
@@ -868,7 +883,7 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
     // list categories beyond the 3 presets the mode slider offers. Writing
     // here doesn't change adBlockMode itself, so the mode slider only shows
     // a preset as active while modeMatchesPreset (getPopupData) still holds.
-    ipcMain.handle('adblock:setFilterLists', async (_e, { lists }) => {
+    ipcMain.handle('adblock:setFilterLists', (_e, { lists }) => {
       const data = getData();
       if (!lists || typeof lists !== 'object') return { ok: false };
       const next = { ...data.settings.adBlockFilterLists };
@@ -878,7 +893,10 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
       data.settings.adBlockFilterLists = next;
       persist();
       broadcastState();
-      if ((data.settings.protectionLevel || 'standard') !== 'off') await rebuildAdBlockEngine();
+      // Not awaited — see the comment on adblock:setMode above.
+      if ((data.settings.protectionLevel || 'standard') !== 'off') {
+        rebuildAdBlockEngine().catch((err) => console.error('[adblock] rebuild after filter-list change failed', err));
+      }
       return { ok: true, filterLists: next };
     });
 

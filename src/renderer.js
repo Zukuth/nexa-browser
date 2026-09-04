@@ -1343,6 +1343,18 @@ function positionWebviews() {
 const SPLIT_GAP = 4; // must match GAP in electron/main.js
 
 function renderSplitDividers() {
+  // Always clears its OWN previously-appended dividers first, regardless of
+  // whether renderPanelHeaders() just rebuilt the rest of panelHeadersEl —
+  // renderDividersForGroup below unconditionally APPENDS, it never replaces.
+  // Used to be implicitly cleared as a side effect of renderPanelHeaders()
+  // always wiping the whole container's innerHTML before calling this; now
+  // that that rebuild can be skipped (see panelHeadersSignature), calling
+  // renderSplitDividers() more than once with unchanged geometry — e.g. the
+  // "catch up on any geometry that arrived mid-drag" calls below — would
+  // otherwise pile up duplicate divider elements each time (confirmed live:
+  // a real e2e regression, 3 '.split-divider-h' elements instead of 1).
+  panelHeadersEl.querySelectorAll('.split-divider').forEach((el) => el.remove());
+
   const mode = state.settings.layoutMode;
   if (mode !== 'columns' && mode !== 'rows' && mode !== 'grid') return;
   if (panelsGeometry.length < 2 || panelsGeometry.some((p) => p.maximized)) return;
