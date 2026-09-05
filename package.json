@@ -14,6 +14,7 @@
     "test": "node --experimental-test-module-mocks --test test/unit/*.test.js",
     "test:coverage": "c8 --reporter=text --reporter=html --exclude=test/** --exclude=scripts/** npm test",
     "lint": "eslint .",
+    "check:i18n": "node scripts/check-i18n.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit -p jsconfig.json",
@@ -26,6 +27,9 @@
   "lint-staged": {
     "*.js": [
       "eslint --fix"
+    ],
+    "src/i18n-data.js": [
+      "node scripts/check-i18n.js"
     ]
   },
   "dependencies": {

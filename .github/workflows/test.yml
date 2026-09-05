@@ -27,6 +27,8 @@ jobs:
 
       - run: npm run lint
 
+      - run: npm run check:i18n
+
       - run: npm test
 
       # Electron needs a real display even for a GUI-less CI run — xvfb-run
