@@ -42,3 +42,23 @@ jobs:
           name: playwright-test-results
           path: test-results/
           retention-days: 7
+
+  # Catches a broken Windows package (bad native dependency, an
+  # electron-builder config regression) on every push instead of only when
+  # someone cuts a release — build-windows.yml only runs on a version tag,
+  # and test-build.yml (the full NSIS installer) is manual-only, so there was
+  # previously zero automatic packaging signal between releases. --dir skips
+  # NSIS/signing/compression entirely (no certificate needed, none is
+  # configured yet anyway) — just enough to prove the app still packages.
+  build-check-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - run: npm ci
+
+      - run: npx electron-builder --dir --win --publish never
