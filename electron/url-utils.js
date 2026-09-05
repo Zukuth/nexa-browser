@@ -16,4 +16,14 @@ function hostnameFromUrlLike(input) {
   }
 }
 
-module.exports = { hostnameFromUrlLike };
+// Used by the bookmarks:import IPC handler in main.js to skip file://,
+// javascript:, data: and other dangerous schemes from an imported bookmark
+// file before they ever reach data.bookmarks — extracted here (instead of
+// staying as an inline regex in main.js) so test/unit/security.test.js can
+// import and test the REAL predicate instead of a copy-pasted mirror of it,
+// which would otherwise stay green even if this regex broke.
+function isAllowedBookmarkUrl(url) {
+  return typeof url === 'string' && /^https?:\/\//i.test(url);
+}
+
+module.exports = { hostnameFromUrlLike, isAllowedBookmarkUrl };

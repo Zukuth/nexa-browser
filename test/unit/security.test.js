@@ -3,12 +3,14 @@ const assert = require('node:assert/strict');
 
 // ---------------------------------------------------------------------------
 // Bookmark URL sanitization
-// The predicate below mirrors the one in the 'bookmarks:import' IPC handler in
-// electron/main.js. Tests here guard against regressions where dangerous URL
-// schemes slip through into the bookmark store.
+// Imports the REAL predicate the 'bookmarks:import' IPC handler in
+// electron/main.js uses (electron/url-utils.js) — this used to be a
+// copy-pasted mirror of that regex defined right here, which meant this
+// whole suite would stay green even if the real one broke or changed.
+// url-utils.js has no `require('electron')` at module scope, so it's safe
+// to import directly here without store.js's mock.module() trick.
 // ---------------------------------------------------------------------------
-const isAllowedBookmarkUrl = (url) =>
-  typeof url === 'string' && /^https?:\/\//i.test(url);
+const { isAllowedBookmarkUrl } = require('../../electron/url-utils');
 
 describe('bookmark URL sanitization', () => {
   test('allows http URLs', () => {
