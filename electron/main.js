@@ -490,7 +490,20 @@ let persistInFlight = null;
 // `password` field (it's the one that encrypts it before writing to disk) —
 // this merges passwordSecrets back in for the copy that actually gets
 // written, without ever putting the secret back onto the live `data` object.
+// Flipped once the post-whenReady decrypt below has actually populated
+// passwordSecrets. Until then passwordSecrets is empty, so the mapping in
+// dataForPersist() would turn EVERY stored password into '' — and store.js
+// would write those over the real ciphertext. Nothing is expected to persist
+// that early, but a crash/quit during startup is exactly when you'd least
+// want to lose every saved password, so this doesn't rely on that.
+let passwordSecretsReady = false;
+
 function dataForPersist() {
+  // data.passwords still carries its on-disk `password` field verbatim until
+  // the decrypt step strips it, and store.js's encryptPassword() is
+  // idempotent for already-encrypted values, so passing them through
+  // untouched here is safe.
+  if (!passwordSecretsReady) return { ...data };
   return {
     ...data,
     passwords: data.passwords.map((p) => ({ ...p, password: passwordSecrets.get(p.id) || '' }))
@@ -1023,7 +1036,10 @@ function handleAccountShortcut(input, account) {
     return true;
   }
   if (ctrl && !shift && !alt && key === 'w') {
-    closeAccountAndAdvance(account);
+    // Unlike the accounts:close IPC path, this one isn't awaited by anything
+    // — without a catch, a rejection here would surface only as a generic
+    // process-level unhandledRejection with no hint of which account it was.
+    closeAccountAndAdvance(account).catch((err) => console.error('[accounts] Ctrl+W close failed for', account.id, err));
     return true;
   }
   if (ctrl && shift && !alt && key === 't') {
@@ -1471,7 +1487,13 @@ function disableEcoMode(wc) {
       window.cancelAnimationFrame = window.__nexaEco.nativeCAF;
       delete window.__nexaEco;
     })();`
-  ).catch(() => {});
+  ).catch((err) => {
+    // Logged because a failure here leaves the page still rAF-capped at 30fps
+    // while the UI shows Modo Eco as off — and the temp-eco bookkeeping that
+    // would retry it (translateAppliedTempEco) has already been cleared by
+    // then, so nothing retries on its own until the page reloads.
+    console.error('[eco] failed to lift the frame cap', err);
+  });
 }
 
 // "Modo Eco automático" (browser-inspired idea #1, off by default) —
@@ -1594,59 +1616,22 @@ function applyGameCssToggles(wc, account) {
   ).catch(() => {});
 }
 
-// Sell-lock: hard-blocks selling specific caught Pokémon (by their unique
-// instance id) or specific item types (by name) the user picked, instead of
-// PokeGrid's approach of just popping a confirm() the user can click through.
-// The game sells via plain fetch() to /api/game/pokemon/sell (body:
-// {pokeIds:[...]}) and /api/game/(shop|flint)/sell (body: {items:[{itemId,qty}]}
-// or {itemId,qty}) — confirmed live via DevTools. Filters the locked entries
-// out of the request body (letting an otherwise-mixed sell of unlocked items
-// still go through) and only rejects the fetch outright if every entry in it
-// was locked. Idempotent monkey-patch guarded by window.__nexaSellLock so
-// repeated calls (toggling the lock list) just update the live sets instead
-// of wrapping fetch twice.
-function sellLockScript(pokeIds, itemIds) {
-  return `(function() {
-    const pokeSet = new Set(${JSON.stringify((pokeIds || []).map(String))});
-    const itemSet = new Set(${JSON.stringify((itemIds || []).map(Number))});
-    if (window.__nexaSellLock) {
-      window.__nexaSellLock.pokeSet = pokeSet;
-      window.__nexaSellLock.itemSet = itemSet;
-      return;
-    }
-    window.__nexaSellLock = { pokeSet, itemSet };
-    const originalFetch = window.fetch;
-    window.fetch = function(input, init) {
-      try {
-        const url = (input && input.url) || input;
-        if (typeof url === 'string' && init && typeof init.body === 'string') {
-          if (/\\/api\\/game\\/pokemon\\/sell/.test(url)) {
-            const body = JSON.parse(init.body);
-            const ids = body.pokeIds || [];
-            const allowed = ids.filter((id) => !window.__nexaSellLock.pokeSet.has(String(id)));
-            if (allowed.length !== ids.length) {
-              if (!allowed.length) return Promise.reject(new Error('Venta bloqueada por el candado de Nexa'));
-              init = { ...init, body: JSON.stringify({ ...body, pokeIds: allowed }) };
-            }
-          } else if (/\\/api\\/game\\/(shop|flint)\\/sell/.test(url)) {
-            const body = JSON.parse(init.body);
-            const items = body.items ? body.items : (body.itemId != null ? [{ itemId: body.itemId, qty: body.qty }] : []);
-            const allowed = items.filter((it) => !window.__nexaSellLock.itemSet.has(Number(it.itemId)));
-            if (allowed.length !== items.length) {
-              if (!allowed.length) return Promise.reject(new Error('Venta bloqueada por el candado de Nexa'));
-              const newBody = body.items ? { ...body, items: allowed } : { itemId: allowed[0].itemId, qty: allowed[0].qty };
-              init = { ...init, body: JSON.stringify(newBody) };
-            }
-          }
-        }
-      } catch (e) {}
-      return originalFetch.call(this, input, init);
-    };
-  })();`;
-}
+// Sell-lock lives in electron/sell-lock.js — it is a pure
+// (pokeIds, itemIds) -> injected-script-string function with no main.js
+// dependencies, and it protects real user assets (it hard-blocks selling
+// locked Pokemon/items), so it belongs somewhere a unit test can reach it
+// without booting Electron. Same reasoning as crash-classifier.js and
+// url-utils.js.
+const { sellLockScript } = require('./sell-lock');
 
 function applySellLock(wc, account) {
-  wc.executeJavaScript(sellLockScript(account.sellLockPokeIds, account.sellLockItemIds)).catch(() => {});
+  // Logged, not swallowed: a cold failure self-heals (did-finish-load
+  // re-applies this), but the LIVE updates — the user adding an item to the
+  // lock list — don't get retried. A silent failure there leaves the page
+  // enforcing the OLD lock set while the UI shows the new one, i.e. an item
+  // the user believes is protected isn't.
+  wc.executeJavaScript(sellLockScript(account.sellLockPokeIds, account.sellLockItemIds))
+    .catch((err) => console.error('[sell-lock] failed to apply the lock list for', account.id, err));
 }
 
 // Teleport (favoritos/última hunt): confirmed live (NEXA_DEBUG_NET capture,
@@ -1962,7 +1947,13 @@ function showPageContextMenu(wc, params, accountId) {
       label: mt(lang, 'ctx.saveAs'),
       click: async () => {
         const result = await dialog.showSaveDialog(mainWindow, { defaultPath: wc.getTitle() || 'page' });
-        if (!result.canceled && result.filePath) wc.savePage(result.filePath, 'HTMLComplete').catch(() => {});
+        // Logged, not swallowed: the user already picked a filename at this
+        // point, so a failure here (disk full, denied path) otherwise means
+        // no file, no error and no trace of why.
+        if (!result.canceled && result.filePath) {
+          wc.savePage(result.filePath, 'HTMLComplete')
+            .catch((err) => console.error('[save-page] failed to save', result.filePath, err));
+        }
       }
     },
     { label: mt(lang, 'ctx.print'), click: () => wc.print() },
@@ -4168,13 +4159,21 @@ async function optimizeMemorySafe() {
         // Cache Storage API (service-worker offline caches) — also safe.
         await ses.clearStorageData({ storages: ['cachestorage', 'serviceworkers'] });
         result.sessionsCleaned++;
-      } catch {}
+      } catch (err) {
+        // sessionsCleaned is only incremented on success, so the count was
+        // always honest — but a session that fails every time reported
+        // nothing at all, and the 24h auto-loop just kept retrying it
+        // forever with no way to find out why.
+        console.warn('[optimize] failed to clear the cache for', account.id, err);
+      }
     }
     // Also clear the main window's session.
     try {
       await session.defaultSession.clearCache();
       result.cacheCleared++;
-    } catch {}
+    } catch (err) {
+      console.warn('[optimize] failed to clear the main session cache', err);
+    }
 
     // 2. For INACTIVE account renderers: ask the renderer to GC its own JS
     //    heap. The active account is left untouched so farming isn't broken.
@@ -4228,12 +4227,16 @@ async function optimizeMemoryDeepClean() {
         await ses.clearCache();
         await ses.clearStorageData({ storages: ['cachestorage', 'serviceworkers'] });
         result.sessionsCleaned++;
-      } catch {}
+      } catch (err) {
+        console.warn('[optimize] deep clean failed to clear the cache for', account.id, err);
+      }
     }
     try {
       await session.defaultSession.clearCache();
       result.cacheCleared++;
-    } catch {}
+    } catch (err) {
+      console.warn('[optimize] deep clean failed to clear the main session cache', err);
+    }
     const activeId = data.settings.activeAccountId;
     for (const [accountId, wc] of views.entries()) {
       if (accountId === activeId || wc.isDestroyed()) continue;
@@ -5377,6 +5380,7 @@ app.whenReady().then(() => {
     const { password, ...meta } = p;
     return meta;
   });
+  passwordSecretsReady = true; // see dataForPersist()
   // Same safeStorage boundary, same "not reliable before whenReady()" reason
   // as the password decrypt right above — see decryptAccountProxies in store.js.
   data.accounts = store.decryptAccountProxies(data.accounts);
