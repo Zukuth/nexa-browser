@@ -461,12 +461,6 @@ data.accounts.forEach((a) => {
 
 /** @type {Map<string, Electron.WebContents>} accountId → the guest <webview>'s webContents */
 const views = new Map();
-// accountIds whose page currently has an active native Picture-in-Picture
-// session (see wireAccountWebContents' 'nexa-pip-state' listener below) — the
-// renderer uses this to keep that account's <webview> painting off-screen
-// instead of display:none while it's not the active panel, since a hidden
-// guest stops compositing entirely and the floating PiP window would freeze.
-const pipActiveAccounts = new Set();
 const poppedOutIds = new Set();
 const poppedOutWindows = new Map();
 
@@ -1405,7 +1399,6 @@ function wireAccountWebContents(wc, account, hostWebContents) {
     // attaches) — that's an expected, intentional teardown, not a real
     // account close, so finalizeAccountClose must not run for it.
     if (views.get(account.id) !== wc) return;
-    pipActiveAccounts.delete(account.id);
     // The whole app quitting destroys every webview the same way a single
     // tab close does — appQuitting distinguishes the two so a normal quit
     // leaves account.closed exactly as it was (open accounts come back open
@@ -1422,9 +1415,13 @@ function wireAccountWebContents(wc, account, hostWebContents) {
   // on `document` (capture phase catches it regardless of which video fired
   // it) and forwards the state here — wc.ipc is scoped to this exact guest,
   // no accountId needs to travel over the channel.
+  // The renderer is the only consumer: it keeps a pip-active account's
+  // <webview> painting OFF-SCREEN instead of display:none while it isn't the
+  // active panel, because a hidden guest stops compositing entirely and the
+  // floating PiP window would freeze. main.js used to also mirror this into a
+  // module-scope Set that nothing ever read — removed, since dead state that
+  // looks authoritative is worse than no state.
   wc.ipc.on('nexa-pip-state', (_e, active) => {
-    if (active) pipActiveAccounts.add(account.id);
-    else pipActiveAccounts.delete(account.id);
     if (mainWindowAlive()) mainWindow.webContents.send('account:pipState', { id: account.id, active });
   });
 

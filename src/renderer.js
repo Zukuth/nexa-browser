@@ -2056,7 +2056,13 @@ async function runEcoBenchmark() {
   } finally {
     account.ecoMode = originalEcoMode;
     if (pokeSettingsEcoEl) pokeSettingsEcoEl.checked = originalEcoMode;
-    await window.api.updateAccount(account.id, { ecoMode: originalEcoMode }).catch(() => {});
+    // Logged, not swallowed: this is the restore step that puts Modo Eco back
+    // the way the user had it before the benchmark. If it fails silently, the
+    // checkbox above says one thing and the persisted account says another —
+    // and the next render reads the persisted value, so the setting appears to
+    // flip on its own.
+    await window.api.updateAccount(account.id, { ecoMode: originalEcoMode })
+      .catch((err) => console.error('[eco-benchmark] failed to restore the previous Modo Eco setting', err));
     if (pokeSettingsEcoBenchmarkBtn) {
       pokeSettingsEcoBenchmarkBtn.disabled = false;
       pokeSettingsEcoBenchmarkBtn.textContent = t('pokeIdle.ecoBenchmarkRun');
