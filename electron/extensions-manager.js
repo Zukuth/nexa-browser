@@ -388,7 +388,7 @@ function createExtensionsManager({ getData, persist, broadcastState, mt, getMain
         windowOptions: {
           backgroundColor: '#ffffff',
           title: ext.action.title || ext.name,
-          webPreferences: { session: wc.session }
+          webPreferences: { session: wc.session, sandbox: true, contextIsolation: true }
         }
       });
       extensionPopupWindows.set(id, popup);
