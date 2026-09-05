@@ -1,3 +1,4 @@
+// @ts-check
 // On-device page translation via Bergamot (the same open-source engine
 // Firefox uses for its native "Translate this page" feature). Runs entirely
 // locally in a WASM worker thread — no API key, no account, no per-user
@@ -96,6 +97,7 @@ function isSupportedLanguage(lang) {
   return SUPPORTED_TRANSLATE_LANGUAGES.has(lang);
 }
 
+/** @type {((text: string, options?: object) => string) | null} */
 let francFn = null;
 async function loadFranc() {
   if (!francFn) {
@@ -148,6 +150,7 @@ function currentWorkerCount() {
 // as a new one comes in (SupersededError) — exactly what happens when we
 // fire off every text node on a page concurrently. BatchTranslator is the
 // one built for "translate a large number of strings at once".
+/** @type {any} */
 let BatchTranslatorClass = null;
 async function loadTranslatorClass() {
   if (!BatchTranslatorClass) {
@@ -198,10 +201,11 @@ function preload(from, to) {
 // call, which is fine in practice — model loading only ever happens once
 // per pair (translators are cached, see getTranslator) and this app
 // realistically only has one translation starting up at a time.
+/** @type {((info: {filename: string, loaded: number, total: number}) => void) | null} */
 let activeDownloadProgressCallback = null;
 globalThis.__nexaDownloadProgress = (url, loaded, total) => {
   if (!activeDownloadProgressCallback) return;
-  activeDownloadProgressCallback({ filename: String(url).split('/').pop(), loaded, total });
+  activeDownloadProgressCallback({ filename: String(url).split('/').pop() || '', loaded, total });
 };
 
 // Translates a batch of text/HTML fragments in one language pair. Bergamot
@@ -213,6 +217,12 @@ globalThis.__nexaDownloadProgress = (url, loaded, total) => {
 // onDownloadProgress(info) fires repeatedly ONLY while a language pair's
 // model is still being downloaded for the first time — never fires again
 // for that pair afterward (cached to disk, see translator.js's patch).
+/**
+ * @param {string} from
+ * @param {string} to
+ * @param {string[]} fragments
+ * @param {{html?: boolean, onProgress?: (done: number, total: number) => void, onDownloadProgress?: (info: {filename: string, loaded: number, total: number}) => void}} [options]
+ */
 async function translateBatch(from, to, fragments, { html = true, onProgress, onDownloadProgress } = {}) {
   if (from === to) return fragments.slice();
   activeDownloadProgressCallback = onDownloadProgress || null;
@@ -258,6 +268,7 @@ function collapseRepeatedWord(original, translated) {
   if (hasAdjacentDuplicateWord(original)) return translated;
   const tokens = translated.split(/(\s+)/); // keep whitespace runs as their own entries
   const out = [];
+  /** @type {string | null} */
   let lastWord = null;
   for (const tok of tokens) {
     if (/^\s+$/.test(tok) || tok === '') { out.push(tok); continue; }

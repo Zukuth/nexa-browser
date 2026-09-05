@@ -2,6 +2,7 @@
   "compilerOptions": {
     "checkJs": false,
     "allowJs": true,
+    "noImplicitAny": false,
     "target": "ES2023",
     "module": "commonjs",
     "noEmit": true,

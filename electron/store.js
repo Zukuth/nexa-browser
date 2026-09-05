@@ -1,3 +1,4 @@
+// @ts-check
 const fs = require('fs');
 const path = require('path');
 const { app, safeStorage } = require('electron');
@@ -391,7 +392,8 @@ function save(data) {
 function watchDataFile(onChange) {
   try {
     if (!fs.existsSync(DATA_FILE)) return null;
-    let debounce = null;
+    /** @type {ReturnType<typeof setTimeout> | undefined} */
+    let debounce;
     const watcher = fs.watch(DATA_FILE, () => {
       clearTimeout(debounce);
       debounce = setTimeout(() => {
