@@ -296,6 +296,27 @@ function cacheKey(from, to, text) {
   return `${from} ${to} ${text}`;
 }
 
+// The reasoning above ("real UI text repeats constantly") holds for menu
+// labels, but two callers feed this cache a stream of strings that are
+// unique every single time and will never be looked up again:
+//   - chat auto-translate polls every 800ms and every chat line is new text;
+//   - the page-translate watch loop re-queues counters (gold, XP, timers)
+//     whose replacement text node is a fresh, never-seen string on each tick.
+// With no cap, an account left translating overnight grows this Map forever
+// — and with translateMemoryPersist on, the whole thing is JSON.stringify'd
+// synchronously on the main process at quit and read back at startup, so it
+// also becomes a growing startup/shutdown stall. Oldest-first eviction, same
+// pattern as chatUserLanguageHistory's cap in main.js. 5000 is far above what
+// any real page's repeated-label set needs, so the actual hit rate this cache
+// exists for is untouched.
+const TRANSLATION_CACHE_MAX = 5000;
+function cacheTranslation(key, text) {
+  if (translationCache.size >= TRANSLATION_CACHE_MAX && !translationCache.has(key)) {
+    translationCache.delete(translationCache.keys().next().value);
+  }
+  translationCache.set(key, text);
+}
+
 // Opt-in (default off — see data.settings.translateMemoryPersist in
 // store.js) persistence for the ABOVE session cache across app restarts.
 // The whole snapshot carries one savedAt timestamp rather than one per
@@ -314,7 +335,7 @@ function loadPersistedCache(filePath, maxAgeMs = DEFAULT_MEMORY_MAX_AGE_MS) {
     if (!raw || typeof raw !== 'object' || !raw.entries || typeof raw.savedAt !== 'number') return;
     if (Date.now() - raw.savedAt > maxAgeMs) return;
     for (const [key, text] of Object.entries(raw.entries)) {
-      translationCache.set(key, text);
+      cacheTranslation(key, text);
     }
   } catch (err) {
     console.error('[translate] failed to load persisted translation memory', err);
@@ -352,7 +373,7 @@ async function translateBatchInner(from, to, fragments, { html, onProgress }) {
     }
     const overridden = overrideTranslation(from, to, text);
     if (overridden !== null) {
-      translationCache.set(key, overridden);
+      cacheTranslation(key, overridden);
       results[i] = overridden;
       done++;
       return;
@@ -366,7 +387,7 @@ async function translateBatchInner(from, to, fragments, { html, onProgress }) {
     [...pending.entries()].map(([text, indices]) =>
       translator.translate({ from, to, text, html }).then((r) => {
         const translatedText = collapseRepeatedWord(text, r.target.text);
-        translationCache.set(cacheKey(from, to, text), translatedText);
+        cacheTranslation(cacheKey(from, to, text), translatedText);
         indices.forEach((i) => { results[i] = translatedText; });
         done += indices.length;
         report();
@@ -601,6 +622,18 @@ function applyPendingScript(translations) {
         window.__nexaTranslateOriginals.push(entry);
       }
     });
+    // This array only ever grew: every drain cycle pushed more entries, each
+    // holding a strong reference to a DOM text node. On a page that REPLACES
+    // text nodes rather than mutating them (any ticking gold/XP/timer counter
+    // — see the isConnected comment right above), an account left translating
+    // overnight accumulates one dead entry per tick, pinning every superseded
+    // node in the guest renderer. Entries whose node is no longer in the
+    // document are useless anyway: restoreOriginalTextScript already skips
+    // exactly those. Compacted only past a threshold so the common case
+    // doesn't pay an O(n) filter on every single drain.
+    if (window.__nexaTranslateOriginals.length > 2000) {
+      window.__nexaTranslateOriginals = window.__nexaTranslateOriginals.filter((e) => e.node.isConnected);
+    }
     window.__nexaDrainedNodesRef = [];
     if (window.__nexaObserver) window.__nexaObserver.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
   })()`;
