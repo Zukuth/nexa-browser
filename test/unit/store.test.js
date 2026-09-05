@@ -199,6 +199,55 @@ describe('store.save() / load() round trip', () => {
     assert.equal(decrypted[0].password, '');
   });
 
+  // Regression guard for a real, silent data-loss path found by the 2026-09-04
+  // audit: a decrypt failure (locked keychain, data.json moved to another
+  // Windows profile, rotated DPAPI key) handed out '' as the in-memory value —
+  // and the very next save() then wrote that '' straight over the still-intact
+  // ciphertext, so a recoverable failure became permanent password loss with
+  // no log. The '' placeholder is still what callers see (an empty field beats
+  // throwing), but the ciphertext must survive on disk.
+  test('a failed decrypt does NOT let the next save() overwrite the still-good ciphertext', async () => {
+    const data = store.load();
+    data.passwords.push({ id: 'pw-1', name: 'x', url: 'https://x.test', username: 'u', password: 'enc:v1:not-real-ciphertext' });
+
+    // Load-time decrypt fails and yields the '' placeholder, exactly as main.js
+    // does right after app.whenReady().
+    const decrypted = store.decryptStoredPasswords(data.passwords);
+    assert.equal(decrypted[0].password, '');
+
+    // Persisting that placeholder must not clobber what's on disk.
+    data.passwords = decrypted;
+    await store.save(data);
+
+    const raw = fs.readFileSync(path.join(tmpDir, 'nexa-browser-data.json'), 'utf-8');
+    assert.ok(raw.includes('enc:v1:not-real-ciphertext'), 'original ciphertext must survive a save that followed a failed decrypt');
+  });
+
+  test('a real new password typed over an undecryptable one wins and replaces it', async () => {
+    const data = store.load();
+    data.passwords.push({ id: 'pw-2', name: 'x', url: 'https://x.test', username: 'u', password: 'enc:v1:not-real-ciphertext' });
+    store.decryptStoredPasswords(data.passwords); // fails, preserves the ciphertext
+
+    data.passwords = [{ id: 'pw-2', name: 'x', url: 'https://x.test', username: 'u', password: 'brand-new-pw' }];
+    await store.save(data);
+
+    const reloaded = store.load();
+    assert.equal(store.decryptStoredPasswords(reloaded.passwords)[0].password, 'brand-new-pw');
+  });
+
+  // encryptPassword() is now idempotent, which is what lets both the
+  // preserved-ciphertext path above and any save() that runs before the
+  // post-whenReady decrypt step write already-encrypted values safely.
+  test('save() never double-encrypts a value that is already ciphertext', async () => {
+    const data = store.load();
+    const alreadyEncrypted = 'enc:v1:' + Buffer.from('ENC:still-good-pw', 'utf-8').toString('base64');
+    data.passwords.push({ id: 'pw-3', name: 'x', url: 'https://x.test', username: 'u', password: alreadyEncrypted });
+    await store.save(data);
+
+    const reloaded = store.load();
+    assert.equal(store.decryptStoredPasswords(reloaded.passwords)[0].password, 'still-good-pw');
+  });
+
   // Regression guard for the async save() queue (perf audit 2026-08-21):
   // save() used to be synchronous (writeFileSync+renameSync), so two calls
   // close together could never overlap. Now that it's async, two calls fired

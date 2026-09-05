@@ -34,9 +34,26 @@ function migrateLegacyDataFile() {
 // carried through as-is rather than blocking a save or losing data.
 const ENC_PREFIX = 'enc:v1:';
 
+// A decrypt failure is not necessarily permanent: a keychain that happens to
+// be locked right now, a data.json restored onto a different Windows user
+// profile, a rotated DPAPI key. decryptPassword() below returns '' in that
+// case so callers get a harmless empty field instead of an exception — but
+// that '' used to then be written straight back over the still-intact
+// ciphertext by the very next save(), turning a recoverable failure into
+// permanent, silent password loss (confirmed by reading the full path:
+// decrypt -> '' -> passwordSecrets -> dataForPersist() -> encryptPassword('')
+// returns '' -> written to disk). The original ciphertext is preserved here
+// so save() can write it back untouched, unless the user actually typed a
+// new value over it.
+const preservedCiphertext = new Map();
+
 let warnedPlaintextFallback = false;
 function encryptPassword(plain) {
   if (typeof plain !== 'string' || !plain) return plain;
+  // Already encrypted — never double-encrypt. Makes this idempotent, which
+  // both the preserved-ciphertext path below and any save() that runs before
+  // the post-whenReady decrypt step depend on.
+  if (plain.startsWith(ENC_PREFIX)) return plain;
   try {
     if (!safeStorage.isEncryptionAvailable()) {
       // Silent before this — a user on a system where the OS keychain isn't
@@ -50,17 +67,29 @@ function encryptPassword(plain) {
       return plain;
     }
     return ENC_PREFIX + safeStorage.encryptString(plain).toString('base64');
-  } catch {
+  } catch (err) {
+    // Was silent: encryption being *available* but throwing anyway still ends
+    // with this secret sitting on disk in plain text, which the user deserves
+    // to be able to find out about from the log.
+    console.error('[store] safeStorage.encryptString failed — this secret is being stored in plain text', err);
     return plain;
   }
 }
 
-function decryptPassword(stored) {
+// `key` identifies the secret (see preservedCiphertext above) so a failed
+// decrypt doesn't lose the on-disk ciphertext. Callers that don't have a
+// stable key can omit it — they just don't get that protection.
+function decryptPassword(stored, key) {
   if (typeof stored !== 'string' || !stored.startsWith(ENC_PREFIX)) return stored; // legacy plain text, or never got encrypted
   try {
-    return safeStorage.decryptString(Buffer.from(stored.slice(ENC_PREFIX.length), 'base64'));
-  } catch {
-    return ''; // can't recover this one — an empty field beats throwing
+    const plain = safeStorage.decryptString(Buffer.from(stored.slice(ENC_PREFIX.length), 'base64'));
+    if (key) preservedCiphertext.delete(key);
+    return plain;
+  } catch (err) {
+    // Was silent AND destructive — see preservedCiphertext above.
+    console.error('[store] could not decrypt a stored secret — keeping the encrypted value on disk instead of overwriting it', err);
+    if (key) preservedCiphertext.set(key, stored);
+    return ''; // an empty field beats throwing; the ciphertext itself is preserved
   }
 }
 
@@ -72,7 +101,7 @@ function decryptPassword(stored) {
 // (encrypted or legacy plain text) and the caller must call this once, after
 // app.whenReady(), before anything reads data.passwords.
 function decryptStoredPasswords(passwords) {
-  return (passwords || []).map((p) => ({ ...p, password: decryptPassword(p.password) }));
+  return (passwords || []).map((p) => ({ ...p, password: decryptPassword(p.password, p.id && `pw:${p.id}`) }));
 }
 
 // Per-account proxy credentials (account.proxy.username/.password) went
@@ -84,7 +113,7 @@ function decryptStoredPasswords(passwords) {
 function decryptAccountProxies(accounts) {
   return (accounts || []).map((a) => (
     a && a.proxy && a.proxy.password
-      ? { ...a, proxy: { ...a.proxy, password: decryptPassword(a.proxy.password) } }
+      ? { ...a, proxy: { ...a.proxy, password: decryptPassword(a.proxy.password, a.id && `proxy:${a.id}`) } }
       : a
   ));
 }
@@ -358,6 +387,21 @@ async function writeWithRetry(json, attempts = 3) {
   }
 }
 
+// What actually gets written for one secret. Normally just encryptPassword(),
+// but if this secret failed to decrypt at load time (see preservedCiphertext)
+// and nothing has replaced it since — the in-memory value is still the ''
+// placeholder decryptPassword() handed out — the original ciphertext goes
+// back to disk untouched, so a temporary keychain problem doesn't destroy a
+// password that's still perfectly recoverable later. A real new value typed
+// by the user wins and clears the preserved copy.
+function secretForDisk(value, key) {
+  if (key && preservedCiphertext.has(key)) {
+    if (!value) return preservedCiphertext.get(key);
+    preservedCiphertext.delete(key);
+  }
+  return encryptPassword(value);
+}
+
 function save(data) {
   // Encrypt passwords in the copy being written, not in the live `data`
   // object the rest of the app keeps using in memory. Serializing here
@@ -366,10 +410,10 @@ function save(data) {
   // never accidentally reuses an older one.
   const toWrite = {
     ...data,
-    passwords: (data.passwords || []).map((p) => ({ ...p, password: encryptPassword(p.password) })),
+    passwords: (data.passwords || []).map((p) => ({ ...p, password: secretForDisk(p.password, p.id && `pw:${p.id}`) })),
     accounts: (data.accounts || []).map((a) => (
       a && a.proxy && a.proxy.password
-        ? { ...a, proxy: { ...a.proxy, password: encryptPassword(a.proxy.password) } }
+        ? { ...a, proxy: { ...a.proxy, password: secretForDisk(a.proxy.password, a.id && `proxy:${a.id}`) } }
         : a
     ))
   };
