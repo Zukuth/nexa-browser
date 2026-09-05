@@ -569,6 +569,13 @@
               <div class="settings-row"><span data-i18n="settings.chromium">Chromium</span><span id="ver-chrome"></span></div>
               <div class="settings-row"><span data-i18n="settings.updateStatus">Actualizaciones</span><span id="ver-update-status"></span></div>
             </div>
+            <div class="settings-row">
+              <div>
+                <div data-i18n="settings.betaUpdatesTitle">Recibir actualizaciones beta</div>
+                <div class="settings-hint" data-i18n="settings.betaUpdatesHint">Prueba versiones más nuevas (y menos probadas) antes que el resto — útil si querés ayudar a encontrar bugs, no recomendado si preferís estabilidad ante todo.</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="set-beta-updates" /><span class="slider"></span></label>
+            </div>
             <div class="settings-support-card">
               <div>
                 <div class="settings-support-title" data-i18n="settings.supportTitle">Aporta al proyecto</div>
@@ -848,6 +855,7 @@
               <button type="button" id="stability-export-report" data-i18n="stability.exportReport">Copiar diagnóstico</button>
               <button type="button" id="stability-start-netlog" data-i18n="stability.startNetlog">Iniciar registro de red</button>
               <button type="button" id="stability-stop-netlog" data-i18n="stability.stopNetlog">Detener registro de red</button>
+              <button type="button" id="stability-open-crash-dumps" data-i18n="stability.openCrashDumps">Abrir carpeta de reportes de error</button>
             </div>
           </div>
         </div>

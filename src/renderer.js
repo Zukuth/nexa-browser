@@ -159,6 +159,7 @@ const stabilityNetworkTestResultEl = document.getElementById('stability-network-
 const stabilityExportReportBtn = document.getElementById('stability-export-report');
 const stabilityStartNetlogBtn = document.getElementById('stability-start-netlog');
 const stabilityStopNetlogBtn = document.getElementById('stability-stop-netlog');
+const stabilityOpenCrashDumpsBtn = document.getElementById('stability-open-crash-dumps');
 const calcStatInputs = {
   hp: document.getElementById('calc-stat-hp'),
   atk: document.getElementById('calc-stat-atk'),
@@ -290,6 +291,7 @@ const setShowAccountMetrics = document.getElementById('set-show-account-metrics'
 const setHuntTelemetry = document.getElementById('set-hunt-telemetry');
 const setTranslateMemoryPersist = document.getElementById('set-translate-memory-persist');
 const setHwAccel = document.getElementById('set-hw-accel');
+const setBetaUpdates = document.getElementById('set-beta-updates');
 const setExportSpaces = document.getElementById('set-export-spaces');
 const setImportSpaces = document.getElementById('set-import-spaces');
 const setDefaultUrl = document.getElementById('set-default-url');
@@ -2127,6 +2129,10 @@ stabilityExportReportBtn?.addEventListener('click', async () => {
     console.error('[stability] failed to export diagnostics report', err);
   }
 });
+stabilityOpenCrashDumpsBtn?.addEventListener('click', async () => {
+  const result = await window.api.openCrashDumpsFolder();
+  if (!result.ok) console.error('[stability] openCrashDumpsFolder failed', result.error);
+});
 stabilityStartNetlogBtn?.addEventListener('click', async () => {
   const account = selectedPokeSettingsAccount();
   if (!account) return;
@@ -3599,6 +3605,7 @@ function openSettingsModal() {
   setHuntTelemetry.checked = s.huntTelemetryEnabled !== false;
   setTranslateMemoryPersist.checked = !!s.translateMemoryPersist;
   setHwAccel.checked = s.hardwareAcceleration !== false;
+  setBetaUpdates.checked = !!s.betaUpdates;
   setDefaultUrl.value = s.defaultStartUrl || 'https://www.google.com';
   if (setSupportPaypalUrl) setSupportPaypalUrl.value = s.supportPaypalUrl || '';
   setDefaultZoom.value = String(s.defaultZoom || 1);
@@ -4417,6 +4424,10 @@ setHwAccel.addEventListener('change', async () => {
   if (confirm(t('settings.restartConfirm'))) {
     window.api.relaunchApp();
   }
+});
+
+setBetaUpdates.addEventListener('change', () => {
+  window.api.updateSettings({ betaUpdates: setBetaUpdates.checked });
 });
 
 setProtectionLevel.addEventListener('change', () => {

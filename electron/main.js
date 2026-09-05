@@ -15,6 +15,7 @@ const memoryOptimizer = require('./memory-optimizer');
 const pipPlayer = require('./pip-player');
 const elementPicker = require('./element-picker');
 const { classifyCrash } = require('./crash-classifier');
+const { pruneCrashDumps } = require('./crash-dumps');
 const diagnostics = require('./diagnostics');
 const { normalizeAddressInput } = require('./address-bar');
 const log = require('electron-log');
@@ -65,8 +66,13 @@ Object.assign(console, log.functions);
 // human-readable on their own, but real ones to hand over if a user
 // reports a crash and can zip that folder. app.setPath must run before
 // crashReporter.start() picks up the default location.
-app.setPath('crashDumps', path.join(app.getPath('userData'), 'crashDumps'));
+const CRASH_DUMPS_DIR = path.join(app.getPath('userData'), 'crashDumps');
+app.setPath('crashDumps', CRASH_DUMPS_DIR);
 crashReporter.start({ uploadToServer: false, compress: true });
+// crashReporter itself never prunes its own output — without this, .dmp
+// files pile up in CRASH_DUMPS_DIR forever. Only runs once per app launch,
+// so it's cheap even though it walks the whole (normally tiny) folder.
+pruneCrashDumps(CRASH_DUMPS_DIR);
 autoUpdater.logger = log;
 autoUpdater.autoDownload = true;
 // The NSIS differential updater shells out to a PowerShell helper script to
@@ -3408,7 +3414,8 @@ const SETTINGS_UPDATE_WHITELIST = new Set([
   'newSpaceDefaultLayout',
   'askDownloadLocation',
   'stability',
-  'translateMemoryPersist'
+  'translateMemoryPersist',
+  'betaUpdates'
 ]);
 
 ipcMain.handle('settings:update', (_e, fields) => {
@@ -4641,6 +4648,21 @@ ipcMain.handle('diagnostics:exportReport', async () => {
   return diagnostics.buildReport({ accountConnectionStates, networkSnapshots, adBlockLog: adBlockLogFlat, memoryStats });
 });
 
+// Local crash reporting (see crashReporter.start() above) writes real .dmp
+// files but has no viewer of its own — this just hands the folder to the
+// OS file explorer so a user can find/zip them to attach to a bug report.
+// fs.mkdirSync ensures there's something to open even before any crash has
+// ever happened (shell.openPath on a missing folder just fails silently).
+ipcMain.handle('diagnostics:openCrashDumpsFolder', async () => {
+  try {
+    fs.mkdirSync(CRASH_DUMPS_DIR, { recursive: true });
+    const result = await shell.openPath(CRASH_DUMPS_DIR);
+    return result ? { ok: false, error: result } : { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+});
+
 let activeNetLogSession = null; // { accountId, path } | null — one capture at a time, kept simple on purpose
 
 ipcMain.handle('diagnostics:startNetLog', async (_e, { id }) => {
@@ -5412,6 +5434,13 @@ app.whenReady().then(() => {
   // which electron-builder only generates for a real packaged install) —
   // guarded so `npm start` never logs a spurious "update check failed".
   if (app.isPackaged) {
+    // electron-updater's GitHub provider already knows how to tell a
+    // pre-release apart from a stable one (from the tag's own semver
+    // pre-release identifier, e.g. v0.4.1-beta.1) — this is the only toggle
+    // needed on the app side. Read fresh each launch, not cached, so
+    // flipping the setting in Ajustes takes effect the next time the app
+    // starts without needing any other wiring.
+    autoUpdater.allowPrerelease = !!data.settings.betaUpdates;
     updateStatus = { state: 'checking', lastError: null, lastCheckedAt: Date.now() };
     autoUpdater.checkForUpdatesAndNotify().catch((err) => {
       updateStatus = { state: 'error', lastError: err && err.message ? err.message : String(err), lastCheckedAt: Date.now() };

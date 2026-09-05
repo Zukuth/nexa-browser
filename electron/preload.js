@@ -166,6 +166,7 @@ contextBridge.exposeInMainWorld('api', {
   getPokes: (id) => ipcRenderer.invoke('pokes:get', { id }),
   openExtensionPopup: (id) => ipcRenderer.invoke('extensions:openPopup', { id }),
   exportDiagnosticsReport: () => ipcRenderer.invoke('diagnostics:exportReport'),
+  openCrashDumpsFolder: () => ipcRenderer.invoke('diagnostics:openCrashDumpsFolder'),
   startNetLog: (id) => ipcRenderer.invoke('diagnostics:startNetLog', { id }),
   stopNetLog: () => ipcRenderer.invoke('diagnostics:stopNetLog'),
   getStabilityAccountState: (id) => ipcRenderer.invoke('stability:getAccountState', { id }),
