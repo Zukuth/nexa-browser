@@ -1,5 +1,5 @@
 diff --git a/node_modules/@browsermt/bergamot-translator/translator.js b/node_modules/@browsermt/bergamot-translator/translator.js
-index f27c076..f495ff4 100644
+index f27c076..a514fe1 100644
 --- a/node_modules/@browsermt/bergamot-translator/translator.js
 +++ b/node_modules/@browsermt/bergamot-translator/translator.js
 @@ -1,3 +1,25 @@
@@ -85,6 +85,31 @@ index f27c076..f495ff4 100644
  
          } finally {
              if (timeout)
+@@ -577,6 +638,24 @@ export class BatchTranslator {
+             // cooperatively parallel.
+             const batch = this.queue.shift();
+ 
++            // NEXA PATCH: the comment above is not true on the path that had
++            // to create a worker — `await this.backing.loadWorker()` a few
++            // lines up is a real suspension point, and another notify() can
++            // drain the queue inside it. shift() then returns undefined,
++            // consumeBatch(undefined) throws, and the catch below explodes on
++            // `batch.requests` with "Cannot read properties of undefined
++            // (reading 'requests')". Confirmed live in main.log, repeatedly,
++            // during normal chat/page translation.
++            //
++            // worker.idle = true before returning matters: a worker created
++            // by this same call starts life as {idle: false}, so bailing out
++            // without releasing it would leak it as permanently busy and
++            // shrink the pool by one every time this race is hit.
++            if (!batch) {
++                worker.idle = true;
++                return;
++            }
++
+             // Put this worker to work, marking as busy
+             worker.idle = false;
+             try {
 diff --git a/node_modules/@browsermt/bergamot-translator/worker/translator-worker.js b/node_modules/@browsermt/bergamot-translator/worker/translator-worker.js
 index 24ff29a..b10f975 100644
 --- a/node_modules/@browsermt/bergamot-translator/worker/translator-worker.js

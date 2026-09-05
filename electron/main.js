@@ -14,7 +14,7 @@ const translate = require('./translate');
 const memoryOptimizer = require('./memory-optimizer');
 const pipPlayer = require('./pip-player');
 const elementPicker = require('./element-picker');
-const { classifyCrash } = require('./crash-classifier');
+const { classifyCrash, shouldFallBackToSoftwareRendering } = require('./crash-classifier');
 const { pruneCrashDumps, pruneNetLogs } = require('./crash-dumps');
 const diagnostics = require('./diagnostics');
 const { normalizeAddressInput } = require('./address-bar');
@@ -2427,6 +2427,7 @@ function removeAccountCompletely(id) {
   ses.clearStorageData().then(() => ses.clearCache()).catch((err) => console.error('[remove-account] failed to clear session for', id, err));
   adblockManager.cleanupAccount(id);
   crashCounts.delete(id);
+  lastGpuRecoveryAt.delete(id);
   proxySecrets.delete(id);
   connectionManagers.delete(id);
   gameTelemetry.removeState(id);
@@ -4665,6 +4666,12 @@ ipcMain.handle('stability:manualReconnect', (_e, { id }) => {
 let consecutiveGpuCrashes = 0;
 let lastGpuCrashAt = 0;
 const GPU_CRASH_LOOP_WINDOW_MS = 5 * 60 * 1000;
+// Cumulative for the whole app session, never reset by elapsed time — this is
+// what catches a GPU that resets a few times an hour rather than several
+// times a minute. Four is deliberately above "unlucky once or twice" and well
+// below a day's worth of a genuinely broken driver.
+let gpuCrashesThisSession = 0;
+const GPU_CRASH_SESSION_LIMIT = 4;
 
 app.on('render-process-gone', (_event, _wc, details) => {
   const info = classifyCrash({ reason: details.reason });
@@ -4691,24 +4698,108 @@ app.on('child-process-gone', (_event, details) => {
   if (info.shouldDisableGpu) {
     const now = Date.now();
     consecutiveGpuCrashes = (now - lastGpuCrashAt < GPU_CRASH_LOOP_WINDOW_MS) ? consecutiveGpuCrashes + 1 : 1;
+    gpuCrashesThisSession += 1;
     lastGpuCrashAt = now;
-    // Never disable permanently off a single crash — only after a real
-    // crash-loop (3+ in a 5 min window), and reuses the existing
-    // hardwareAcceleration setting (already has a UI toggle) rather than
-    // adding a new one, so the user can self-revert from Configuración.
-    if (consecutiveGpuCrashes >= 3 && data.settings.hardwareAcceleration !== false) {
-      console.error('[crash-global] GPU crashed', consecutiveGpuCrashes, 'times in', GPU_CRASH_LOOP_WINDOW_MS / 1000, 's — disabling hardware acceleration for the next launch');
+
+    // Recovering the visible page is the urgent part, and it has to happen
+    // whether or not the counters below ever decide to fall back to software
+    // rendering. Confirmed live on a hybrid-graphics laptop whose NVIDIA
+    // driver resets the GPU under load (Windows event nvlddmkm 153, one
+    // second before each of these): the GPU process dying takes every WebGL
+    // context in every account down with it, so the game canvases go black
+    // and stay black — the render loop keeps running at full FPS with
+    // nothing to draw on, which is why it doesn't look like a crash and
+    // nothing here used to notice.
+    recoverAccountsAfterGpuCrash();
+
+    // Two independent triggers, because a GPU can fail in two very different
+    // shapes and the original 3-in-5-minutes rule only caught one of them:
+    //   - a real crash loop (several in a row, fast), and
+    //   - a slow drip: one reset every 30-60 minutes for days, which never
+    //     accumulates inside a 5-minute window because the counter keeps
+    //     resetting to 1. Confirmed live: 95 driver resets over two weeks
+    //     and the fallback below never once fired.
+    const { fallback, trigger } = shouldFallBackToSoftwareRendering({
+      consecutiveCrashes: consecutiveGpuCrashes,
+      sessionCrashes: gpuCrashesThisSession,
+      sessionThreshold: GPU_CRASH_SESSION_LIMIT
+    });
+    if (fallback && data.settings.hardwareAcceleration !== false) {
+      console.error(
+        '[crash-global] GPU failing —',
+        trigger === 'loop'
+          ? `${consecutiveGpuCrashes} crashes within ${GPU_CRASH_LOOP_WINDOW_MS / 1000}s`
+          : `${gpuCrashesThisSession} crashes this session`,
+        '— disabling hardware acceleration for the next launch'
+      );
       data.settings.hardwareAcceleration = false;
       persist();
+      broadcastState();
       try {
         new Notification({
           title: 'Nexa Browser',
-          body: 'La GPU falló varias veces seguidas — se desactivó la aceleración por hardware para el próximo inicio. Podés reactivarla en Configuración.'
+          body: 'La GPU falló varias veces — se desactivó la aceleración por hardware para el próximo inicio. Podés reactivarla en Configuración.'
         }).show();
       } catch { /* Notification unsupported/unavailable — non-fatal */ }
     }
   }
 });
+
+// Reloads only the accounts whose WebGL context the GPU crash actually
+// killed. Deliberately NOT "reload everything": this app's whole premise is
+// long-lived farming sessions, and a reload costs the account its in-page
+// state — the same reason pulseGameRealtimeConnection stopped forcing
+// reconnects (see its comment). An account whose page never used WebGL, or
+// whose engine handled webglcontextrestored on its own, is left alone.
+//
+// The delay is not cosmetic: Chromium needs a moment to bring a fresh GPU
+// process up, and a page reloaded before that just loses its new context too.
+const GPU_RECOVERY_DELAY_MS = 3000;
+// Floor between automatic reloads of the same account, so a driver that
+// resets every few seconds can't turn this into a reload loop that's worse
+// than the black screen it's fixing.
+const GPU_RECOVERY_MIN_GAP_MS = 60 * 1000;
+const lastGpuRecoveryAt = new Map(); // accountId -> timestamp
+let gpuRecoveryPending = false;
+
+// Asks the page whether any canvas it owns has a lost context. Cheap, and
+// side-effect free: getContext() on a canvas that already has a context of
+// another type returns null rather than creating one.
+const DETECT_LOST_CONTEXT_SCRIPT = `(() => {
+  try {
+    for (const canvas of document.querySelectorAll('canvas')) {
+      const gl = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      if (gl && gl.isContextLost && gl.isContextLost()) return true;
+    }
+    return false;
+  } catch { return false; }
+})()`;
+
+function recoverAccountsAfterGpuCrash() {
+  if (gpuRecoveryPending || appQuitting) return;
+  gpuRecoveryPending = true;
+  setTimeout(async () => {
+    gpuRecoveryPending = false;
+    if (appQuitting) return;
+    const now = Date.now();
+    for (const account of data.accounts) {
+      if (account.closed) continue;
+      const wc = views.get(account.id);
+      if (!wc || wc.isDestroyed()) continue;
+      if (now - (lastGpuRecoveryAt.get(account.id) || 0) < GPU_RECOVERY_MIN_GAP_MS) continue;
+      let lost;
+      try {
+        lost = await wc.executeJavaScript(DETECT_LOST_CONTEXT_SCRIPT);
+      } catch {
+        continue; // page navigating or gone — nothing to recover
+      }
+      if (!lost || wc.isDestroyed()) continue;
+      lastGpuRecoveryAt.set(account.id, Date.now());
+      console.warn('[crash-global] account', account.id, 'lost its WebGL context to the GPU crash — reloading it');
+      wc.reload();
+    }
+  }, GPU_RECOVERY_DELAY_MS);
+}
 
 // ── Freeze / stuck-character detector ───────────────────────────────────────
 // When the game's WebSocket drops, the character stops moving and kills/XP

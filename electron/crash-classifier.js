@@ -23,4 +23,29 @@ function classifyCrash({ reason, type } = {}) {
   return { severity, category, reason: normalizedReason, shouldDisableGpu };
 }
 
-module.exports = { classifyCrash };
+// Decides whether repeated GPU failures have earned a fallback to software
+// rendering. Two independent triggers, because a GPU fails in two very
+// different shapes and the original rule only recognised one:
+//
+//   - loop: several crashes inside a short window. A driver dying on startup
+//     and taking the GPU process with it every few seconds.
+//   - drip: a cumulative count over the whole app session, never reset by
+//     elapsed time. This is the one that was missing. Confirmed live on a
+//     hybrid-graphics laptop: 95 driver resets over two weeks, arriving
+//     30-60 minutes apart, so a 5-minute window counter reset to 1 every
+//     single time and the fallback never fired once in two weeks.
+//
+// Pure so both thresholds can be tested without provoking a real GPU crash,
+// which is the only other way to reach this code.
+function shouldFallBackToSoftwareRendering({
+  consecutiveCrashes = 0,
+  sessionCrashes = 0,
+  loopThreshold = 3,
+  sessionThreshold = 4
+} = {}) {
+  const loop = consecutiveCrashes >= loopThreshold;
+  const drip = sessionCrashes >= sessionThreshold;
+  return { fallback: loop || drip, trigger: loop ? 'loop' : drip ? 'session' : null };
+}
+
+module.exports = { classifyCrash, shouldFallBackToSoftwareRendering };
