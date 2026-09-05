@@ -14,6 +14,10 @@ const extractZip = require('extract-zip');
 const yauzl = require('yauzl');
 const { createAnchoredPopup } = require('./popup-window');
 
+// A real Chrome Web Store extension is a few MB; 128MB is far above anything
+// legitimate and far below anything that would matter as a memory spike.
+const MAX_CRX_BYTES = 128 * 1024 * 1024;
+const CRX_DOWNLOAD_TIMEOUT_MS = 60000;
 const EXTENSIONS_DIR = path.join(app.getPath('userData'), 'extensions');
 if (!fs.existsSync(EXTENSIONS_DIR)) fs.mkdirSync(EXTENSIONS_DIR, { recursive: true });
 
@@ -153,6 +157,36 @@ function assertNoEscapedEntries(destDir) {
   }
 }
 
+// Strips a CRX container down to the plain zip inside it. Module scope (not
+// inside the factory) so a unit test can reach it without Electron: it is pure
+// buffer arithmetic over a file downloaded from the network, and getting the
+// offset wrong hands arbitrary bytes to the zip extractor. The i18n key is
+// carried on the error instead of the resolved string so the caller — which
+// has the language — does the translating, and this stays dependency-free.
+function crxToZip(buf) {
+  const fail = (key) => {
+    const err = new Error(key);
+    err.i18nKey = key;
+    return err;
+  };
+  if (!Buffer.isBuffer(buf) || buf.length < 16) throw fail('main.invalidCrxFile');
+  if (buf.toString('utf8', 0, 4) !== 'Cr24') throw fail('main.invalidCrxFile');
+  const version = buf.readUInt32LE(4);
+  let offset;
+  if (version === 2) {
+    const pubKeyLen = buf.readUInt32LE(8);
+    const sigLen = buf.readUInt32LE(12);
+    offset = 16 + pubKeyLen + sigLen;
+  } else if (version === 3) {
+    const headerLen = buf.readUInt32LE(8);
+    offset = 12 + headerLen;
+  } else {
+    throw fail('main.unsupportedCrxVersion');
+  }
+  if (offset > buf.length) throw fail('main.invalidCrxFile');
+  return buf.subarray(offset);
+}
+
 function createExtensionsManager({ getData, persist, broadcastState, mt, getMainWindow, views }) {
   const extensionPopupWindows = new Map();
 
@@ -187,33 +221,33 @@ function createExtensionsManager({ getData, persist, broadcastState, mt, getMain
               reject(new Error(mt(lang, 'main.downloadFailed', { status: res.statusCode })));
               return;
             }
+            // Bounded on both axes. Without a size cap this accumulated whatever
+            // the response streamed, unbounded, straight into memory; without a
+            // timeout a stalled connection left the install promise pending
+            // forever with no feedback.
             const chunks = [];
-            res.on('data', (c) => chunks.push(c));
-            res.on('end', () => resolve(Buffer.concat(chunks)));
-            res.on('error', reject);
+            let received = 0;
+            const timer = setTimeout(() => {
+              res.destroy();
+              reject(new Error(mt(lang, 'main.downloadFailed', { status: 'timeout' })));
+            }, CRX_DOWNLOAD_TIMEOUT_MS);
+            res.on('data', (c) => {
+              received += c.length;
+              if (received > MAX_CRX_BYTES) {
+                clearTimeout(timer);
+                res.destroy();
+                reject(new Error(mt(lang, 'main.downloadFailed', { status: 'too large' })));
+                return;
+              }
+              chunks.push(c);
+            });
+            res.on('end', () => { clearTimeout(timer); resolve(Buffer.concat(chunks)); });
+            res.on('error', (err) => { clearTimeout(timer); reject(err); });
           })
           .on('error', reject);
       };
       get(url, 0);
     });
-  }
-
-  function crxToZip(buf) {
-    const lang = getData().settings.language || 'es';
-    if (buf.toString('utf8', 0, 4) !== 'Cr24') throw new Error(mt(lang, 'main.invalidCrxFile'));
-    const version = buf.readUInt32LE(4);
-    let offset;
-    if (version === 2) {
-      const pubKeyLen = buf.readUInt32LE(8);
-      const sigLen = buf.readUInt32LE(12);
-      offset = 16 + pubKeyLen + sigLen;
-    } else if (version === 3) {
-      const headerLen = buf.readUInt32LE(8);
-      offset = 12 + headerLen;
-    } else {
-      throw new Error(mt(lang, 'main.unsupportedCrxVersion'));
-    }
-    return buf.subarray(offset);
   }
 
   async function loadExtensionOnAllSessions(dir) {
@@ -276,7 +310,13 @@ function createExtensionsManager({ getData, persist, broadcastState, mt, getMain
     if (data.settings.extensions.some((e) => e.path === destDir)) throw new Error(mt(lang, 'main.extensionAlreadyInstalled'));
 
     const crxBuf = await downloadCrx(id);
-    const zipBuf = crxToZip(crxBuf);
+    let zipBuf;
+    try {
+      zipBuf = crxToZip(crxBuf);
+    } catch (err) {
+      // crxToZip is Electron-free and throws an i18n key, not a sentence.
+      throw err.i18nKey ? new Error(mt(lang, err.i18nKey)) : err;
+    }
     const zipPath = path.join(app.getPath('temp'), `${id}-${Date.now()}.zip`);
     fs.writeFileSync(zipPath, zipBuf);
 
@@ -342,7 +382,7 @@ function createExtensionsManager({ getData, persist, broadcastState, mt, getMain
       if (result.canceled || !result.filePaths[0]) return { ok: false };
       const dir = result.filePaths[0];
       const manifest = readManifest(dir);
-      if (!manifest.manifest_version) return { ok: false, error: 'La carpeta no contiene un manifest.json válido.' };
+      if (!manifest.manifest_version) return { ok: false, error: mt(data.settings.language || 'es', 'main.invalidManifestFolder') };
       const id = crypto.createHash('sha1').update(dir).digest('hex').slice(0, 32).replace(/[0-9]/g, (d) => 'abcdefghij'[d]);
       if (data.settings.extensions.some((e) => e.path === dir)) return { ok: false, error: mt(data.settings.language || 'es', 'main.folderAlreadyLoaded') };
       try {
@@ -362,9 +402,9 @@ function createExtensionsManager({ getData, persist, broadcastState, mt, getMain
     ipcMain.handle('extensions:openPopup', (_e, { id }) => {
       const data = getData();
       const ext = data.settings.extensions.find((e) => e.id === id);
-      if (!ext) return { ok: false, error: 'Extensión no encontrada' };
+      if (!ext) return { ok: false, error: mt(data.settings.language || 'es', 'main.extensionNotFound') };
       if (!ext.action || !ext.action.popup) {
-        return { ok: false, error: 'Esta extensión no tiene una ventana propia — funciona en segundo plano.' };
+        return { ok: false, error: mt(data.settings.language || 'es', 'main.extensionNoPopup') };
       }
 
       const existing = extensionPopupWindows.get(id);
@@ -379,7 +419,7 @@ function createExtensionsManager({ getData, persist, broadcastState, mt, getMain
       if (!wc || wc.isDestroyed()) {
         wc = [...views.values()].find((v) => !v.isDestroyed());
       }
-      if (!wc) return { ok: false, error: 'Abrí al menos una cuenta primero.' };
+      if (!wc) return { ok: false, error: mt(data.settings.language || 'es', 'main.openAccountFirst') };
 
       const popup = createAnchoredPopup(getMainWindow, {
         width: 380,
@@ -445,7 +485,11 @@ function createExtensionsManager({ getData, persist, broadcastState, mt, getMain
       unloadExtensionFromAllSessions(id);
       closeExtensionPopup(id);
       try {
-        if (ext.path.startsWith(EXTENSIONS_DIR)) fs.rmSync(ext.path, { recursive: true, force: true });
+        // path.relative, not startsWith: comparing paths as strings would accept
+        // a sibling directory that merely shares the prefix ("<dir>-evil").
+        const rel = path.relative(EXTENSIONS_DIR, ext.path);
+        const insideExtensionsDir = rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+        if (insideExtensionsDir) fs.rmSync(ext.path, { recursive: true, force: true });
       } catch {
         // best-effort cleanup
       }
@@ -467,4 +511,14 @@ function createExtensionsManager({ getData, persist, broadcastState, mt, getMain
   };
 }
 
-module.exports = { createExtensionsManager, EXTENSIONS_DIR };
+module.exports = {
+  createExtensionsManager,
+  EXTENSIONS_DIR,
+  // Exported for test/unit/extension-archive-safety.test.js — these are the
+  // archive guards that defend against extract-zip's symlink path-traversal
+  // (GHSA-jmr9-qjv8-65gv), and they are only reachable in production through a
+  // real CRX download.
+  zipEntryIsSymlink,
+  assertZipEntryPathSafe,
+  crxToZip
+};

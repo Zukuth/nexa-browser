@@ -10,7 +10,11 @@ const { ipcMain } = require('electron');
 const fs = require('fs');
 const { hostnameFromUrlLike } = require('./url-utils');
 const path = require('path');
-const { ElectronBlocker, fetchLists, fetchResources } = require('@ghostery/adblocker-electron');
+// fetchLists is deliberately not imported any more: the custom-rules path
+// used to call it to download every filter list a second time, in parallel
+// with the network engine downloading the identical bytes. Both now read the
+// same local text cache (filterListsTextCached below).
+const { ElectronBlocker, fetchResources } = require('@ghostery/adblocker-electron');
 const ADBLOCKER_COSMETIC_PRELOAD = require.resolve('@ghostery/adblocker-electron-preload');
 // adblock-rs = Brave's own native (Rust) adblock-rust engine, used here only
 // for the network block/allow decision (perf/architecture pass, 2026-08-21
@@ -281,9 +285,56 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
     return path.join(app.getPath('userData'), `${prefix}-${suffix}.bin`);
   }
 
+  // How long a downloaded copy of the raw filter-list text stays usable before
+  // it's refetched. The lists themselves change on the order of days, so this
+  // is generous on purpose: the point is to stop re-downloading ~15MB from
+  // GitHub, not to track every upstream commit.
+  const FILTER_LIST_TEXT_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+  const FILTER_LIST_FETCH_TIMEOUT_MS = 20000;
+
+  function filterListTextCacheFile(app, enabled) {
+    return cacheFileFor(app, enabled, 'adblock-lists-text') + '.txt';
+  }
+
   async function fetchFilterListsText(urls) {
-    const texts = await Promise.all(urls.map((url) => fetch(url).then((r) => r.text())));
+    // AbortSignal.timeout: without it a single hung connection left
+    // engineStatus stuck on 'loading' forever, which the shield UI can't tell
+    // apart from "still building on first launch".
+    // r.ok: without it a 404/500 from GitHub returned an HTML error page that
+    // got handed to the filter parser as if it were a list of rules.
+    const texts = await Promise.all(urls.map(async (url) => {
+      const res = await fetch(url, { signal: AbortSignal.timeout(FILTER_LIST_FETCH_TIMEOUT_MS) });
+      if (!res.ok) throw new Error(`filter list ${url} responded ${res.status}`);
+      return res.text();
+    }));
     return texts.join('\n');
+  }
+
+  // The compiled-engine caches below only work when there are no custom rules
+  // — custom rules can change at any time, so the engine has to be rebuilt.
+  // But rebuilding only needs the list TEXT, which does NOT change when the
+  // user edits a rule, and that text was being refetched from the network
+  // every time: once for each of the two engines, on every launch, forever,
+  // for anyone who has ever used the element picker (it writes a custom rule).
+  // Caching the text separately turns "one custom rule" from "~30MB per
+  // launch" into "one local file read".
+  async function filterListsTextCached(app, enabled) {
+    const cachePath = filterListTextCacheFile(app, enabled);
+    try {
+      const stat = await fs.promises.stat(cachePath);
+      if (Date.now() - stat.mtimeMs < FILTER_LIST_TEXT_TTL_MS) {
+        return await fs.promises.readFile(cachePath, 'utf-8');
+      }
+    } catch {
+      // No cache yet, or unreadable — fall through to a real fetch.
+    }
+    const text = await fetchFilterListsText(activeFilterListUrls());
+    try {
+      await fs.promises.writeFile(cachePath, text, 'utf-8');
+    } catch (err) {
+      console.error('[adblock] failed to write the filter-list text cache (non-fatal — lists just get refetched next time)', err);
+    }
+    return text;
   }
 
   // adblock-rs's own network-matching engine (Brave's native Rust engine —
@@ -325,7 +376,7 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
         // cached bytes are stale/unreadable (e.g. an adblock-rs version
         // bump changed the serialize format) — fall through to a real build.
       }
-      const text = await fetchFilterListsText(activeFilterListUrls());
+      const text = await filterListsTextCached(app, enabled);
       const filterSet = new adblockRust.FilterSet(false);
       filterSet.addFilters(text, { rule_types: adblockRust.RuleTypes.NETWORK_ONLY });
       const engine = new adblockRust.Engine(filterSet);
@@ -340,7 +391,7 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
     // picker, so they can't go through the binary cache — fetch + parse
     // every time, same tradeoff the cosmetic engine below already accepts
     // for the same reason.
-    const text = await fetchFilterListsText(activeFilterListUrls());
+    const text = await filterListsTextCached(app, enabled);
     const filterSet = new adblockRust.FilterSet(false);
     filterSet.addFilters([text, customRules].join('\n'), { rule_types: adblockRust.RuleTypes.NETWORK_ONLY });
     return new adblockRust.Engine(filterSet);
@@ -359,11 +410,13 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
         write: (p, buf) => fs.promises.writeFile(p, buf)
       });
     }
-    const [lists, resources] = await Promise.all([
-      fetchLists(fetch, activeFilterListUrls()),
+    // Same text cache as the network engine — fetchLists() would otherwise
+    // re-download the identical ~15MB alongside it, in parallel, every launch.
+    const [text, resources] = await Promise.all([
+      filterListsTextCached(app, enabled),
       fetchResources(fetch)
     ]);
-    const engine = ElectronBlocker.parse([...lists, customRules].join('\n'));
+    const engine = ElectronBlocker.parse([text, customRules].join('\n'));
     if (resources) engine.updateResources(resources, '' + resources.length);
     return engine;
   }

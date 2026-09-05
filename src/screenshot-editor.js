@@ -1,10 +1,21 @@
-const DICT = {
-  es: { crop: 'Recortá arrastrando, después tocá ✂ de nuevo para aplicar', arrow: 'Arrastrá para dibujar una flecha', text: 'Tocá donde querés poner el texto', save: 'Guardar', cancel: 'Cancelar' },
-  pt: { crop: 'Arraste para selecionar, depois toque em ✂ de novo para aplicar', arrow: 'Arraste para desenhar uma seta', text: 'Toque onde quer colocar o texto', save: 'Salvar', cancel: 'Cancelar' },
-  en: { crop: 'Drag to select, then click ✂ again to apply', arrow: 'Drag to draw an arrow', text: 'Click where you want the text', save: 'Save', cancel: 'Cancel' }
-};
+// Uses the app's single translation catalog (i18n-data.js, loaded as a plain
+// <script> before this file — same way index.html loads it for renderer.js).
+//
+// This file used to carry its OWN five-string dictionary keyed 'es'/'pt'/'en',
+// while main.js sends data.settings.language, which is 'es' / 'pt-BR' / 'en-US'.
+// So DICT['pt-BR'] was undefined and every lookup fell through to Spanish:
+// the whole editor was permanently in Spanish for Portuguese and English
+// users, with correct translations sitting right there, unreachable. The same
+// mismatch made the `lang === 'pt'` check on the text prompt dead code.
+// Going through the shared catalog also means check-i18n.js now covers these
+// strings, which it never could while they lived in a private object here.
 let lang = 'es';
-const t = (k) => (DICT[lang] || DICT.es)[k] || k;
+function t(key, vars) {
+  const dicts = window.NEXA_I18N || {};
+  let str = (dicts[lang] && dicts[lang][key]) ?? (dicts.es && dicts.es[key]) ?? key;
+  if (vars) for (const k of Object.keys(vars)) str = str.replace(`{${k}}`, vars[k]);
+  return str;
+}
 
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -23,13 +34,25 @@ let dragStart = null;
 let dragCurrent = null;
 let pendingCropRect = null;
 
+// The toolbar's button labels and tooltips used to be hardcoded Spanish in
+// screenshot-editor.html, so they stayed Spanish no matter the language.
+// Applied once, as soon as main tells us which language to use.
+function applyStaticLabels() {
+  btnSave.textContent = t('shot.save');
+  btnCrop.title = t('shot.toolCrop');
+  btnArrow.title = t('shot.toolArrow');
+  btnText.title = t('shot.toolText');
+  btnUndo.title = t('shot.toolUndo');
+  btnCancel.title = t('shot.toolCancel');
+}
+
 function setTool(next) {
   tool = tool === next ? null : next;
   pendingCropRect = null;
   [btnCrop, btnArrow, btnText].forEach((b) => b.classList.remove('active'));
-  if (tool === 'crop') { btnCrop.classList.add('active'); hintEl.textContent = t('crop'); }
-  else if (tool === 'arrow') { btnArrow.classList.add('active'); hintEl.textContent = t('arrow'); }
-  else if (tool === 'text') { btnText.classList.add('active'); hintEl.textContent = t('text'); }
+  if (tool === 'crop') { btnCrop.classList.add('active'); hintEl.textContent = t('shot.hintCrop'); }
+  else if (tool === 'arrow') { btnArrow.classList.add('active'); hintEl.textContent = t('shot.hintArrow'); }
+  else if (tool === 'text') { btnText.classList.add('active'); hintEl.textContent = t('shot.hintText'); }
   else hintEl.textContent = '';
   redraw();
 }
@@ -116,7 +139,7 @@ canvas.addEventListener('mousedown', (e) => {
     dragStart = p;
     dragCurrent = p;
   } else if (tool === 'text') {
-    const text = prompt(lang === 'pt' ? 'Texto:' : lang === 'en' ? 'Text:' : 'Texto:');
+    const text = prompt(t('shot.textPrompt'));
     if (text) {
       annotations.push({ type: 'text', x: p.x, y: p.y, text });
       redraw();
@@ -207,8 +230,7 @@ btnSave.addEventListener('click', async () => {
 
 window.screenshotEditorAPI.onImage(({ dataUrl, lang: l }) => {
   lang = l || 'es';
-  btnSave.textContent = t('save');
-  btnCancel.title = t('cancel');
+  applyStaticLabels();
   const img = new Image();
   img.onload = () => {
     baseImage = img;

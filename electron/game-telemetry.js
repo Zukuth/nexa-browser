@@ -370,15 +370,16 @@ function getCreatureCatalogMeta() {
   };
 }
 
-function getItemPriceByNameMap() {
-  return itemPriceByName;
-}
-
 // For the sell-lock item picker (main.js) — needs id+name+icon together,
 // which the three separate itemXById/itemXByName maps above don't give in
 // one shape. Only meaningful after ensureItemPriceCatalog() has resolved.
+// Every consumer of this list sorts it by `name` (three separate pickers in
+// renderer.js), but the enrichment above only requires id + npcPrice — `name`
+// is optional there. Rather than making each call site defensive about a field
+// this function is supposed to guarantee, unnamed items are dropped here:
+// an item with no name has nothing to show in a picker anyway.
 function getItemCatalogArray() {
-  if (itemCatalogItems) return itemCatalogItems.map((item) => ({ ...item }));
+  if (itemCatalogItems) return itemCatalogItems.filter((item) => item && item.name).map((item) => ({ ...item }));
   if (!itemNameById) return [];
   return Array.from(itemNameById.entries()).map(([id, name]) => ({
     id,
@@ -391,11 +392,18 @@ function getItemCatalogArray() {
   }));
 }
 
+// `attacks` is optional in practice: ensureCreatureCatalog() only requires a
+// non-null pokeId, so a single species in the game's own creatures.json without
+// an attacks array used to throw here — and this runs inside computeRates(),
+// which runs for every team member on every gameStats:get poll, so one
+// malformed remote record rejected the whole IPC handler every 5s: no alert
+// sounds, no panel repaint, indefinitely. Remote data we don't control never
+// gets to decide whether a poll survives.
 function learnedMoves(speciesId, level) {
   const creature = creatureCatalog && creatureCatalog.get(speciesId);
-  if (!creature) return [];
+  if (!creature || !Array.isArray(creature.attacks)) return [];
   return creature.attacks
-    .filter((a) => (a.learnLevel || 1) <= (level || 1))
+    .filter((a) => a && (a.learnLevel || 1) <= (level || 1))
     .sort((a, b) => (b.power || 0) - (a.power || 0));
 }
 
@@ -614,7 +622,16 @@ function applyFrame(state, msg) {
         // logged as a brand new capture. Confirmed live: the user's own
         // long-owned team member (Golem) showed up in the capture log after
         // it leveled up mid-hunt.
-        if (!state._knownIds) state._knownIds = new Set();
+        //
+        // REPLACES the set rather than adding to it: msg.list is the server's
+        // own authoritative full collection, so anything missing from it no
+        // longer exists and has no reason to stay remembered. Adding was an
+        // unbounded leak — one entry per capture, forever, cleared only by
+        // permanently deleting the account — and this app's whole premise is
+        // an account farming captures for days. Rebuilding from the
+        // authoritative list bounds it by the real collection size instead,
+        // which is the only number it was ever supposed to track.
+        state._knownIds = new Set();
         for (const p of msg.list) {
           if (p && p.id != null) state._knownIds.add(p.id);
         }
@@ -802,9 +819,23 @@ function computeRates(state) {
     previousHunt: state.previousHunt || null,
     huntHistory: state.huntHistory || [],
     capturedSpeciesIds: state.capturedSpeciesIds ? Array.from(state.capturedSpeciesIds) : [],
-    collection: state.collection || [],
+    // `collection` (the player's ENTIRE box + team, thousands of objects on a
+    // long-lived account) is deliberately NOT part of this payload: getStats()
+    // is what the renderer's 5s gameStats poll serializes across IPC, per
+    // account, and nothing in the UI reads the full collection — the panels
+    // that once did are gone. It stays available on demand through
+    // getCollection() below for whenever a panel needs it again.
     family: state.family || null
   };
+}
+
+// On-demand counterpart to the omitted `collection` field above — a caller
+// that genuinely needs the full box (a mass-sell panel, an export) asks for
+// one account's copy at the moment it needs it, instead of every account's
+// copy crossing IPC every 5 seconds for nobody.
+function getCollection(accountId) {
+  const state = stateByAccount.get(accountId);
+  return state && state.collection ? state.collection : [];
 }
 
 function updateWallet(accountId, wallet) {
@@ -956,9 +987,19 @@ function getStats(accountId) {
   return computeRates(state);
 }
 
-function getAllStats() {
+// `accountIds` scopes the result to the accounts the caller considers live.
+// stateByAccount holds an entry for every account that has EVER attached to
+// the game in this process — including ones since closed, or navigated
+// elsewhere — and computeRates() is not free (it re-derives loot breakdowns,
+// sorts, and rebuilds the team's move lists). Without the filter, the
+// renderer's 5s poll paid that cost, plus the IPC serialization, for accounts
+// nobody has open. Omitted (or non-array) means "all", so existing callers
+// and tests behave exactly as before.
+function getAllStats(accountIds) {
+  const wanted = Array.isArray(accountIds) ? new Set(accountIds) : null;
   const result = {};
   for (const accountId of stateByAccount.keys()) {
+    if (wanted && !wanted.has(accountId)) continue;
     result[accountId] = getStats(accountId);
   }
   return result;
@@ -1024,6 +1065,7 @@ module.exports = {
   reattachCapture,
   getStats,
   getAllStats,
+  getCollection,
   removeState,
   startHeartbeat,
   setBallsLowThreshold,
@@ -1034,7 +1076,6 @@ module.exports = {
   getCreatureCatalogArray,
   getCreatureCatalogMeta,
   ensureItemPriceCatalog,
-  getItemPriceByNameMap,
   getItemCatalogArray,
   waitForNextPokes,
   waitForFrame,

@@ -16,7 +16,11 @@
 </head>
 <body>
   <div id="msg"></div>
-  <label><input type="checkbox" id="remember" checked /> <span id="rememberLabel"></span></label>
+    <!-- Deliberately NOT checked by default: a permission prompt is a one-click
+       surface, and pre-checking "remember" turns a mis-click into a permanent
+       grant of camera/microphone/location for that site. Real browsers ask
+       per-request and let the user opt into remembering. -->
+  <label><input type="checkbox" id="remember" /> <span id="rememberLabel"></span></label>
   <div class="row">
     <button id="deny" type="button"></button>
     <button id="allow" type="button"></button>

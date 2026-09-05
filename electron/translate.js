@@ -178,18 +178,12 @@ function getTranslator(from, to) {
   return translators.get(key);
 }
 
-// Fire-and-forget: kicks off loading (downloading, if not cached yet — see
-// translator.js's patched on-disk cache) a language pair's model in the
-// background, so it's already warm by the time the user's first real
-// translate:page call comes in. Never awaited by the caller and never
-// throws outward — a failed preload just means the first real translation
-// falls back to loading it on demand, same as before this existed.
-function preload(from, to) {
-  if (from === to) return;
-  getTranslator(from, to).catch((err) => {
-    console.error('[translate] preload failed', from, '->', to, err);
-  });
-}
+// translate.preload() used to live here — a fire-and-forget warmup of a
+// language pair's model. It was removed from the startup path on an explicit
+// call (account login/render is the priority; translation must not touch
+// CPU/RAM until the user asks for it), which left the function exported and
+// called from nowhere. seedBundledModels() below is the part that stayed: a
+// plain file copy, no WASM worker, no ongoing cost.
 
 // Real download progress for the very first (uncached) load of a language
 // pair — confirmed live this matters: a user on slow internet reported
@@ -1042,7 +1036,6 @@ function restorePageTextScript() {
 module.exports = {
   translateBatch,
   shutdown,
-  preload,
   seedBundledModels,
   detectLanguage,
   setOpenAccountCount,

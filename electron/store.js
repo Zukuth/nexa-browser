@@ -151,7 +151,6 @@ const DEFAULT_DATA = {
     layoutMode: 'single',
     activeAccountId: null,
     currentSpaceId: 'default',
-    sidebarWidth: 260,
     sidebarCollapsed: false,
     language: 'es',
     startWithWindows: false,
@@ -243,11 +242,6 @@ const DEFAULT_DATA = {
     // Configuración hint, not hidden.
     huntTelemetryEnabled: true,
     hardwareAcceleration: true,
-    // Set true the first time translate:page ever succeeds for this user —
-    // gates the startup model preload in main.js so a fresh install never
-    // silently downloads a ~20MB language model in the background before
-    // the user has ever touched the translate button once.
-    hasUsedTranslate: false,
     // Opt-in: keeps the translation memory (see translationCache in
     // translate.js) on disk across app restarts instead of losing it every
     // time the app closes. Off by default — a fresh install shouldn't
@@ -285,8 +279,24 @@ const DEFAULT_DATA = {
   }
 };
 
+// True only when the LAST load() fell back to DEFAULT_DATA because a real
+// data file existed on disk but couldn't be parsed. Callers must treat the
+// returned state as "we know nothing about this install" rather than "this
+// install has no accounts" — the difference matters for anything destructive
+// that keys off data.accounts being empty. Concretely: cleanupOrphanedPartitions()
+// in main.js deletes every Partitions/account-<id> folder whose id isn't in
+// data.accounts, which after a corrupt-file recovery is EVERY folder — i.e. a
+// single unparseable data.json used to silently destroy the login session of
+// every account, permanently, and make the .corrupt backup written below
+// worthless (restoring the JSON can't bring the sessions back).
+let recoveredFromCorruptFile = false;
+function wasRecoveredFromCorruptFile() {
+  return recoveredFromCorruptFile;
+}
+
 function load() {
   migrateLegacyDataFile();
+  recoveredFromCorruptFile = false;
   let raw;
   try {
     raw = fs.readFileSync(DATA_FILE, 'utf-8');
@@ -339,6 +349,10 @@ function load() {
     } catch (backupErr) {
       console.error('[store] data file was corrupt AND the backup attempt also failed', backupErr);
     }
+    // See wasRecoveredFromCorruptFile() above — this flag is what stops
+    // main.js from reading the empty accounts array below as permission to
+    // delete every account's on-disk session.
+    recoveredFromCorruptFile = true;
     return structuredClone(DEFAULT_DATA);
   }
 }
@@ -468,4 +482,13 @@ function isPasswordEncryptionAvailable() {
   }
 }
 
-module.exports = { load, save, decryptStoredPasswords, decryptAccountProxies, watchDataFile, DATA_FILE, isPasswordEncryptionAvailable };
+module.exports = {
+  load,
+  save,
+  decryptStoredPasswords,
+  decryptAccountProxies,
+  watchDataFile,
+  DATA_FILE,
+  isPasswordEncryptionAvailable,
+  wasRecoveredFromCorruptFile
+};

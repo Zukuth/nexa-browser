@@ -30,6 +30,9 @@ function onIpc(channel, cb) {
 contextBridge.exposeInMainWorld('api', {
   getState: () => ipcRenderer.invoke('state:get'),
   isPasswordEncryptionAvailable: () => ipcRenderer.invoke('security:passwordEncryptionAvailable'),
+  // On demand only — the proxy password is deliberately not part of the
+  // state broadcast (see proxySecrets in main.js).
+  getProxyPassword: (id) => ipcRenderer.invoke('proxy:getPassword', { id }),
   getSitePermissions: () => ipcRenderer.invoke('permissions:getSitePermissions'),
   revokeSitePermission: (hostname, permission) => ipcRenderer.invoke('permissions:revoke', { hostname, permission }),
   clearAllSitePermissions: () => ipcRenderer.invoke('permissions:clearAll'),
@@ -109,24 +112,25 @@ contextBridge.exposeInMainWorld('api', {
   setSplit: (ids, fracs, field) => ipcRenderer.invoke('layout:setSplit', { ids, fracs, field }),
   setLiveRect: (id, rect) => ipcRenderer.send('account:setLiveRect', { id, rect }),
   toggleSidebar: () => ipcRenderer.invoke('sidebar:toggle'),
-  // The main-process side of these (ui:hide-views/ui:show-views) is now a
-  // no-op — <webview> is real DOM so a modal's own z-index already covers
-  // it, no more compositing hack needed for that. But <webview> guests are
-  // still a genuinely separate, hit-testable surface: a mousemove that
-  // crosses over one mid-drag (dragging a split divider, a free-mode panel,
-  // a URL-suggestion dropdown open over a panel) gets captured by the guest
+  // <webview> is real DOM, so a modal's own z-index already covers it — no
+  // compositing hack needed there any more. But <webview> guests are still a
+  // genuinely separate, hit-testable surface: a mousemove that crosses over
+  // one mid-drag (dragging a split divider, a free-mode panel, a
+  // URL-suggestion dropdown open over a panel) gets captured by the guest
   // instead of continuing to reach the host document's own mousemove
-  // listener, silently truncating the drag. Toggling pointer-events here —
-  // entirely renderer-local, no round-trip needed — is what actually fixes
-  // that now; the IPC send is kept only so nothing breaks if main ever
-  // needs this signal again.
+  // listener, silently truncating the drag. Toggling pointer-events via the
+  // .drag-inert class — entirely renderer-local, no round-trip — is what
+  // actually fixes that.
+  //
+  // The paired ipcRenderer.send('ui:hide-views'/'ui:show-views') calls are
+  // gone, along with their empty main-process handlers: they were two IPC
+  // messages per modal open/close and per divider drag, delivered to a
+  // function that did nothing.
   hideViews: () => {
     document.getElementById('panel-webviews')?.classList.add('drag-inert');
-    ipcRenderer.send('ui:hide-views');
   },
   showViews: () => {
     document.getElementById('panel-webviews')?.classList.remove('drag-inert');
-    ipcRenderer.send('ui:show-views');
   },
   setZoom: (id, factor) => ipcRenderer.invoke('account:setZoom', { id, factor }),
   setZoomAll: (factor) => ipcRenderer.invoke('accounts:setZoomAll', { factor }),
@@ -178,6 +182,9 @@ contextBridge.exposeInMainWorld('api', {
   getOptimizeStatus: () => ipcRenderer.invoke('memory:getOptimizeStatus'),
   onOptimizeStatusUpdate: (cb) => onIpc('memory:optimizeStatus', cb),
   getGameStats: () => ipcRenderer.invoke('gameStats:get'),
+  // The full box for one account, on demand — deliberately kept out of
+  // getGameStats()'s 5s payload (see getCollection in game-telemetry.js).
+  getGameCollection: (id) => ipcRenderer.invoke('gameStats:getCollection', { id }),
   getCreatureCatalog: (forceRefresh = false) => ipcRenderer.invoke('pokeFormulas:getCreatureCatalog', { forceRefresh }),
   getItemCatalog: () => ipcRenderer.invoke('pokeFormulas:getItemCatalog'),
   computeGrowthCalc: (payload) => ipcRenderer.invoke('pokeFormulas:computeGrowth', payload),

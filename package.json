@@ -39,7 +39,8 @@
     "electron-log": "^5.4.4",
     "electron-updater": "^6.8.9",
     "extract-zip": "^2.0.1",
-    "franc-min": "^6.2.0"
+    "franc-min": "^6.2.0",
+    "yauzl": "^2.10.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -52,6 +53,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^17.4.1",
     "patch-package": "^8.0.1",
+    "playwright-core": "^1.61.1",
     "prettier": "^3.9.6",
     "typescript": "^7.0.2",
     "ws": "^8.21.1"

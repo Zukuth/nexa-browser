@@ -15,9 +15,12 @@ const memoryOptimizer = require('./memory-optimizer');
 const pipPlayer = require('./pip-player');
 const elementPicker = require('./element-picker');
 const { classifyCrash } = require('./crash-classifier');
-const { pruneCrashDumps } = require('./crash-dumps');
+const { pruneCrashDumps, pruneNetLogs } = require('./crash-dumps');
 const diagnostics = require('./diagnostics');
 const { normalizeAddressInput } = require('./address-bar');
+// CSV parsing for the password importer lives in ./csv for the same reason —
+// pure logic over a file the user was handed by another program.
+const { parseCsv } = require('./csv');
 const log = require('electron-log');
 const { autoUpdater } = require('electron-updater');
 // Catálogo único de traducciones compartido con el renderer — ver el comentario
@@ -73,6 +76,10 @@ crashReporter.start({ uploadToServer: false, compress: true });
 // files pile up in CRASH_DUMPS_DIR forever. Only runs once per app launch,
 // so it's cheap even though it walks the whole (normally tiny) folder.
 pruneCrashDumps(CRASH_DUMPS_DIR);
+// Same once-per-launch cleanup for the netlog captures diagnostics:startNetLog
+// writes (up to 20MB each, straight into userData) — nothing deleted them
+// before, unlike the crash dumps right above.
+pruneNetLogs(app.getPath('userData'));
 autoUpdater.logger = log;
 autoUpdater.autoDownload = true;
 // The NSIS differential updater shells out to a PowerShell helper script to
@@ -102,41 +109,10 @@ const APP_ICON_PATH = path.join(__dirname, 'assets', 'icon.png');
 
 const { hostnameFromUrlLike, isAllowedBookmarkUrl } = require('./url-utils');
 
-// window.open() popups (Etapa: OAuth login flows) get allowed through only
-// when they go to the account's own site or a well-known third-party login
-// provider — anything else is denied and logged. Before this, every account
-// on every page could window.open() to literally anywhere and still receive
-// a fully isolated+sandboxed+contextIsolated popup window; scoping the
-// *destination* closes the remaining gap without breaking real Google/
-// Facebook/Discord "sign in with..." flows, which is the only legitimate
-// reason a game page needs a popup at all.
-const POPUP_ALLOWED_HOSTS = new Set([
-  'accounts.google.com',
-  'accounts.youtube.com',
-  'www.facebook.com',
-  'm.facebook.com',
-  'appleid.apple.com',
-  'login.microsoftonline.com',
-  'login.live.com',
-  'discord.com',
-  'twitter.com',
-  'x.com',
-  'api.twitter.com'
-]);
-
-function hostMatchesPopupAllowlist(hostname, accountHostname) {
-  if (!hostname) return false;
-  const h = hostname.toLowerCase();
-  // Same site (or a subdomain of it) opening a popup to itself — e.g. a
-  // "share"/"support" window the game itself spawns.
-  if (accountHostname && (h === accountHostname || h.endsWith(`.${accountHostname}`))) return true;
-  let walk = h;
-  while (walk.includes('.')) {
-    if (POPUP_ALLOWED_HOSTS.has(walk)) return true;
-    walk = walk.slice(walk.indexOf('.') + 1);
-  }
-  return POPUP_ALLOWED_HOSTS.has(walk);
-}
+// Popup destination policy (POPUP_ALLOWED_HOSTS + hostMatchesPopupAllowlist)
+// lives in ./popup-policy so a unit test can reach it without booting
+// Electron — same reasoning as url-utils.js and address-bar.js.
+const { hostMatchesPopupAllowlist } = require('./popup-policy');
 
 // app.getPath('userData') is derived from package.json's "name" field
 // ("nexa-browser" since the rebrand) — do not change that field again without
@@ -181,6 +157,29 @@ function recordCrash(accountId) {
 // broadcast).
 const passwordSecrets = new Map();
 
+// Exactly the same arrangement, for exactly the same reason, applied to the
+// other secret this app stores: account.proxy.password. store.js already
+// encrypts it at rest (decryptAccountProxies), but the decrypted value was
+// then written straight back onto data.accounts — and `data` is what
+// broadcastState() hands the renderer wholesale on every single change, so
+// every account open/close/rename re-sent every proxy password in plain text.
+// That is the exact problem passwordSecrets exists to solve, and this field
+// was simply never brought into it. Keyed by account id; the real value only
+// leaves here for applyProxy's own login callback (main process, never
+// crosses IPC) and for the one channel the account editor calls on demand.
+const proxySecrets = new Map();
+
+function getProxyPassword(accountId) {
+  return proxySecrets.get(accountId) || '';
+}
+
+// Mirrors the shape store.js/applyProxy expect, with the real secret merged
+// back in — for the two places that legitimately need it and nowhere else.
+function accountWithProxySecret(account) {
+  if (!account || !account.proxy) return account;
+  return { ...account, proxy: { ...account.proxy, password: getProxyPassword(account.id) } };
+}
+
 const { createAdblockManager } = require('./adblock-manager');
 const adblockManager = createAdblockManager({
   getData: () => data,
@@ -219,8 +218,12 @@ function applyProxy(ses, account) {
     ses.on('login', (event, _details, authInfo, callback) => {
       if (!authInfo.isProxy) return; // leave the site's own HTTP auth prompt alone
       event.preventDefault();
+      // Read from proxySecrets at call time, not from account.proxy — the
+      // password no longer lives on the account object (see proxySecrets).
+      // Call time also means a password changed mid-session is picked up
+      // without re-wiring this listener.
       if (account.proxy && account.proxy.username) {
-        callback(account.proxy.username, account.proxy.password || '');
+        callback(account.proxy.username, getProxyPassword(account.id));
       } else {
         callback();
       }
@@ -254,6 +257,20 @@ const ACCOUNT_PRELOAD_PATH = path.join(__dirname, 'account-preload.js');
 const ACCOUNT_PRELOAD_URL = require('url').pathToFileURL(ACCOUNT_PRELOAD_PATH).href;
 function accountPartition(accountId) {
   return `persist:account-${accountId}`;
+}
+
+// Wipes one account's browsing data (cookies, storage, cache) and reloads its
+// page — i.e. logs it out. Three call sites wanted exactly this: the
+// account:clearSession IPC handler, the account context menu's "Borrar datos
+// de sesión", and the Ctrl+Shift+Supr shortcut, each with its own copy of the
+// same five lines. Resolves the session whether or not the account is
+// currently open, since a closed account still has its partition on disk.
+async function clearAccountSessionData(accountId) {
+  const wc = views.get(accountId);
+  const ses = wc && !wc.isDestroyed() ? wc.session : session.fromPartition(accountPartition(accountId));
+  await ses.clearStorageData();
+  await ses.clearCache();
+  if (wc && !wc.isDestroyed()) wc.reload();
 }
 
 const RAIL_WIDTH = 56;
@@ -291,6 +308,20 @@ let updateStatus = { state: 'idle', lastError: null, lastCheckedAt: null };
 // Always start on auto grid, regardless of whichever layout was active when the
 // app was last closed — the user wants a consistent, predictable starting layout.
 data.settings.layoutMode = 'grid';
+
+// settings.reopenLastSpace ("Reabrir el último espacio al iniciar", on by
+// default) now actually does something. It had a toggle in Configuración,
+// translations in all three languages, an entry in the settings whitelist and
+// was persisted on every change — but nothing ever READ it, so the app always
+// reopened the last space regardless. currentSpaceId is persisted, which is
+// what made the "on" behaviour work by accident and the "off" position a
+// no-op. Turning it off now starts in the first (pinned) space instead, which
+// is the only thing "don't reopen the last one" can reasonably mean here.
+if (data.settings.reopenLastSpace === false && data.spaces.length > 0) {
+  data.settings.currentSpaceId = data.spaces[0].id;
+  data.settings.activeAccountId = null;
+  data.settings.maximizedAccountId = null;
+}
 const disableHardwareAccelerationForTest = process.env.NEXA_E2E === '1';
 const forceSoftwareRendering = disableHardwareAccelerationForTest || process.env.NEXA_FORCE_SOFTWARE === '1';
 
@@ -491,16 +522,23 @@ let persistInFlight = null;
 // that early, but a crash/quit during startup is exactly when you'd least
 // want to lose every saved password, so this doesn't rely on that.
 let passwordSecretsReady = false;
+// Same flag, same reason, for proxySecrets (see dataForPersist).
+let proxySecretsReady = false;
 
 function dataForPersist() {
-  // data.passwords still carries its on-disk `password` field verbatim until
-  // the decrypt step strips it, and store.js's encryptPassword() is
-  // idempotent for already-encrypted values, so passing them through
-  // untouched here is safe.
-  if (!passwordSecretsReady) return { ...data };
+  // data.passwords / account.proxy still carry their on-disk `password` field
+  // verbatim until the decrypt step strips it, and store.js's
+  // encryptPassword() is idempotent for already-encrypted values, so passing
+  // them through untouched here is safe.
+  if (!passwordSecretsReady && !proxySecretsReady) return { ...data };
   return {
     ...data,
-    passwords: data.passwords.map((p) => ({ ...p, password: passwordSecrets.get(p.id) || '' }))
+    passwords: passwordSecretsReady
+      ? data.passwords.map((p) => ({ ...p, password: passwordSecrets.get(p.id) || '' }))
+      : data.passwords,
+    // Merges the proxy secret back in for the copy that gets written, without
+    // ever putting it back on the live `data` object — same split as passwords.
+    accounts: proxySecretsReady ? data.accounts.map(accountWithProxySecret) : data.accounts
   };
 }
 
@@ -852,6 +890,41 @@ function reopenLastClosedAccount() {
   broadcastState();
 }
 
+// The five layout modes the UI actually offers (index.html's data-mode
+// buttons) — layout:set used to persist whatever string it was handed, so a
+// bad value ended up in data.json and every consumer fell through to its
+// grid/single default with no explanation. layout:setSplit right below
+// already validated its own `field` this way.
+const LAYOUT_MODES = new Set(['single', 'columns', 'rows', 'grid', 'free']);
+
+// Any URL that will later be handed to loadURL() as a *default* — the app-wide
+// defaultStartUrl and each space's defaultUrl. Both were previously stored
+// unvalidated (defaultStartUrl through settings:update's whitelist, defaultUrl
+// through importSpaces' object spread) even though account.url, which reaches
+// exactly the same loadURL(), has always been sanitized. http/https only,
+// matching isAllowedBookmarkUrl's rule for the same reason: file://,
+// javascript: and data: have no business being a start page.
+const DEFAULT_START_URL = 'https://poke.idleworld.online/login';
+function safeStartUrl(url, fallback = 'https://www.google.com') {
+  const raw = String(url ?? '').trim();
+  if (!raw) return fallback;
+  if (isAllowedBookmarkUrl(raw)) return raw;
+  const prefixed = `https://${raw}`;
+  return isAllowedBookmarkUrl(prefixed) && !/\s/.test(raw) ? prefixed : fallback;
+}
+
+// Chromium's own usable range, and the same clamp the Ctrl+/Ctrl- shortcut
+// has always applied. The IPC zoom handlers didn't clamp at all, so a zoom
+// menu value (or any other caller) could hand setZoomFactor() a 0, a negative
+// or a NaN — none of which it handles gracefully, and all of which persist.
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 5;
+function clampZoom(factor, fallback = 1) {
+  const n = Number(factor);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, n));
+}
+
 function adjustZoom(id, delta) {
   const account = getAccount(id);
   if (!account) return;
@@ -868,9 +941,10 @@ function adjustZoom(id, delta) {
 function setZoomDirect(id, factor) {
   const account = getAccount(id);
   if (!account) return;
-  account.zoom = factor;
+  const zoom = clampZoom(factor, account.zoom || 1);
+  account.zoom = zoom;
   const view = views.get(id);
-  if (view) view.setZoomFactor(factor);
+  if (view) view.setZoomFactor(zoom);
   persist();
   broadcastGeometryOnly();
   broadcastState();
@@ -995,7 +1069,11 @@ function handleAccountShortcut(input, account) {
     return true;
   }
   if (key === 'f11') {
-    mainWindow.setFullScreen(!mainWindow.isFullScreen());
+    // mainWindowAlive(), not a bare call: this handler runs off a webview's
+    // before-input-event, which can still fire while the window is being torn
+    // down — and a destroyed BrowserWindow is a truthy object whose methods
+    // throw (see mainWindowAlive's own comment for the crash that taught us).
+    if (mainWindowAlive()) mainWindow.setFullScreen(!mainWindow.isFullScreen());
     return true;
   }
   // Some games call preventDefault() on their own contextmenu event to
@@ -1048,7 +1126,11 @@ function handleAccountShortcut(input, account) {
     return true;
   }
   if (ctrl && !shift && !alt && key === 'd') {
-    if (account.url && account.url !== 'about:blank') {
+    // isAllowedBookmarkUrl (not just !== 'about:blank') so this third path
+    // into data.bookmarks applies the same http/https-only rule as the IPC
+    // handler and the importer. Also skips duplicates: this fires on every
+    // Ctrl+D, and it used to append another identical entry each time.
+    if (isAllowedBookmarkUrl(account.url) && !data.bookmarks.some((b) => b.url === account.url)) {
       data.bookmarks.push({ id: crypto.randomUUID(), title: displayName(account), url: account.url });
       persist();
       broadcastState();
@@ -1056,10 +1138,7 @@ function handleAccountShortcut(input, account) {
     return true;
   }
   if (ctrl && shift && !alt && key === 'delete') {
-    const ses = view ? view.session : session.fromPartition(accountPartition(account.id));
-    ses.clearStorageData()
-      .then(() => ses.clearCache())
-      .then(() => view?.reload());
+    clearAccountSessionData(account.id).catch((err) => console.error('[session] Ctrl+Shift+Supr clear failed for', account.id, err));
     return true;
   }
   return false;
@@ -1371,7 +1450,9 @@ function wireAccountWebContents(wc, account, hostWebContents) {
     if (handleAccountShortcut(input, account)) event.preventDefault();
   });
   wc.on('found-in-page', (_e, result) => {
-    if (mainWindow) {
+    // `if (mainWindow)` is exactly the check mainWindowAlive() exists to
+    // replace — a destroyed window is still truthy.
+    if (mainWindowAlive()) {
       mainWindow.webContents.send('findbar:result', {
         id: account.id,
         matches: result.matches,
@@ -1729,7 +1810,7 @@ function sendGameSocketFrameScript(frame) {
 
 async function translateSelectionAt(id, x, y) {
   const wc = views.get(id);
-  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  if (!wc || wc.isDestroyed()) return { ok: false, error: mt(data.settings.language || 'es', 'err.accountNotOpen') };
   // Shown immediately (before extraction even runs) so the user gets
   // feedback the instant they click "Traducir este texto" instead of
   // wondering whether anything happened — confirmed live this genuinely
@@ -2136,6 +2217,42 @@ function createWindow() {
     }
   });
 
+  const shellUrl = require('url').pathToFileURL(path.join(__dirname, '..', 'src', 'index.html')).href;
+
+  // This window is the privileged one: preload.js exposes window.api with
+  // ~100 IPC channels on it, including the only channel that returns real
+  // password values. Nothing may ever navigate it away from index.html.
+  //
+  // The realistic way that happened without this guard is boring and easy to
+  // hit by accident: dropping a link or a file anywhere on the chrome that
+  // isn't one of the two elements with their own dragover handler (the
+  // account list and the space rail) makes Chromium navigate the whole
+  // window to it — arbitrary content, in the document that owns window.api.
+  // Guest pages are unaffected: each account is a <webview>, a separate
+  // webContents with its own navigation, not this one.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (url === shellUrl) return;
+    event.preventDefault();
+    console.warn('[shell] blocked a navigation away from the app UI:', url);
+  });
+  // DO NOT add a setWindowOpenHandler here. It looks like the obvious
+  // companion to the guard above — the shell has no legitimate window.open()
+  // caller, and anything it opened would inherit this window's privileges —
+  // but confirmed live against the e2e suite: attaching a <webview> guest
+  // goes through the HOST webContents' window-open path, so a handler that
+  // returns 'deny' silently stops every account panel from ever attaching.
+  // The symptom is not an error anywhere: `views` just stays empty,
+  // ensureView() returns undefined, and every account:navigate answers "la
+  // vista de esta cuenta todavía no está lista" while the UI otherwise looks
+  // completely normal.
+  //
+  // The real risk here — arbitrary content loaded into the one document that
+  // owns window.api — is already covered by the will-navigate guard above
+  // plus the document-level drag/drop guard at the top of renderer.js.
+  // (The matching document-level drag/drop guard — what stops a dropped file
+  // from becoming a navigation request in the first place — lives at the top
+  // of src/renderer.js, where it belongs as renderer code.)
+
   mainWindow.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
   mainWindow.once('ready-to-show', () => {
     if (!mainWindowAlive()) return;
@@ -2266,7 +2383,7 @@ ipcMain.handle('accounts:quickAdd', () => {
 
 ipcMain.handle('account:navigate', (_e, { id, url }) => {
   const account = getAccount(id);
-  if (!account) return { ok: false, error: 'Cuenta no encontrada.' };
+  if (!account) return { ok: false, error: mt(data.settings.language || 'es', 'err.accountNotFound') };
   const target = normalizeAddressInput(url);
   // account.url (and the state broadcast the renderer polls) used to be set
   // BEFORE confirming the real <webview> was even wired up yet — if
@@ -2274,7 +2391,7 @@ ipcMain.handle('account:navigate', (_e, { id, url }) => {
   // navigation happened while the actual page never moved. Now the state
   // only advances once there's a real webContents to call loadURL on.
   const wc = ensureView(account);
-  if (!wc) return { ok: false, error: 'La vista de esta cuenta todavía no está lista.' };
+  if (!wc) return { ok: false, error: mt(data.settings.language || 'es', 'err.viewNotReady') };
   account.url = target;
   if (account.chatAutoTranslate === undefined) account.chatAutoTranslate = defaultChatAutoTranslate(target);
   persist();
@@ -2310,6 +2427,7 @@ function removeAccountCompletely(id) {
   ses.clearStorageData().then(() => ses.clearCache()).catch((err) => console.error('[remove-account] failed to clear session for', id, err));
   adblockManager.cleanupAccount(id);
   crashCounts.delete(id);
+  proxySecrets.delete(id);
   connectionManagers.delete(id);
   gameTelemetry.removeState(id);
   notifiedEventAt.delete(id);
@@ -2338,18 +2456,42 @@ ipcMain.handle('accounts:remove', (_e, { id }) => {
 // Shared by accounts:duplicate and the account context-menu's "Duplicar
 // cuenta" item — used to be copy-pasted in both, same pattern already fixed
 // once this session for chatAutoTranslate's toggle (see its comment above).
+// Everything about an account EXCEPT the handful of fields that must be
+// unique to the copy. Listing what to keep (the old approach) meant every
+// per-account setting added since — proxy, ecoMode, hideChat, hideGameBar,
+// sellLockOn and its two id lists, cleanUpProfile, zoom, chatAutoTranslate,
+// groupId, the layout fracs — was silently dropped, so "duplicar" produced a
+// bare account with the same name and URL and nothing else. Listing what to
+// REPLACE instead means a field added tomorrow is carried over by default,
+// which is what a user means by "duplicate".
+//
+// The session is deliberately NOT shared: the copy gets a new id, so it gets
+// its own persist:account-<id> partition and its own login, which is the whole
+// point of duplicating an account in this app.
+function copyOfAccount(source, overrides) {
+  const copy = { ...source, ...overrides };
+  // Runtime-only bookkeeping that must never be inherited.
+  delete copy.freeRect;
+  // The proxy password lives in proxySecrets, not on the account object, so a
+  // plain spread would have left the copy pointing at a proxy it cannot
+  // authenticate against.
+  if (copy.proxy && copy.id !== source.id) {
+    const secret = getProxyPassword(source.id);
+    if (secret) proxySecrets.set(copy.id, secret);
+  }
+  return copy;
+}
+
 function duplicateAccount(id) {
   const source = getAccount(id);
   if (!source) return;
-  const copy = {
+  const copy = copyOfAccount(source, {
     id: crypto.randomUUID(),
     name: `${displayName(source)} ${mt(data.settings.language || 'es', 'ctx.copySuffix')}`,
-    url: source.url,
-    spaceId: source.spaceId,
-    color: source.color,
     muted: false,
+    closed: false,
     openedAt: Date.now()
-  };
+  });
   const index = data.accounts.findIndex((a) => a.id === id);
   data.accounts.splice(index + 1, 0, copy);
   persist();
@@ -2365,11 +2507,7 @@ ipcMain.handle('accounts:duplicate', (_e, { id }) => {
 ipcMain.handle('account:clearSession', async (_e, { id }) => {
   const account = getAccount(id);
   if (!account) return;
-  const wc = views.get(id);
-  const ses = wc ? wc.session : session.fromPartition(accountPartition(id));
-  await ses.clearStorageData();
-  await ses.clearCache();
-  if (wc) wc.reload();
+  await clearAccountSessionData(id);
 });
 
 function getGroup(id) {
@@ -2543,12 +2681,8 @@ ipcMain.on('accounts:contextmenu', (_e, payload) => {
     { type: 'separator' },
     {
       label: mt(lang, 'ctx.clearSessionData'),
-      click: async () => {
-        const wc = views.get(id);
-        const ses = wc ? wc.session : session.fromPartition(accountPartition(id));
-        await ses.clearStorageData();
-        await ses.clearCache();
-        if (wc) wc.reload();
+      click: () => {
+        clearAccountSessionData(id).catch((err) => console.error('[session] clear failed for', id, err));
       }
     },
     {
@@ -2570,7 +2704,19 @@ ipcMain.handle('accounts:update', (_e, { id, name, color, url, proxy, ecoMode, h
     views.get(id)?.loadURL(target);
   }
   if (proxy !== undefined) {
-    account.proxy = proxy && proxy.server ? proxy : null;
+    if (proxy && proxy.server) {
+      // The password is split off into proxySecrets and never stored on the
+      // account object — see proxySecrets. An empty/absent password field in
+      // an update means 'leave the stored one alone' (the editor sends back
+      // what it was shown, and it is never shown the real value), so it only
+      // overwrites when the user actually typed something.
+      const { password, ...proxyMeta } = proxy;
+      account.proxy = proxyMeta;
+      if (typeof password === 'string' && password) proxySecrets.set(id, password);
+    } else {
+      account.proxy = null;
+      proxySecrets.delete(id);
+    }
     const wc = views.get(id);
     if (wc) applyProxy(wc.session, account);
   }
@@ -2689,10 +2835,20 @@ function removeSpace(id) {
   // The first space is pinned — always keep one guaranteed home base to work in.
   if (data.spaces.length <= 1 || id === data.spaces[0].id) return;
   const fallback = data.spaces.find((s) => s.id !== id);
+  // Groups belong to exactly one space, so the removed space's groups have
+  // nowhere to go — drop them, and clear the groupId of the accounts moving
+  // to the fallback space so nothing is left pointing at a group that no
+  // longer exists. Without this, data.groups accumulated one dead entry per
+  // deleted space forever (the renderer degrades gracefully — it lists an
+  // account with an unknown groupId as ungrouped — so it grew invisibly).
+  // Same cleanup groups:remove already does for a single group.
+  const removedGroupIds = new Set(data.groups.filter((g) => g.spaceId === id).map((g) => g.id));
+  data.groups = data.groups.filter((g) => g.spaceId !== id);
   data.accounts
     .filter((a) => a.spaceId === id)
     .forEach((a) => {
       a.spaceId = fallback.id;
+      if (removedGroupIds.has(a.groupId)) a.groupId = null;
     });
   data.spaces = data.spaces.filter((s) => s.id !== id);
   if (data.settings.currentSpaceId === id) {
@@ -2719,21 +2875,33 @@ function duplicateSpace(id) {
   const index = data.spaces.findIndex((s) => s.id === id);
   data.spaces.splice(index + 1, 0, newSpace);
 
+  // The space's groups come along too, remapped to new ids — otherwise every
+  // account in the copy landed ungrouped even though the original was
+  // organised into groups.
+  const groupIdMap = new Map();
+  data.groups
+    .filter((g) => g.spaceId === id)
+    .forEach((g) => {
+      const newGroupId = crypto.randomUUID();
+      groupIdMap.set(g.id, newGroupId);
+      data.groups.push({ ...g, id: newGroupId, spaceId: newSpace.id });
+    });
+
   // Duplicating a space also duplicates its accounts, each as a fresh isolated
   // session (new id/partition) so cookies/cache don't leak between the copies.
+  // Full copy (see copyOfAccount) rather than a hand-listed subset — the old
+  // version silently dropped every per-account setting except name/url/color.
   data.accounts
     .filter((a) => a.spaceId === id)
     .forEach((a) => {
-      data.accounts.push({
+      data.accounts.push(copyOfAccount(a, {
         id: crypto.randomUUID(),
-        name: a.name,
-        url: a.url,
         spaceId: newSpace.id,
-        color: a.color,
+        groupId: groupIdMap.get(a.groupId) || null,
         muted: false,
         closed: a.closed,
         openedAt: a.closed ? undefined : Date.now()
-      });
+      }));
     });
 
   persist();
@@ -2994,6 +3162,7 @@ ipcMain.handle('layout:setSplit', (_e, { ids, fracs, field }) => {
 });
 
 ipcMain.handle('layout:set', (_e, { mode }) => {
+  if (!LAYOUT_MODES.has(mode)) return data;
   data.settings.layoutMode = mode;
   persist();
   renderLayout();
@@ -3045,7 +3214,7 @@ function writeScreenshotFile(buffer) {
 // instead opens the editor below for the region-select + annotate flow.
 ipcMain.handle('account:captureScreenshot', async (_e, { id }) => {
   const wc = views.get(id);
-  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  if (!wc || wc.isDestroyed()) return { ok: false, error: mt(data.settings.language || 'es', 'err.accountNotOpen') };
   try {
     const image = await wc.capturePage();
     const filePath = writeScreenshotFile(image.toPNG());
@@ -3065,7 +3234,7 @@ ipcMain.handle('account:captureScreenshot', async (_e, { id }) => {
 let activeScreenshotEditorWindow = null;
 ipcMain.handle('account:openScreenshotEditor', async (_e, { id }) => {
   const wc = views.get(id);
-  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  if (!wc || wc.isDestroyed()) return { ok: false, error: mt(data.settings.language || 'es', 'err.accountNotOpen') };
   try {
     const image = await wc.capturePage();
     const dataUrl = 'data:image/png;base64,' + image.toPNG().toString('base64');
@@ -3134,7 +3303,7 @@ ipcMain.handle('screenshot-editor:cancel', () => {
 // direct process logs.
 ipcMain.handle('account:openMiniPlayer', (_e, { id }) => {
   const wc = views.get(id);
-  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  if (!wc || wc.isDestroyed()) return { ok: false, error: mt(data.settings.language || 'es', 'err.accountNotOpen') };
   return wc.executeJavaScript(pipPlayer.requestPipWithControlsScript(), true)
     .catch((err) => ({ ok: false, error: String((err && err.message) || err) }));
 });
@@ -3188,7 +3357,12 @@ ipcMain.handle('spaces:add', (_e, payload = {}) => {
     id: crypto.randomUUID(),
     name: payload.name || mt(data.settings.language || 'es', 'main.defaultSpaceNameGeneric'),
     color: payload.color || '#4f8cff',
-    icon: payload.icon || '🔲',
+    // A key from SPACE_ICON_KEYS, not an emoji — the renderer resolves it via
+    // SPACE_ICON_SVGS[space.icon], so the old '🔲' default never matched and
+    // always fell through to the 'grid' fallback anyway (a leftover from when
+    // icons really were emoji). createRandomSpace() already picks from the
+    // key list; this makes the two creation paths agree.
+    icon: SPACE_ICON_KEYS.includes(payload.icon) ? payload.icon : 'grid',
     defaultUrl: payload.defaultUrl || data.settings.defaultStartUrl || 'https://www.google.com',
     defaultLayout: payload.defaultLayout || data.settings.newSpaceDefaultLayout || 'single'
   };
@@ -3266,15 +3440,15 @@ ipcMain.handle('sidebar:toggle', () => {
   return data;
 });
 
-// No-ops now — these used to strip every native WebContentsView out from
-// under a modal dialog and re-add them after, because a native view always
-// painted above the renderer's own DOM no matter its z-index. <webview>
-// elements are real DOM, so a modal with a higher z-index (see style.css)
-// already covers them for free; every call site (there are many, across
-// modals/dropdowns/drag operations in renderer.js) is left as-is since
-// calling a no-op is harmless and touching every one of them isn't worth it.
-ipcMain.on('ui:hide-views', () => {});
-ipcMain.on('ui:show-views', () => {});
+// The ui:hide-views / ui:show-views channels are gone. They used to strip
+// every native WebContentsView out from under a modal dialog and re-add them
+// after, because a native view always painted above the renderer's own DOM no
+// matter its z-index. Since accounts became real <webview> DOM elements, a
+// modal with a higher z-index covers them for free, and the real work moved
+// into preload.js's hideViews/showViews, which toggle a CSS class locally.
+// The handlers here were left as empty functions, so every modal open/close
+// and every divider drag still sent two IPC messages to nothing — the sends
+// are gone from preload.js too.
 
 // Live-follows a divider drag: reflects just the one panel's rect straight
 // back to the renderer immediately, without touching account data or
@@ -3302,9 +3476,10 @@ extensionsManager.registerIpcHandlers();
 ipcMain.handle('account:setZoom', (_e, { id, factor }) => {
   const account = getAccount(id);
   if (!account) return data;
-  account.zoom = factor;
+  const zoom = clampZoom(factor, account.zoom || 1);
+  account.zoom = zoom;
   const view = views.get(id);
-  if (view) view.setZoomFactor(factor);
+  if (view) view.setZoomFactor(zoom);
   persist();
   broadcastGeometryOnly();
   broadcastState();
@@ -3312,10 +3487,11 @@ ipcMain.handle('account:setZoom', (_e, { id, factor }) => {
 });
 
 ipcMain.handle('accounts:setZoomAll', (_e, { factor }) => {
+  const zoom = clampZoom(factor);
   data.accounts.forEach((a) => {
-    a.zoom = factor;
+    a.zoom = zoom;
   });
-  for (const view of views.values()) view.setZoomFactor(factor);
+  for (const view of views.values()) view.setZoomFactor(zoom);
   persist();
   broadcastGeometryOnly();
   broadcastState();
@@ -3323,6 +3499,7 @@ ipcMain.handle('accounts:setZoomAll', (_e, { factor }) => {
 });
 
 ipcMain.on('app:toggleFullscreen', () => {
+  if (!mainWindowAlive()) return;
   mainWindow.setFullScreen(!mainWindow.isFullScreen());
 });
 
@@ -3430,6 +3607,12 @@ ipcMain.handle('settings:update', (_e, fields) => {
       }
     }
     if (key === 'language' && !Object.prototype.hasOwnProperty.call(I18N, fields[key])) continue;
+    // Both of these end up somewhere that actually acts on them — a loadURL()
+    // for the start page, a setZoomFactor() for the zoom — so they get the
+    // same normalization their per-account equivalents already had.
+    if (key === 'defaultStartUrl') fields[key] = safeStartUrl(fields[key], DEFAULT_START_URL);
+    if (key === 'defaultZoom') fields[key] = clampZoom(fields[key]);
+    if (key === 'newSpaceDefaultLayout' && !LAYOUT_MODES.has(fields[key])) continue;
     data.settings[key] = fields[key];
   }
   if (fields.pokeIdleAlerts && typeof fields.pokeIdleAlerts.ballsThreshold === 'number') {
@@ -3543,7 +3726,20 @@ ipcMain.handle('settings:importSpaces', async () => {
     (parsed.spaces || []).forEach((s) => {
       const newId = crypto.randomUUID();
       idMap.set(s.id, newId);
-      data.spaces.push({ ...s, id: newId });
+      // Field-by-field, not `{ ...s }`: this object comes from a file the user
+      // was handed by someone else, and a spread copied every key in it
+      // verbatim — including defaultUrl, which later gets loadURL()'d by the
+      // "Ir a la URL por defecto" menu item and by every account created in
+      // that space. The account URLs below were already sanitized; the space's
+      // own URL was the one that wasn't. Same whitelist spaces:update uses.
+      data.spaces.push({
+        id: newId,
+        name: typeof s.name === 'string' ? s.name : mt(data.settings.language || 'es', 'main.defaultSpaceNameGeneric'),
+        color: typeof s.color === 'string' ? s.color : '#4f8cff',
+        icon: SPACE_ICON_KEYS.includes(s.icon) ? s.icon : 'grid',
+        defaultUrl: safeStartUrl(s.defaultUrl),
+        defaultLayout: LAYOUT_MODES.has(s.defaultLayout) ? s.defaultLayout : 'single'
+      });
     });
     (parsed.accounts || []).forEach((a) => {
       const rawUrl = String(a.url || '').trim();
@@ -3578,48 +3774,12 @@ function decodeHtmlEntities(s) {
     .replace(/&#39;/g, "'");
 }
 
-function parseCsv(text) {
-  const rows = [];
-  let row = [];
-  let field = '';
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (inQuotes) {
-      if (c === '"') {
-        if (text[i + 1] === '"') {
-          field += '"';
-          i++;
-        } else {
-          inQuotes = false;
-        }
-      } else {
-        field += c;
-      }
-    } else if (c === '"') {
-      inQuotes = true;
-    } else if (c === ',') {
-      row.push(field);
-      field = '';
-    } else if (c === '\n' || c === '\r') {
-      if (c === '\r' && text[i + 1] === '\n') i++;
-      row.push(field);
-      field = '';
-      if (row.length > 1 || row[0] !== '') rows.push(row);
-      row = [];
-    } else {
-      field += c;
-    }
-  }
-  if (field !== '' || row.length) {
-    row.push(field);
-    rows.push(row);
-  }
-  return rows;
-}
 
 ipcMain.handle('bookmarks:add', (_e, { title, url }) => {
-  if (!url) return data;
+  // Same scheme check bookmarks:import already applies — two paths writing to
+  // the same list had two different rules, so file://, javascript: and data:
+  // were rejected on import but accepted here (and from the Ctrl+D shortcut).
+  if (!isAllowedBookmarkUrl(url)) return data;
   data.bookmarks.push({ id: crypto.randomUUID(), title: title || url, url });
   persist();
   broadcastState();
@@ -3718,7 +3878,7 @@ ipcMain.handle('passwords:import', async () => {
       password: header.indexOf('password')
     };
     if (idx.url === -1 || idx.password === -1) {
-      return { ok: false, error: 'El CSV no tiene el formato esperado (columnas url, username, password).' };
+      return { ok: false, error: mt(data.settings.language || 'es', 'err.csvFormat') };
     }
     let added = 0;
     for (let i = 1; i < rows.length; i++) {
@@ -3759,8 +3919,15 @@ ipcMain.handle('autofill:query', (e, origin) => {
   if (!host) return [];
   // Verify that the real sender frame URL matches the claimed origin so a
   // compromised renderer can't request credentials for a different domain.
+  // Fails CLOSED: e.senderFrame is null whenever the frame has already been
+  // disposed (it navigated away, or was destroyed, while this invoke was in
+  // flight — a documented and genuinely reachable Electron state), and an
+  // unparseable frame URL (about:blank, data:, blob:) also yields null here.
+  // The previous `senderHost && ...` form skipped the check entirely in all of
+  // those cases, which meant the caller got credentials for whatever origin it
+  // simply claimed. There is no legitimate caller that can't prove its origin.
   const senderHost = hostnameOf(e.senderFrame?.url || '');
-  if (senderHost && senderHost !== host) return [];
+  if (!senderHost || senderHost !== host) return [];
   return data.passwords
     .filter((p) => hostnameOf(p.url) === host)
     .map((p) => ({ username: p.username, password: passwordSecrets.get(p.id) || '', name: p.name, url: p.url }));
@@ -3774,8 +3941,22 @@ ipcMain.handle('passwords:list', (e) => {
   // all passwords. Account webviews use account-preload.js which does not
   // expose this channel, but a belt-and-suspenders sender check ensures
   // that even if that changes, credential data never leaks to a webview.
-  if (mainWindow && e.sender !== mainWindow.webContents) return [];
+  // Fails CLOSED: the old `mainWindow && ...` form let EVERY sender through
+  // whenever mainWindow was null or already destroyed (before createWindow,
+  // during shutdown, or while a popped-out account window outlives it), which
+  // is the opposite of what a belt-and-suspenders check is for. No main window
+  // means there is no legitimate caller for this channel at all.
+  if (!mainWindowAlive() || e.sender !== mainWindow.webContents) return [];
   return data.passwords.map((p) => ({ ...p, password: passwordSecrets.get(p.id) || '' }));
+});
+
+// The proxy password for one account, for the account editor to prefill its
+// field with. Same main-window-only sender check as passwords:list above, and
+// for the same reason: this is the only channel that hands the real value
+// back, and it is deliberately not part of the state broadcast.
+ipcMain.handle('proxy:getPassword', (e, { id }) => {
+  if (!mainWindowAlive() || e.sender !== mainWindow.webContents) return '';
+  return getProxyPassword(id);
 });
 
 ipcMain.handle('passwords:add', (_e, { name, url, username, password }) => {
@@ -3905,9 +4086,15 @@ function scrapeGameWalletScript() {
         if (nearbyNumbers[0]) pushDiamond(nearbyNumbers[0].amount, nearbyNumbers[0].item, 'diamond-store-label-near-number');
       }
     }
-    const shopTitle = Array.from(document.querySelectorAll('body *'))
-      .filter(visible)
-      .map((el) => ({ el, text: textOf(el), rect: el.getBoundingClientRect() }))
+    // Reuses \`candidates\` (built once at the top) instead of walking
+    // document.querySelectorAll('body *') a second time and re-running
+    // visible()/textOf() over every element again. Both of those force
+    // synchronous layout per element (getBoundingClientRect, getComputedStyle,
+    // innerText), so the duplicate pass was doubling the single most expensive
+    // thing this script does — on the same thread the game renders its canvas,
+    // for every open account, on every poll. Identical result: the filter
+    // below only ever looked at the same {el, text, rect} shape.
+    const shopTitle = candidates
       .filter((item) => /mark'?s shop/i.test(item.text))
       .sort((a, b) => a.text.length - b.text.length)[0];
     const shopScope = shopTitle ? closestPanel(shopTitle.el) : null;
@@ -3957,7 +4144,33 @@ function scrapeGameWalletScript() {
   })();`;
 }
 
+// The wallet scrape walks every element in the game's DOM and reads layout
+// (getBoundingClientRect/getComputedStyle/innerText) for each one, so it is by
+// far the most expensive thing this file asks a game renderer to do. Two
+// things bound that cost, both of which were missing:
+//
+//  1. huntTelemetryEnabled. Turning that off already stops the WebSocket frame
+//     poll (attachGameCaptureFor bails immediately), and the Configuración
+//     hint promises it trades panel data for "one less thing competing with
+//     the game's own canvas render thread". This scrape ignored the setting
+//     entirely, so the cheap half was being switched off while the expensive
+//     half kept running every 5s.
+//  2. Its own cadence. It used to run on every gameStats:get, i.e. the
+//     renderer's 5s stats poll — but gold and diamonds are a balance the user
+//     glances at, not a rate that needs 5s freshness. WALLET_SCRAPE_MIN_GAP_MS
+//     decouples the two: stats keep their 5s tick, the DOM walk happens at
+//     most once a minute. The explicit post-navigation scrapes elsewhere in
+//     this file (did-navigate-in-page / did-finish-load) are unaffected —
+//     they call updateWallet directly and are what makes a fresh login show a
+//     balance immediately.
+const WALLET_SCRAPE_MIN_GAP_MS = 60 * 1000;
+let lastWalletScrapeAt = 0;
+
 async function refreshGameWalletSnapshots() {
+  if (data.settings.huntTelemetryEnabled === false) return;
+  const now = Date.now();
+  if (now - lastWalletScrapeAt < WALLET_SCRAPE_MIN_GAP_MS) return;
+  lastWalletScrapeAt = now;
   const tasks = [];
   for (const account of data.accounts) {
     if (account.closed) continue;
@@ -3972,7 +4185,7 @@ async function refreshGameWalletSnapshots() {
 
 async function pulseGameRealtimeConnection(wc) {
   const report = { ok: false, pulsed: false };
-  if (!wc || wc.isDestroyed()) return { ...report, error: 'webContents no disponible' };
+  if (!wc || wc.isDestroyed()) return { ...report, error: mt(data.settings.language || 'es', 'err.webContentsUnavailable') };
   try {
     // Used to force a real offline/online pulse via CDP Network conditions
     // to make the game's WS reconnect. Dropped: that's a genuine navigator
@@ -3999,8 +4212,16 @@ async function pulseGameRealtimeConnection(wc) {
 
 ipcMain.handle('gameStats:get', async () => {
   await refreshGameWalletSnapshots();
-  return gameTelemetry.getAllStats();
+  // Scoped to accounts that are actually open — this handler runs on the
+  // renderer's 5s poll, and game-telemetry keeps state for every account that
+  // ever attached this session, so unscoped it recomputed and serialized full
+  // stats for closed accounts too, forever.
+  return gameTelemetry.getAllStats(data.accounts.filter((a) => !a.closed).map((a) => a.id));
 });
+
+// On-demand full collection for one account (see getCollection's comment in
+// game-telemetry.js) — deliberately not part of the 5s gameStats payload.
+ipcMain.handle('gameStats:getCollection', (_e, { id }) => gameTelemetry.getCollection(id));
 
 // For the Tier List / Comparador / Caza & XP tools — works even if the user
 // opens them before any account has attached to the game (triggers the same
@@ -4027,9 +4248,9 @@ ipcMain.handle('pokeFormulas:getItemCatalog', async () => {
 // normal { ok: false } result with a clear message instead.
 function requireGameWebContents(id) {
   const wc = views.get(id);
-  if (!wc || wc.isDestroyed()) return { error: 'La cuenta no está abierta' };
+  if (!wc || wc.isDestroyed()) return { error: mt(data.settings.language || 'es', 'err.accountNotOpen') };
   if (!gameTelemetry.isGameUrl(wc.getURL())) {
-    return { error: 'Esta cuenta no está en el juego ahora mismo — abrí Poke Idle World en esa pestaña primero.' };
+    return { error: mt(data.settings.language || 'es', 'err.notInGame') };
   }
   return { wc };
 }
@@ -4048,9 +4269,9 @@ ipcMain.handle('pokes:get', async (_e, { id }) => {
   try {
     const waitPromise = gameTelemetry.waitForNextPokes(id);
     const sent = await wc.executeJavaScript(sendGameSocketFrameScript({ type: 'pokes-get' }));
-    if (!sent) return { ok: false, error: 'No se pudo pedir los datos (socket del juego no disponible).' };
+    if (!sent) return { ok: false, error: mt(data.settings.language || 'es', 'err.socketUnavailable') };
     const confirmed = await waitPromise;
-    if (!confirmed) return { ok: false, error: 'El servidor no respondió a tiempo. Intenta de nuevo.' };
+    if (!confirmed) return { ok: false, error: mt(data.settings.language || 'es', 'err.serverTimeout') };
     return { ok: true };
   } catch (e) {
     return { ok: false, error: String((e && e.message) || e) };
@@ -4101,7 +4322,7 @@ let lastOptimizeAt = Date.now();
 let optimizeRunning = false;
 
 function broadcastOptimizeStatus() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!mainWindowAlive()) return;
   mainWindow.webContents.send('memory:optimizeStatus', {
     lastOptimizeAt,
     running: optimizeRunning,
@@ -4109,18 +4330,29 @@ function broadcastOptimizeStatus() {
   });
 }
 
-// Safe tier — gated per-account by memory-optimizer.js's shouldSkipOptimize:
-// skips accounts under the configured cache-growth threshold, mid-purchase,
-// mid-page-load, or currently RECOVERING (connection-manager state), instead
-// of the old behavior of always clearing every session's cache regardless
-// of whether there was anything worth clearing or whether now was a safe
-// moment to do it.
-async function optimizeMemorySafe() {
+// One implementation, two tiers. These were two ~60-line functions whose only
+// real difference was whether the per-account growth threshold applies —
+// everything else (the dedup-by-storagePath loop, the cache clear, the main
+// session clear, the inactive-renderer GC pass) was duplicated verbatim,
+// including the GC loop appearing twice. This file already documents, in
+// several places, that copy-pasting a block like this is what shipped a real
+// bug before; the optimizer was the last remaining instance.
+//
+//  - 'safe' (the 24h/pressure auto-loop and the toolbar button) skips accounts
+//    under the configured cache-growth threshold, mid-purchase, mid-page-load
+//    or currently RECOVERING, via memory-optimizer.js's shouldSkipOptimize.
+//  - 'deep' (manual only) clears every session regardless of size. That is the
+//    ONLY difference — "deep clean" means "don't size-gate", not "touch more".
+//
+// Both tiers obey the same hard rule: cookies, localStorage, IndexedDB and
+// anything else that keeps an account logged in are never touched.
+async function optimizeMemory({ gated }) {
   if (optimizeRunning) return { ok: false, reason: 'already running' };
   optimizeRunning = true;
   broadcastOptimizeStatus();
   const thresholdMb = (data.settings.stability && data.settings.stability.memoryGrowthThresholdMb) || memoryOptimizer.DEFAULT_MEMORY_GROWTH_THRESHOLD_MB;
   const result = { sessionsCleaned: 0, sessionsSkipped: 0, viewsPurged: 0, cacheCleared: 0 };
+  const label = gated ? 'optimize' : 'optimize/deep';
   try {
     const clearedSessions = new Set();
     for (const account of data.accounts) {
@@ -4129,23 +4361,25 @@ async function optimizeMemorySafe() {
       const key = ses.storagePath || account.id;
       if (clearedSessions.has(key)) continue;
 
-      let cacheSizeMb = 0;
-      try {
-        const bytes = await ses.getCacheSize();
-        cacheSizeMb = bytes / (1024 * 1024);
-      } catch { /* getCacheSize unsupported/unavailable — treat as 0, safe-side skip below */ }
+      if (gated) {
+        let cacheSizeMb = 0;
+        try {
+          const bytes = await ses.getCacheSize();
+          cacheSizeMb = bytes / (1024 * 1024);
+        } catch { /* getCacheSize unsupported/unavailable — treat as 0, safe-side skip below */ }
 
-      const accountState = connectionManagers.has(account.id) ? connectionManagers.get(account.id).getState().state : null;
-      const { skip, reason } = memoryOptimizer.shouldSkipOptimize({
-        cacheSizeMb,
-        thresholdMb,
-        accountState,
-        isLoading: !!(wc && !wc.isDestroyed() && typeof wc.isLoadingMainFrame === 'function' && wc.isLoadingMainFrame())
-      });
-      if (skip) {
-        result.sessionsSkipped++;
-        console.log('[optimize] skipping', account.id, '—', reason);
-        continue;
+        const accountState = connectionManagers.has(account.id) ? connectionManagers.get(account.id).getState().state : null;
+        const { skip, reason } = memoryOptimizer.shouldSkipOptimize({
+          cacheSizeMb,
+          thresholdMb,
+          accountState,
+          isLoading: !!(wc && !wc.isDestroyed() && typeof wc.isLoadingMainFrame === 'function' && wc.isLoadingMainFrame())
+        });
+        if (skip) {
+          result.sessionsSkipped++;
+          console.log(`[${label}] skipping`, account.id, '—', reason);
+          continue;
+        }
       }
 
       clearedSessions.add(key);
@@ -4161,7 +4395,7 @@ async function optimizeMemorySafe() {
         // always honest — but a session that fails every time reported
         // nothing at all, and the 24h auto-loop just kept retrying it
         // forever with no way to find out why.
-        console.warn('[optimize] failed to clear the cache for', account.id, err);
+        console.warn(`[${label}] failed to clear the cache for`, account.id, err);
       }
     }
     // Also clear the main window's session.
@@ -4169,27 +4403,25 @@ async function optimizeMemorySafe() {
       await session.defaultSession.clearCache();
       result.cacheCleared++;
     } catch (err) {
-      console.warn('[optimize] failed to clear the main session cache', err);
+      console.warn(`[${label}] failed to clear the main session cache`, err);
     }
 
     // 2. For INACTIVE account renderers: ask the renderer to GC its own JS
     //    heap. The active account is left untouched so farming isn't broken.
+    //    Works only if the page exposes gc() — best-effort, no CDP involved
+    //    (game accounts no longer attach the CDP debugger at all since the
+    //    telemetry capture migrated to a passive JS patch). Renderers never
+    //    get --js-flags=--expose-gc, so window.gc is realistically always
+    //    undefined right now — only counting a REAL purge (instead of
+    //    unconditionally incrementing) keeps viewsPurged from silently
+    //    claiming JS-heap purges that never happened.
     const activeId = data.settings.activeAccountId;
     for (const [accountId, wc] of views.entries()) {
       if (accountId === activeId || wc.isDestroyed()) continue;
-      try {
-        // Works if the game exposes gc() — best-effort, no CDP involved
-        // (game accounts no longer attach the CDP debugger at all since the
-        // telemetry capture migrated to a passive JS patch). Renderers never
-        // get --js-flags=--expose-gc, so window.gc is realistically always
-        // undefined right now — only counting a REAL purge (instead of
-        // unconditionally incrementing) keeps viewsPurged from silently
-        // claiming JS-heap purges that never happened.
-        const purged = await wc.executeJavaScript(
-          '(() => { try { if (typeof window.gc === "function") { window.gc(); return true; } return false; } catch (e) { return false; } })()'
-        ).catch(() => false);
-        if (purged) result.viewsPurged++;
-      } catch {}
+      const purged = await wc.executeJavaScript(
+        '(() => { try { if (typeof window.gc === "function") { window.gc(); return true; } return false; } catch (e) { return false; } })()'
+      ).catch(() => false);
+      if (purged) result.viewsPurged++;
     }
 
     lastOptimizeAt = Date.now();
@@ -4200,57 +4432,8 @@ async function optimizeMemorySafe() {
   return { ok: true, ...result };
 }
 
-// Deep-clean tier — manual only (never called from the auto-optimize loop),
-// more aggressive but still bound by the same hard rule as the safe tier:
-// never touches cookies/IndexedDB/localStorage/sessions. The only extra
-// thing this does beyond the safe tier is skip the per-account
-// growth-threshold gate — every session gets cleared regardless of size —
-// which is exactly what "deep clean" should mean versus a size-gated
-// routine sweep.
-async function optimizeMemoryDeepClean() {
-  if (optimizeRunning) return { ok: false, reason: 'already running' };
-  optimizeRunning = true;
-  broadcastOptimizeStatus();
-  const result = { sessionsCleaned: 0, viewsPurged: 0, cacheCleared: 0 };
-  try {
-    const clearedSessions = new Set();
-    for (const account of data.accounts) {
-      const wc = views.get(account.id);
-      const ses = wc && !wc.isDestroyed() ? wc.session : session.fromPartition(accountPartition(account.id));
-      const key = ses.storagePath || account.id;
-      if (clearedSessions.has(key)) continue;
-      clearedSessions.add(key);
-      try {
-        await ses.clearCache();
-        await ses.clearStorageData({ storages: ['cachestorage', 'serviceworkers'] });
-        result.sessionsCleaned++;
-      } catch (err) {
-        console.warn('[optimize] deep clean failed to clear the cache for', account.id, err);
-      }
-    }
-    try {
-      await session.defaultSession.clearCache();
-      result.cacheCleared++;
-    } catch (err) {
-      console.warn('[optimize] deep clean failed to clear the main session cache', err);
-    }
-    const activeId = data.settings.activeAccountId;
-    for (const [accountId, wc] of views.entries()) {
-      if (accountId === activeId || wc.isDestroyed()) continue;
-      try {
-        const purged = await wc.executeJavaScript(
-          '(() => { try { if (typeof window.gc === "function") { window.gc(); return true; } return false; } catch (e) { return false; } })()'
-        ).catch(() => false);
-        if (purged) result.viewsPurged++;
-      } catch {}
-    }
-    lastOptimizeAt = Date.now();
-  } finally {
-    optimizeRunning = false;
-    broadcastOptimizeStatus();
-  }
-  return { ok: true, ...result };
-}
+const optimizeMemorySafe = () => optimizeMemory({ gated: true });
+const optimizeMemoryDeepClean = () => optimizeMemory({ gated: false });
 
 // A blind 24h timer alone means an account genuinely growing fast (several
 // accounts open a long time) waits up to 24h before getting any relief, even
@@ -4345,7 +4528,7 @@ function getOrCreateConnectionManager(accountId) {
     manager = gameConnectionManager.createAccountConnectionManager(accountId, {
       getWc: () => views.get(accountId),
       onStateChange: (change) => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindowAlive()) {
           mainWindow.webContents.send('stability:update', change);
         }
       },
@@ -4465,7 +4648,7 @@ ipcMain.handle('stability:testNetwork', async (_e, { id }) => {
 
 ipcMain.handle('stability:manualReconnect', (_e, { id }) => {
   const wc = views.get(id);
-  if (!wc || wc.isDestroyed()) return { ok: false, error: 'cuenta no disponible' };
+  if (!wc || wc.isDestroyed()) return { ok: false, error: mt(data.settings.language || 'es', 'err.accountUnavailable') };
   // Manual override: bypasses the current backoff timer, but still respects
   // shouldStopRetrying's other conditions (closed/quitting/login-page).
   runRecoveryLevel({ accountId: id, level: 3, wc, reason: 'manual-reconnect' })
@@ -4674,7 +4857,7 @@ let activeNetLogSession = null; // { accountId, path } | null — one capture at
 
 ipcMain.handle('diagnostics:startNetLog', async (_e, { id }) => {
   const wc = views.get(id);
-  if (!wc || wc.isDestroyed()) return { ok: false, error: 'cuenta no disponible' };
+  if (!wc || wc.isDestroyed()) return { ok: false, error: mt(data.settings.language || 'es', 'err.accountUnavailable') };
   if (activeNetLogSession) return { ok: false, error: `ya hay una captura en curso (${activeNetLogSession.accountId})` };
   const logPath = path.join(app.getPath('userData'), `netlog-${id}-${Date.now()}.json`);
   const result = await networkHealth.startNetLogCapture(wc.session, { path: logPath, maxSizeMb: 20 });
@@ -4683,10 +4866,10 @@ ipcMain.handle('diagnostics:startNetLog', async (_e, { id }) => {
 });
 
 ipcMain.handle('diagnostics:stopNetLog', async () => {
-  if (!activeNetLogSession) return { ok: false, error: 'no hay una captura en curso' };
+  if (!activeNetLogSession) return { ok: false, error: mt(data.settings.language || 'es', 'err.noCaptureRunning') };
   const wc = views.get(activeNetLogSession.accountId);
   const ses = wc && !wc.isDestroyed() ? wc.session : null;
-  const result = ses ? await networkHealth.stopNetLogCapture(ses) : { ok: false, error: 'sesión ya no disponible' };
+  const result = ses ? await networkHealth.stopNetLogCapture(ses) : { ok: false, error: mt(data.settings.language || 'es', 'err.sessionGone') };
   activeNetLogSession = null;
   return result;
 });
@@ -4803,7 +4986,7 @@ const CHAT_HISTORY_MAX_USERS_PER_ACCOUNT = 500;
 // <webview>'s DOM to verify a fire-and-forget effect any other way.
 async function translateChatMessages(id) {
   const wc = views.get(id);
-  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  if (!wc || wc.isDestroyed()) return { ok: false, error: mt(data.settings.language || 'es', 'err.accountNotOpen') };
   // account.url (set optimistically by account:navigate, then reasserted by
   // notifyNav on the real did-navigate event) instead of wc.getURL(): the
   // latter only updates once Electron actually commits the new navigation,
@@ -4819,7 +5002,7 @@ async function translateChatMessages(id) {
   try {
     hostname = new URL((account && account.url) || wc.getURL()).hostname;
   } catch {
-    return { ok: false, error: 'URL inválida' };
+    return { ok: false, error: mt(data.settings.language || 'es', 'err.invalidUrl') };
   }
   const selectors = translate.chatSelectorsForHost(hostname);
   if (!selectors) return { ok: true, translated: 0, unsupported: true };
@@ -5055,7 +5238,7 @@ async function translateFragmentsMixed(fragments, to, pageLangFallback, batchOpt
 
 async function performTranslate(id, to) {
   const wc = views.get(id);
-  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  if (!wc || wc.isDestroyed()) return { ok: false, error: mt(data.settings.language || 'es', 'err.accountNotOpen') };
   // Read at the moment translation is actually about to run (not e.g. on
   // every account open/close) — cheap, and this is the only place that
   // ever needs an up-to-date count: see currentWorkerCount() in
@@ -5169,10 +5352,6 @@ async function performTranslate(id, to) {
         .finally(() => stopTranslateTempEco(id, wc));
     }
 
-    if (!data.settings.hasUsedTranslate) {
-      data.settings.hasUsedTranslate = true;
-      persist();
-    }
     translationEnabled.set(id, to);
     return { ok: true, translated: priorityTranslatedCount, from: dominantFrom || extracted.from, to };
   } catch (err) {
@@ -5199,7 +5378,7 @@ ipcMain.handle('translate:restore', async (_e, { id }) => {
   translateWatching.delete(id);
   translationEnabled.delete(id);
   const wc = views.get(id);
-  if (!wc || wc.isDestroyed()) return { ok: false, error: 'La cuenta no está abierta' };
+  if (!wc || wc.isDestroyed()) return { ok: false, error: mt(data.settings.language || 'es', 'err.accountNotOpen') };
   try {
     await wc.executeJavaScript(translate.restorePageTextScript());
     return { ok: true };
@@ -5325,6 +5504,18 @@ ipcMain.handle('update:getStatus', () => updateStatus);
 // "account-<id>" whose <id> isn't in the CURRENT data.accounts list, never
 // touches anything else under userData.
 function cleanupOrphanedPartitions() {
+  // HARD PRECONDITION: `data` must be the real, successfully-parsed save file.
+  // store.load() returns DEFAULT_DATA (accounts: []) when data.json exists but
+  // can't be parsed — and with an empty accounts array EVERY partition folder
+  // below looks orphaned, so this function would delete the cookies/localStorage/
+  // login of every account the user has, permanently, on the very launch where
+  // they can least afford it. store.js writes a .corrupt-*.json backup in that
+  // case, but restoring it can't bring the deleted sessions back, so the backup
+  // is only worth anything if we don't destroy the partitions first.
+  if (store.wasRecoveredFromCorruptFile()) {
+    console.warn('[startup] skipping orphaned-partition cleanup — this launch recovered from a corrupt data file, so an empty account list is not evidence that any partition is actually orphaned');
+    return;
+  }
   const partitionsDir = path.join(app.getPath('userData'), 'Partitions');
   let entries;
   try {
@@ -5333,6 +5524,15 @@ function cleanupOrphanedPartitions() {
     return; // no Partitions dir yet — nothing to clean
   }
   const liveIds = new Set(data.accounts.map((a) => a.id));
+  // Second, independent belt: any state where we'd delete EVERY partition on
+  // disk is far more likely to be a bug or an unanticipated load failure than
+  // a user who genuinely deleted all their accounts. The cost of skipping is
+  // some stale folders that the next real removal will clean up anyway; the
+  // cost of being wrong in the other direction is unrecoverable.
+  if (liveIds.size === 0 && entries.some((e) => e.isDirectory() && e.name.startsWith('account-'))) {
+    console.warn('[startup] skipping orphaned-partition cleanup — no accounts are tracked but partitions exist on disk, which is not a state worth acting destructively on');
+    return;
+  }
   for (const entry of entries) {
     if (!entry.isDirectory() || !entry.name.startsWith('account-')) continue;
     const id = entry.name.slice('account-'.length);
@@ -5355,7 +5555,7 @@ if (!gotSingleInstanceLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (mainWindow) {
+    if (mainWindowAlive()) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
     }
@@ -5380,7 +5580,16 @@ app.whenReady().then(() => {
   passwordSecretsReady = true; // see dataForPersist()
   // Same safeStorage boundary, same "not reliable before whenReady()" reason
   // as the password decrypt right above — see decryptAccountProxies in store.js.
-  data.accounts = store.decryptAccountProxies(data.accounts);
+  // And the same split: the decrypted proxy password goes into proxySecrets,
+  // never back onto data.accounts, so it can't ride along on every
+  // broadcastState() to the renderer.
+  data.accounts = store.decryptAccountProxies(data.accounts).map((a) => {
+    if (!a || !a.proxy || !a.proxy.password) return a;
+    proxySecrets.set(a.id, a.proxy.password);
+    const { password, ...proxyMeta } = a.proxy;
+    return { ...a, proxy: proxyMeta };
+  });
+  proxySecretsReady = true; // see dataForPersist()
   passwordEncryptionAvailable = store.isPasswordEncryptionAvailable();
   Menu.setApplicationMenu(null);
   cleanupOrphanedPartitions();
@@ -5562,6 +5771,15 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   appQuitting = true;
   powerManager.shutdownPowerManager();
+  // A netlog capture left running holds its file open and never gets a
+  // stopNetLogCapture() — close it so the .json on disk is actually complete.
+  if (activeNetLogSession) {
+    const netLogWc = views.get(activeNetLogSession.accountId);
+    if (netLogWc && !netLogWc.isDestroyed()) {
+      networkHealth.stopNetLogCapture(netLogWc.session).catch((err) => console.error('[netlog] failed to stop the capture on quit', err));
+    }
+    activeNetLogSession = null;
+  }
   if (data.settings.translateMemoryPersist) translate.savePersistedCache(TRANSLATE_MEMORY_FILE);
   flushAdBlockStatsPersist();
   flushPersist()

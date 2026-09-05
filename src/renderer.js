@@ -1,4 +1,4 @@
-﻿// Catches uncaught exceptions/rejections in the HOST chrome UI itself (this
+// Catches uncaught exceptions/rejections in the HOST chrome UI itself (this
 // file) — not account webviews, which already have their own extensive
 // crash/error coverage in main.js (render-process-gone, unresponsive,
 // crash-classifier). Before this, an uncaught error here only surfaced if
@@ -22,6 +22,19 @@ window.addEventListener('unhandledrejection', (e) => {
     stack: e.reason && e.reason.stack
   });
 });
+
+// Dropping a link or a file on the chrome makes Chromium navigate this whole
+// document to it — and this document is the privileged one, the only place
+// window.api (including passwords:list) exists. The app's own drag features
+// (account-list reorder, space rail) preventDefault on their own elements, so
+// only drops that land on unhandled chrome ever got that far, which is most of
+// the window. These two document-level listeners run after the element ones
+// and stop the browser default without touching any app behaviour: dragover
+// makes the document a real drop target so the drop event fires here at all,
+// and drop is what would otherwise navigate. Paired with the will-navigate
+// guard on this window's webContents in main.js's createWindow().
+document.addEventListener('dragover', (e) => e.preventDefault());
+document.addEventListener('drop', (e) => e.preventDefault());
 
 const listEl = document.getElementById('account-list');
 const btnNewTab = document.getElementById('btn-new-tab');
@@ -383,17 +396,19 @@ function pokeLiveAccountsStatus() {
   return { gameAccounts, tracked };
 }
 
-// Mi Equipo (gs.team), Depot's Pokémon subtab (gs.collection) and Venta
-// masiva's Pokémon subtab (gs.collection) all read data that only gets
-// populated when the server pushes a `pokes` frame on its own — if that
-// hasn't happened yet this session (right after connecting, before any
-// capture/sale/level-up), all three show empty even with real Pokémon
-// in-game. Confirmed live: the game's own in-page team HUD (a separate,
-// independent data path) showed the real team while these panels — which
-// go through gameStats instead — showed nothing. One active pokes-get per
-// open game account (best-effort — an account mid-navigation or off the
-// game page just no-ops) covers all three at once instead of duplicating
-// the request per panel.
+// Mi Equipo (gs.team) reads data that only gets populated when the server
+// pushes a `pokes` frame on its own — if that hasn't happened yet this
+// session (right after connecting, before any capture/sale/level-up), it
+// shows empty even with real Pokémon in-game. Confirmed live: the game's own
+// in-page team HUD (a separate, independent data path) showed the real team
+// while this panel — which goes through gameStats instead — showed nothing.
+// One active pokes-get per open game account (best-effort — an account
+// mid-navigation or off the game page just no-ops).
+// The Depot and Venta masiva subtabs this used to also cover read the FULL
+// collection, which is no longer part of the gameStats payload at all (it was
+// thousands of objects crossing IPC every 5s for panels that no longer
+// exist) — see getCollection in game-telemetry.js and window.api.getGameCollection
+// for how a panel that needs it again should ask.
 // On-demand refresh of `gameStats` — the setInterval below only polls every
 // 5s, which is too slow right after an action (a pokes-get request, an
 // account switch) that needs the caller to see up-to-date stats immediately
@@ -522,7 +537,7 @@ function activeAccount() {
 }
 
 function displayName(account, index) {
-  return account.name || `Pestaña ${index + 1}`;
+  return account.name || t('main.defaultTabName', { n: index + 1 });
 }
 
 function escapeHtmlClient(s) {
@@ -547,6 +562,17 @@ function escapeHtmlClient(s) {
 // never supposed to be a string.
 function numOr(value, fallback = '?') {
   return Number.isFinite(value) ? value : fallback;
+}
+
+// Sort comparator for the remote game catalogs (items.json, creatures.json).
+// Both are fetched from the game's own server and neither guarantees a `name`
+// on every record — the loaders in game-telemetry.js only validate the id.
+// A bare `a.name.localeCompare(b.name)` therefore threw on a single malformed
+// entry, and since populateSellLockItemPicker() is called without await or
+// catch, that surfaced as an unhandled rejection and a silently empty
+// dropdown. Missing names sort last instead of taking a picker down with them.
+function byName(a, b) {
+  return String((a && a.name) || '').localeCompare(String((b && b.name) || ''));
 }
 
 // 'system' = sin atributo, sigue prefers-color-scheme (ver style.css);
@@ -645,7 +671,7 @@ function applyLanguage(lang) {
   if (!downloadsModal.classList.contains('hidden')) renderDownloadsList();
   if (pokeIdlePanel.classList.contains('open')) {
     renderPokeIdleTeam();
-    renderPokeAccountSettings();
+    renderPokeAccountSettings().catch((err) => console.error('[poke] renderPokeAccountSettings fallo', err));
   }
   if (!cmdkModal.classList.contains('hidden')) renderCmdkResults();
 }
@@ -1007,7 +1033,7 @@ function renderStatusBar() {
   });
   statusCpu.textContent = `${totalCpu.toFixed(1)}%`;
   statusRam.textContent = `${totalRam} MB`;
-  statusVersion.textContent = `Versión ${appMeta.version}`;
+  statusVersion.textContent = t('status.version', { v: appMeta.version });
 
   // "Tiempo total de uso": the oldest currently-open account's timer, so it reflects
   // real usage instead of just how long the app window has been sitting open.
@@ -1719,7 +1745,7 @@ btnAddSpace.addEventListener('click', () => {
   // and made the header layout cramped).
   const color = SPACE_COLORS[Math.floor(Math.random() * SPACE_COLORS.length)];
   const icon = SPACE_ICONS[Math.floor(Math.random() * SPACE_ICONS.length)];
-  window.api.addSpace({ name: `Espacio ${state.spaces.length + 1}`, color, icon });
+  window.api.addSpace({ name: t('main.defaultSpaceName', { n: state.spaces.length + 1 }), color, icon });
 });
 
 window.api.onPromptNewGroup(async ({ accountId, spaceId }) => {
@@ -1776,7 +1802,12 @@ function openAccountModal(account) {
   accountInputUrl.value = account.url || '';
   accountInputProxy.value = account.proxy?.server || '';
   accountInputProxyUser.value = account.proxy?.username || '';
-  accountInputProxyPass.value = account.proxy?.password || '';
+  // Fetched on demand rather than read from `state`: the proxy password is no
+  // longer broadcast with every state update (see proxySecrets in main.js).
+  accountInputProxyPass.value = '';
+  window.api.getProxyPassword(account.id)
+    .then((pw) => { if (editingAccountId === account.id) accountInputProxyPass.value = pw || ''; })
+    .catch((err) => console.error('[proxy] no se pudo leer la contraseña guardada', err));
   accountInputEco.checked = !!account.ecoMode;
   accountInputHideChat.checked = !!account.hideChat;
   accountInputHideGameBar.checked = !!account.hideGameBar;
@@ -1784,7 +1815,11 @@ function openAccountModal(account) {
   accountModalColor = account.color || SPACE_COLORS[0];
   renderAccountSwatches();
   renderSellLockItems(account);
-  populateSellLockItemPicker();
+  // Not awaited (the modal opens immediately either way) but explicitly
+  // caught: without this, any failure inside the picker — a malformed remote
+  // catalog, a rejected IPC call — became a bare unhandled rejection with an
+  // empty dropdown as its only visible symptom.
+  populateSellLockItemPicker().catch((err) => console.error('[sell-lock] no se pudo poblar el selector de items', err));
   accountModal.classList.remove('hidden');
   pushModal();
   accountInputName.focus();
@@ -1812,8 +1847,8 @@ async function populateSellLockItemPicker() {
   await ensureItemCatalogRenderer();
   accountSellLockItemPicker.innerHTML = itemCatalogCache
     .slice()
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((it) => `<option value="${it.id}">${escapeHtmlClient(it.name)}</option>`)
+    .sort(byName)
+    .map((it) => `<option value="${escapeHtmlClient(String(it.id))}">${escapeHtmlClient(it.name)}</option>`)
     .join('');
 }
 
@@ -1825,7 +1860,7 @@ function renderSellLockItems(account) {
   }
   const byId = new Map((itemCatalogCache || []).map((it) => [it.id, it.name]));
   accountSellLockItemsEl.innerHTML = ids
-    .map((id) => `<span class="selllock-chip" data-id="${id}">${escapeHtmlClient(byId.get(id) || `#${id}`)}<button type="button" data-remove="${id}">×</button></span>`)
+    .map((id) => `<span class="selllock-chip" data-id="${escapeHtmlClient(String(id))}">${escapeHtmlClient(byId.get(id) || `#${id}`)}<button type="button" data-remove="${escapeHtmlClient(String(id))}">×</button></span>`)
     .join('');
   accountSellLockItemsEl.querySelectorAll('button[data-remove]').forEach((btn) => {
     btn.addEventListener('click', async () => {
@@ -1844,8 +1879,8 @@ async function populatePokeSettingsItemPicker() {
   await ensureItemCatalogRenderer();
   pokeSettingsSellLockItemPickerEl.innerHTML = (itemCatalogCache || [])
     .slice()
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((it) => `<option value="${it.id}">${escapeHtmlClient(it.name)}</option>`)
+    .sort(byName)
+    .map((it) => `<option value="${escapeHtmlClient(String(it.id))}">${escapeHtmlClient(it.name)}</option>`)
     .join('');
 }
 
@@ -1858,7 +1893,7 @@ function renderPokeSettingsLockItems(account) {
   }
   const byId = new Map((itemCatalogCache || []).map((it) => [it.id, it.name]));
   pokeSettingsSellLockItemsEl.innerHTML = ids
-    .map((id) => `<span class="selllock-chip" data-id="${id}">${escapeHtmlClient(byId.get(id) || `#${id}`)}<button type="button" data-remove="${id}">×</button></span>`)
+    .map((id) => `<span class="selllock-chip" data-id="${escapeHtmlClient(String(id))}">${escapeHtmlClient(byId.get(id) || `#${id}`)}<button type="button" data-remove="${escapeHtmlClient(String(id))}">×</button></span>`)
     .join('');
 }
 
@@ -1936,7 +1971,7 @@ async function refreshStabilityAccountStatus() {
     }
     const chip = STABILITY_STATE_CHIP[s.state] || '⚪';
     const lastHealthy = s.lastHealthyAt ? new Date(s.lastHealthyAt).toLocaleTimeString() : '—';
-    stabilityAccountStatusEl.textContent = `${chip} ${s.state} · intentos: ${s.attemptCount} · última vez sana: ${lastHealthy}`;
+    stabilityAccountStatusEl.textContent = t('stability.statusLine', { chip, state: s.state, attempts: s.attemptCount, lastHealthy });
   } catch {
     stabilityAccountStatusEl.textContent = t('stability.accountStatusEmpty');
   }
@@ -1947,7 +1982,7 @@ async function updatePokeSettingsAccount(fields) {
   if (!account) return;
   Object.assign(account, fields);
   await window.api.updateAccount(account.id, fields);
-  renderPokeAccountSettings();
+  renderPokeAccountSettings().catch((err) => console.error('[poke] renderPokeAccountSettings fallo', err));
 }
 
 const ECO_BENCHMARK_SAMPLE_MS = 12000;
@@ -4091,7 +4126,7 @@ function openPokeIdlePanel() {
     pokeNavItems[0]?.classList.add('active');
   }
   renderPokeIdleTeam();
-  renderPokeAccountSettings();
+  renderPokeAccountSettings().catch((err) => console.error('[poke] renderPokeAccountSettings fallo', err));
   renderStabilityGlobalSettings();
   loadPokeIdleAlertFields();
   populateCalcSourceDropdown();
@@ -4245,7 +4280,7 @@ function ensureCreatureCatalogRenderer(forceRefresh = false) {
 
 async function populateCalcSpeciesDropdown() {
   const catalog = await ensureCreatureCatalogRenderer();
-  const sorted = catalog.slice().sort((a, b) => a.name.localeCompare(b.name));
+  const sorted = catalog.slice().sort(byName);
   calcSpeciesEl.innerHTML = `<option value="">${t('pokeIdle.pokemonPlaceholder')}</option>` +
     sorted.map((c) => `<option value="${escapeHtmlClient(String(c.pokeId))}">${escapeHtmlClient(c.name)}</option>`).join('');
 }
@@ -4376,7 +4411,10 @@ async function runCalculator() {
   `;
 }
 
-populateCalcSpeciesDropdown();
+// Same reasoning as the sell-lock picker: the species catalog is remote data,
+// this fires at load time with nothing awaiting it, and a rejection here is
+// otherwise invisible except for an empty dropdown.
+populateCalcSpeciesDropdown().catch((err) => console.error('[calc] no se pudo poblar el selector de especies', err));
 
 extInstallBtn.addEventListener('click', async () => {
   const value = extInput.value.trim();
@@ -4610,7 +4648,7 @@ window.api.onStateUpdate((data) => {
   applyTheme(state.settings.theme);
   document.documentElement.lang = state.settings.language || 'es';
   render();
-  if (pokeIdlePanel.classList.contains('open')) renderPokeAccountSettings();
+  if (pokeIdlePanel.classList.contains('open')) renderPokeAccountSettings().catch((err) => console.error('[poke] renderPokeAccountSettings fallo', err));
 });
 
 // ── Memory optimizer UI ──────────────────────────────────────────────────────
@@ -4619,7 +4657,7 @@ const OPTIMIZE_DUE_MS = 24 * 60 * 60 * 1000;
 function applyOptimizeStatus({ running, lastOptimizeAt, dueIn } = {}) {
   if (!btnOptimize) return;
   if (running) {
-    btnOptimize.textContent = '⚡ Optimizando…';
+    btnOptimize.textContent = t('optimize.running');
     btnOptimize.disabled = true;
     btnOptimize.classList.remove('optimize-due');
     return;
@@ -4627,16 +4665,16 @@ function applyOptimizeStatus({ running, lastOptimizeAt, dueIn } = {}) {
   btnOptimize.disabled = false;
   const due = dueIn != null ? dueIn <= 0 : (!lastOptimizeAt || Date.now() - lastOptimizeAt >= OPTIMIZE_DUE_MS);
   if (due) {
-    btnOptimize.textContent = '⚡ Optimizar ●';
+    btnOptimize.textContent = t('optimize.due');
     btnOptimize.classList.add('optimize-due');
-    btnOptimize.title = 'Llevas más de 24 h sin optimizar — click para liberar RAM y caché';
+    btnOptimize.title = t('optimize.tooltipDue');
   } else {
     const hoursAgo = lastOptimizeAt ? Math.floor((Date.now() - lastOptimizeAt) / 3600000) : null;
-    btnOptimize.textContent = '⚡ Optimizar';
+    btnOptimize.textContent = t('optimize.idle');
     btnOptimize.classList.remove('optimize-due');
     btnOptimize.title = hoursAgo != null
-      ? `Última optimización hace ${hoursAgo}h — libera caché y RAM sin cerrar sesiones`
-      : 'Optimizar memoria — libera caché y RAM sin cerrar sesiones';
+      ? t('optimize.tooltipAgo', { h: hoursAgo })
+      : t('optimize.tooltipIdle');
   }
 }
 
@@ -4847,7 +4885,7 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     const color = SPACE_COLORS[Math.floor(Math.random() * SPACE_COLORS.length)];
     const icon = SPACE_ICONS[Math.floor(Math.random() * SPACE_ICONS.length)];
-    window.api.addSpace({ name: `Espacio ${state.spaces.length + 1}`, color, icon });
+    window.api.addSpace({ name: t('main.defaultSpaceName', { n: state.spaces.length + 1 }), color, icon });
     return;
   }
   if (ctrl && !shift && !alt && key === 'n') {

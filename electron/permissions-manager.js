@@ -90,7 +90,10 @@ function createPermissionsManager({ getData, persist, broadcastState, mt, getMai
   // Never times out on its own — closing the window without answering
   // (blur/close) resolves to a denial, matching "dismissed" behavior in a
   // real browser's permission prompt.
-  function promptSitePermission(ses, hostname, permission) {
+  // No `ses` parameter: the prompt deliberately does NOT run in the requesting
+  // account's session (see the comment inside), so taking one only invited a
+  // future reader to wire it up.
+  function promptSitePermission(hostname, permission) {
     return new Promise((resolve) => {
       const lang = getData().settings.language || 'es';
       // Deliberately NOT `session: ses` (the requesting account's own
@@ -163,6 +166,10 @@ function createPermissionsManager({ getData, persist, broadcastState, mt, getMai
       if (alwaysDenied(permission)) return callback(false);
       if (!PROMPTABLE_PERMISSIONS.has(permission)) return callback(true);
       const hostname = hostnameFromUrlLike(details?.requestingUrl);
+      // No parseable hostname means there is nothing to scope a decision to —
+      // remembering one would key it under the empty string and show a blank
+      // row in Configuración → Permisos. Deny rather than prompt.
+      if (!hostname) return callback(false);
       const stored = getSitePermissionDecision(hostname, permission);
       if (stored === 'allow') return callback(true);
       if (stored === 'deny') return callback(false);
@@ -170,7 +177,7 @@ function createPermissionsManager({ getData, persist, broadcastState, mt, getMai
       // getUserMedia in a loop shouldn't be able to spawn unbounded windows.
       if (pendingPrompts >= 3) return callback(false);
       pendingPrompts++;
-      promptSitePermission(ses, hostname, permission)
+      promptSitePermission(hostname, permission)
         .then(({ decision, remember }) => {
           if (remember) setSitePermissionDecision(hostname, permission, decision);
           callback(decision === 'allow');
@@ -181,6 +188,7 @@ function createPermissionsManager({ getData, persist, broadcastState, mt, getMai
       if (alwaysDenied(permission)) return false;
       if (!PROMPTABLE_PERMISSIONS.has(permission)) return true;
       const hostname = hostnameFromUrlLike(requestingOrigin);
+      if (!hostname) return false;
       return getSitePermissionDecision(hostname, permission) === 'allow';
     });
   }
