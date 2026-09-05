@@ -1420,6 +1420,20 @@ body.layout-animated .panel-header {
   opacity: 0.85;
 }
 
+.panel-load-phase-crashed {
+  color: #ff6b5e;
+  opacity: 1;
+  font-weight: 600;
+}
+
+/* Only the "gave up" state is clickable (reload-on-click) — the transient
+   'crashed' badge is purely informational, it clears itself once the
+   automatic retry actually starts. */
+.panel-load-phase-crashed-gaveup {
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+
 .panel-header .panel-url {
   flex: 1;
   min-width: 0;

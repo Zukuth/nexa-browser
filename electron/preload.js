@@ -192,6 +192,7 @@ contextBridge.exposeInMainWorld('api', {
   getPasswords: () => ipcRenderer.invoke('passwords:list'),
   onStateUpdate: (cb) => onIpc('state:update', cb),
   onNavUpdate: (cb) => onIpc('nav:update', cb),
+  onAccountCrashed: (cb) => onIpc('account:crashed', cb),
   onPanelsGeometry: (cb) => onIpc('panels:geometry', cb),
   // Fired once per account after main has finished wiring its <webview>'s
   // webContents (session, telemetry, listeners — see wireAccountWebContents

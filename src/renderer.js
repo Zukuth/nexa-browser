@@ -617,6 +617,12 @@ function translateStaticDom() {
   document.querySelectorAll('[data-i18n-title]').forEach((el) => {
     el.title = t(el.getAttribute('data-i18n-title'));
   });
+  // title alone isn't a reliable accessible name for a screen reader (many
+  // have title-announcement disabled, and it never shows without a hover-
+  // capable pointer) — icon-only buttons need a real aria-label too.
+  document.querySelectorAll('[data-i18n-aria-label]').forEach((el) => {
+    el.setAttribute('aria-label', t(el.getAttribute('data-i18n-aria-label')));
+  });
 }
 
 // Re-renderiza todo el texto visible sin recargar la página — el mismo
@@ -1128,7 +1134,22 @@ function renderPanelHeaders() {
     name.textContent = panel.name;
 
     const loadPhase = panelLoadingPhase.get(panel.id);
-    if (loadPhase) {
+    if (loadPhase === 'crashed' || loadPhase === 'crashed-gaveup') {
+      const phaseBadge = document.createElement('span');
+      phaseBadge.className = 'panel-load-phase panel-load-phase-crashed';
+      if (loadPhase === 'crashed-gaveup') {
+        phaseBadge.classList.add('panel-load-phase-crashed-gaveup');
+        phaseBadge.textContent = t('js.phaseCrashedGaveUp');
+        phaseBadge.title = t('js.phaseCrashedGaveUpHint');
+        phaseBadge.onclick = (e) => {
+          e.stopPropagation();
+          window.api.reloadAccount(panel.id);
+        };
+      } else {
+        phaseBadge.textContent = t('js.phaseCrashed');
+      }
+      name.appendChild(phaseBadge);
+    } else if (loadPhase) {
       const phaseBadge = document.createElement('span');
       phaseBadge.className = 'panel-load-phase';
       phaseBadge.textContent = t(loadPhase === 'connecting' ? 'js.phaseConnecting' : 'js.phaseLoading');
@@ -4637,6 +4658,18 @@ window.api.onNavUpdate(({ id, url }) => {
     panel.url = url;
     if (!dragInProgress) renderPanelHeaders();
   }
+});
+
+// Always fires, unlike the opt-in "Estabilidad" recovery system — a crashed
+// account used to show nothing at all by default (no overlay, no badge),
+// just ~1s of frozen content then a silent reload, or a permanently dead
+// panel if main.js gave up after too many crashes in a row. The badge
+// itself clears naturally once a reload actually starts (did-start-loading
+// below overwrites panelLoadingPhase to 'connecting'), so no extra cleanup
+// is needed here for the auto-retry case.
+window.api.onAccountCrashed(({ id, gaveUp }) => {
+  panelLoadingPhase.set(id, gaveUp ? 'crashed-gaveup' : 'crashed');
+  renderPanelHeaders();
 });
 
 const findbarEl = document.getElementById('findbar');

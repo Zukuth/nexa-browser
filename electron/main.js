@@ -100,7 +100,7 @@ process.on('unhandledRejection', (err) => {
 
 const APP_ICON_PATH = path.join(__dirname, 'assets', 'icon.png');
 
-const { hostnameFromUrlLike } = require('./url-utils');
+const { hostnameFromUrlLike, isAllowedBookmarkUrl } = require('./url-utils');
 
 // window.open() popups (Etapa: OAuth login flows) get allowed through only
 // when they go to the account's own site or a well-known third-party login
@@ -1339,7 +1339,14 @@ function wireAccountWebContents(wc, account, hostWebContents) {
     console.error('[crash] renderer gone for', account.id, details.reason);
     feedConnectionEvent(account.id, { type: 'RENDERER_CRASHED', reason: details.reason });
     const crashes = recordCrash(account.id);
-    if (crashes <= 3 && !wc.isDestroyed()) {
+    const gaveUp = crashes > 3;
+    // Always broadcast, unlike feedConnectionEvent above — that one is a
+    // no-op unless the opt-in "Estabilidad" system is on, which meant a
+    // crashed account showed literally nothing on screen by default: no
+    // overlay, no badge, just ~1s of frozen content then a silent reload,
+    // or a permanently dead panel with zero indication if it gave up.
+    if (mainWindowAlive()) mainWindow.webContents.send('account:crashed', { id: account.id, crashes, gaveUp });
+    if (!gaveUp && !wc.isDestroyed()) {
       setTimeout(() => {
         if (!wc.isDestroyed()) wc.reload();
       }, 1000);
@@ -3692,7 +3699,7 @@ ipcMain.handle('bookmarks:import', async () => {
     let added = 0;
     imported.forEach((b) => {
       if (!b.url || existingUrls.has(b.url)) return;
-      if (!/^https?:\/\//i.test(b.url)) return; // skip file://, javascript:, data: etc.
+      if (!isAllowedBookmarkUrl(b.url)) return; // skip file://, javascript:, data: etc.
       existingUrls.add(b.url);
       data.bookmarks.push({ id: crypto.randomUUID(), title: b.title, url: b.url });
       added++;
