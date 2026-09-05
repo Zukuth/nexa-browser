@@ -34,6 +34,15 @@ test.describe('panel drag-resize', () => {
     expect(afterA.width).toBeGreaterThan(beforeA.width + dragBy - 20);
     expect(afterB.width).toBeLessThan(beforeB.width - dragBy + 20);
 
+    // Regression guard (real bug, see fix commit 5fe4cf0): the repeated
+    // mousemove-driven re-renders during this same drag used to leave stale
+    // dividers behind instead of replacing them — confirmed live as 3
+    // '.split-divider-h' elements instead of 1 on a different case of this
+    // same drag path. This exact sequence (a drag with steps:10) is what
+    // reproduced it, so this assertion is a real regression guard, not a
+    // synthetic scenario.
+    await expect(page.locator('.split-divider')).toHaveCount(1);
+
     // The resize is persisted as widthFrac on the accounts, not just a visual drag.
     await expect.poll(async () => {
       const state = await page.evaluate(() => window.api.getState());
@@ -79,6 +88,11 @@ test.describe('panel drag-resize', () => {
     const afterB = await stableBoundingBox(panels.nth(1));
     expect(Math.abs(afterA.y - beforeA.y)).toBeLessThan(2);
     expect(afterB.y).toBeGreaterThan(beforeB.y + dragBy - 20);
+
+    // Regression guard, see the comment on the equivalent assertion in the
+    // "columns" test above — this is the '.split-divider-h' variant of the
+    // exact bug that was actually confirmed live.
+    await expect(page.locator('.split-divider')).toHaveCount(1);
 
     await expect.poll(async () => {
       const state = await page.evaluate(() => window.api.getState());
