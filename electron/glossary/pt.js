@@ -276,5 +276,30 @@ module.exports = {
   // "quando") also came back completely unchanged.
   neh: { es: '¿no?', en: 'right?' },
   cabei: { es: 'acabo', en: 'I just got' },
-  qnd: { es: 'cuándo', en: 'when' }
+  qnd: { es: 'cuándo', en: 'when' },
+  // Tenth batch — a real chat capture spanning several of this app's target
+  // games (baiakidle.com general/market chat and a Ragnarok-style guild
+  // chat with class tags), pasted by the user directly. Every candidate
+  // checked live against the real pt->es model first (translate.js's own
+  // translateBatch(), run standalone in plain Node with the bundled
+  // models — no electron.app dependency for this, same seedBundledModels()
+  // the app itself calls at startup): "vcs", "daora", "vei" and "leilao"
+  // all came back completely unchanged (OOV), same as "kd" — confirmed as
+  // a live, undiscovered case rather than assumed from the abbreviation's
+  // resemblance to the already-covered "cadê".
+  //
+  // "tambem" (unaccented "também") was ALSO tested and deliberately left
+  // out: the real model already returns "también" correctly on its own,
+  // and glossaryLanguageFor() already recognizes it — NORMALIZED_PT (see
+  // index.js) strips the accent before falling back to a lookup, so the
+  // existing accented entry already covers this spelling with no new
+  // entry needed, the same way "né"/"ne" and "valeu"/"valeuu" are handled.
+  vcs: { es: 'ustedes', en: 'you all' },
+  daora: { es: 'genial', en: 'cool' },
+  // "vei" (informal address, from "velho") is the same register as
+  // "mlq"/"brosinho" — kept at "amigo" rather than a literal "hombre" or
+  // regional slang, same choice already made for "mlq"/"brosinho" above.
+  vei: { es: 'amigo', en: 'dude' },
+  leilao: { es: 'subasta', en: 'auction' },
+  kd: { es: '¿dónde está?', en: 'where is' }
 };
