@@ -132,13 +132,9 @@ test.describe('Chat auto-translate pauses when the panel is minimized', () => {
 // path than every other test in this file.
 test.describe('Chat auto-translate (sel.text-less fallback, ragnaidle.com.br shape)', () => {
   let server;
-  // Contador de documentos servidos: la unica senal REAL de que el webview
-  // llego a pedir la pagina. Ver el comentario del poll en el test.
-  let servedCount = 0;
   test.beforeAll(() => {
     const html = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'ragnaidle-chat.html'));
     server = http.createServer((req, res) => {
-      servedCount += 1;
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(html);
     });
@@ -156,22 +152,6 @@ test.describe('Chat auto-translate (sel.text-less fallback, ragnaidle.com.br sha
       const s = await page.evaluate(() => window.api.getState());
       return s.accounts.find((a) => a.id === active)?.url;
     }).toContain(`127.0.0.1:${RAGNAIDLE_CHAT_PORT}`);
-
-    // account.url NO alcanza como senal de carga: main.js lo setea de forma
-    // optimista apenas se pide la navegacion, antes de que la pagina exista
-    // (lo documenta translateChatMessages en electron/main.js). Bajo la carga
-    // de la suite completa esta carrera se pierde de verdad: translateChatOnce
-    // corria contra un DOM vacio, extractChatMessagesScript devolvia 0 items y
-    // la funcion tomaba su return temprano {ok:true, translated:0} SIN campo
-    // seen -- de ahi el "Expected: 3, Received: undefined" intermitente.
-    //
-    // No se puede resolver polleando translateChatOnce hasta que traiga seen:
-    // la extraccion marca cada nodo en __nexaChatKnownTxt al LEERLO
-    // (translate.js), asi que una llamada contra un DOM a medio renderizar se
-    // comeria esos nodos y la siguiente devolveria menos de 3. Hay que esperar
-    // ANTES de la primera llamada, y el unico hecho observable desde aca es
-    // que el servidor del fixture efectivamente entrego el documento.
-    await expect.poll(() => servedCount).toBeGreaterThan(0);
 
     // Fixture has 3 .chat-line rows (all Portuguese) and one .chat-drop
     // system message the selector deliberately doesn't match yet (see

@@ -1,3 +1,4 @@
+// @ts-check
 // Uses the app's single translation catalog (i18n-data.js, loaded as a plain
 // <script> before this file — same way index.html loads it for renderer.js).
 //
@@ -17,21 +18,48 @@ function t(key, vars) {
   return str;
 }
 
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
-const hintEl = document.getElementById('hint');
-const btnCrop = document.getElementById('tool-crop');
-const btnArrow = document.getElementById('tool-arrow');
-const btnText = document.getElementById('tool-text');
-const btnUndo = document.getElementById('tool-undo');
-const btnSave = document.getElementById('btn-save');
-const btnCancel = document.getElementById('btn-cancel');
+// Todos estos elementos existen siempre: screenshot-editor.html los define de
+// forma estática y este script solo se carga desde ahí. el() convierte esa
+// garantía implícita en una explícita — si alguien renombra un id en el HTML,
+// falla nombrando cuál falta, en vez de un "Cannot set properties of null"
+// varias líneas más adelante, cuando ya no se ve de dónde salió.
+/** @param {string} id */
+function el(id) {
+  const node = document.getElementById(id);
+  if (!node) throw new Error(`[screenshot-editor] falta el elemento #${id} en screenshot-editor.html`);
+  return node;
+}
 
+const canvas = /** @type {HTMLCanvasElement} */ (el('canvas'));
+const ctx = /** @type {CanvasRenderingContext2D} */ (canvas.getContext('2d'));
+const hintEl = el('hint');
+const btnCrop = el('tool-crop');
+const btnArrow = el('tool-arrow');
+const btnText = el('tool-text');
+const btnUndo = /** @type {HTMLButtonElement} */ (el('tool-undo'));
+const btnSave = /** @type {HTMLButtonElement} */ (el('btn-save'));
+const btnCancel = el('btn-cancel');
+
+/**
+ * Una anotación todavía sin aplanar sobre la imagen base. Las dos variantes
+ * comparten el campo `type` y nada más, de ahí la unión en vez de un solo
+ * objeto con todos los campos opcionales.
+ * @typedef {{ type: 'text', x: number, y: number, text: string }
+ *   | { type: 'arrow', x1: number, y1: number, x2: number, y2: number }} Annotation
+ */
+/** @typedef {{ x: number, y: number }} Point */
+
+/** @type {HTMLImageElement|null} */
 let baseImage = null; // the current flattened base (starts as the screenshot, grows as annotations are committed)
+/** @type {Annotation[]} */
 let annotations = []; // stack of {type:'arrow'|'text', ...} not yet flattened — kept so undo can pop them
-let tool = null; // 'crop' | 'arrow' | 'text' | null
+/** @type {'crop'|'arrow'|'text'|null} */
+let tool = null;
+/** @type {Point|null} */
 let dragStart = null;
+/** @type {Point|null} */
 let dragCurrent = null;
+/** @type {{ x: number, y: number, w: number, h: number }|null} */
 let pendingCropRect = null;
 
 // The toolbar's button labels and tooltips used to be hardcoded Spanish in
@@ -58,6 +86,11 @@ function setTool(next) {
 }
 
 function redraw() {
+  // Ambos redraw() salen temprano si todavía no hay imagen base: hasta que
+  // main manda la captura por IPC (shot:init) no hay nada que dibujar, y
+  // llamarlos antes solo puede pasar por un bug de orden — antes eso tiraba
+  // "Cannot read properties of null (reading 'width')".
+  if (!baseImage) return;
   canvas.width = baseImage.width;
   canvas.height = baseImage.height;
   ctx.drawImage(baseImage, 0, 0);
@@ -183,7 +216,7 @@ function applyCrop(r) {
   cropped.height = Math.round(r.h);
   // Flatten current canvas (base + annotations so far) then crop that.
   redrawWithoutOverlay();
-  cropped.getContext('2d').drawImage(canvas, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+  /** @type {CanvasRenderingContext2D} */ (cropped.getContext('2d')).drawImage(canvas, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
   const img = new Image();
   img.onload = () => {
     baseImage = img;
@@ -195,6 +228,7 @@ function applyCrop(r) {
 }
 
 function redrawWithoutOverlay() {
+  if (!baseImage) return; // ver el comentario en redraw()
   canvas.width = baseImage.width;
   canvas.height = baseImage.height;
   ctx.drawImage(baseImage, 0, 0);

@@ -1,3 +1,4 @@
+// @ts-check
 // Chrome extension install/load/unload and the whole extensions:* IPC
 // surface — split out of main.js. Same dependency-injection shape as
 // permissions-manager.js/adblock-manager.js: main.js stays the single owner
@@ -117,7 +118,7 @@ function preValidateZipEntries(zipPath, destDir) {
       zipfile.on('end', () => {
         if (!settled) {
           settled = true;
-          resolve();
+          resolve(undefined);
         }
       });
       zipfile.readEntry();
@@ -136,7 +137,7 @@ function assertNoEscapedEntries(destDir) {
   const realDestDir = fs.realpathSync(destDir);
   const stack = [realDestDir];
   while (stack.length) {
-    const dir = stack.pop();
+    const dir = /** @type {string} */ (stack.pop());
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
       const lst = fs.lstatSync(full);
@@ -165,7 +166,7 @@ function assertNoEscapedEntries(destDir) {
 // has the language — does the translating, and this stays dependency-free.
 function crxToZip(buf) {
   const fail = (key) => {
-    const err = new Error(key);
+    const err = /** @type {Error & { i18nKey?: string }} */ (new Error(key));
     err.i18nKey = key;
     return err;
   };
@@ -211,7 +212,7 @@ function createExtensionsManager({ getData, persist, broadcastState, mt, getMain
         if (redirects > 5) return reject(new Error(mt(lang, 'main.tooManyRedirects')));
         https
           .get(u, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' } }, (res) => {
-            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            if (res.statusCode !== undefined && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
               res.resume();
               get(res.headers.location, redirects + 1);
               return;
@@ -251,7 +252,7 @@ function createExtensionsManager({ getData, persist, broadcastState, mt, getMain
   }
 
   async function loadExtensionOnAllSessions(dir) {
-    let result = null;
+    /** @type {{ id?: string, name?: string, version?: string }|null} */ let result = null;
     for (const view of views.values()) {
       try {
         result = await view.session.extensions.loadExtension(dir);
@@ -313,7 +314,7 @@ function createExtensionsManager({ getData, persist, broadcastState, mt, getMain
     let zipBuf;
     try {
       zipBuf = crxToZip(crxBuf);
-    } catch (err) {
+    } catch (/** @type {any} */ err) {
       // crxToZip is Electron-free and throws an i18n key, not a sentence.
       throw err.i18nKey ? new Error(mt(lang, err.i18nKey)) : err;
     }
@@ -322,7 +323,7 @@ function createExtensionsManager({ getData, persist, broadcastState, mt, getMain
 
     try {
       await preValidateZipEntries(zipPath, destDir);
-    } catch (err) {
+    } catch (/** @type {any} */ err) {
       fs.unlinkSync(zipPath);
       throw err;
     }
@@ -334,7 +335,7 @@ function createExtensionsManager({ getData, persist, broadcastState, mt, getMain
     // forever, with no cleanup path anywhere else in this module.
     try {
       await extractZip(zipPath, { dir: destDir });
-    } catch (err) {
+    } catch (/** @type {any} */ err) {
       fs.unlinkSync(zipPath);
       throw err;
     }
@@ -342,7 +343,7 @@ function createExtensionsManager({ getData, persist, broadcastState, mt, getMain
 
     try {
       assertNoEscapedEntries(destDir);
-    } catch (err) {
+    } catch (/** @type {any} */ err) {
       fs.rmSync(destDir, { recursive: true, force: true });
       throw err;
     }
@@ -371,7 +372,7 @@ function createExtensionsManager({ getData, persist, broadcastState, mt, getMain
       try {
         await installExtensionFromStore(input);
         return { ok: true };
-      } catch (err) {
+      } catch (/** @type {any} */ err) {
         return { ok: false, error: err.message };
       }
     });
@@ -388,7 +389,7 @@ function createExtensionsManager({ getData, persist, broadcastState, mt, getMain
       try {
         await finishInstall(id, dir);
         return { ok: true };
-      } catch (err) {
+      } catch (/** @type {any} */ err) {
         return { ok: false, error: err.message };
       }
     });
@@ -463,7 +464,7 @@ function createExtensionsManager({ getData, persist, broadcastState, mt, getMain
             sessions.map((view) => view.session.extensions.loadExtension(ext.path))
           );
           if (!results.some((r) => r.status === 'fulfilled')) {
-            console.error('[ext] FAILED to re-enable', ext.name, '— every open account rejected loadExtension:', results[0].reason);
+            console.error('[ext] FAILED to re-enable', ext.name, '— every open account rejected loadExtension:', /** @type {PromiseRejectedResult} */ (results[0]).reason);
             return data; // ext.enabled left untouched — UI reflects the real state
           }
         }

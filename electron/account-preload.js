@@ -1,3 +1,4 @@
+// @ts-check
 const { ipcRenderer } = require('electron');
 
 // Reports Picture-in-Picture state to main (see wc.ipc.on('nexa-pip-state', ...)
@@ -45,8 +46,8 @@ function fillFrom(input, entry) {
   if (!userField && classifyField(input) === 'password' && entry.password) setNativeValue(input, entry.password);
 }
 
-let host = null;
-let shadow = null;
+/** @type {HTMLDivElement|null} */ let host = null;
+/** @type {ShadowRoot|null} */ let shadow = null;
 
 function ensureHost() {
   if (host && document.body.contains(host)) return;
@@ -68,7 +69,7 @@ function ensureHost() {
   shadow.appendChild(style);
 }
 
-let openForInput = null;
+/** @type {HTMLInputElement|null} */ let openForInput = null;
 
 function hideDropdown() {
   if (host) host.style.display = 'none';
@@ -92,6 +93,10 @@ async function showDropdown(input) {
   if (!matches || matches.length === 0) return;
 
   ensureHost();
+  // ensureHost() siempre deja host y shadow seteados; esta guarda hace
+  // explícito ese invariante en vez de asumirlo (y es lo que le permite al
+  // typechecker verificar los usos de abajo).
+  if (!host || !shadow) return;
   const box = shadow.querySelector('.box') || document.createElement('div');
   box.className = 'box';
   // Not box.innerHTML = '' — pages with a strict Trusted Types CSP (Google's
@@ -135,7 +140,9 @@ async function showDropdown(input) {
 document.addEventListener(
   'mousedown',
   (e) => {
-    const target = e.target;
+    // e.target es EventTarget (puede ser cualquier nodo, incluido document);
+    // el chequeo de tagName de abajo es lo que confirma que es un <input>.
+    const target = /** @type {HTMLInputElement|null} */ (e.target);
     if (target && target.tagName === 'INPUT' && classifyField(target)) {
       showDropdown(target);
       return;

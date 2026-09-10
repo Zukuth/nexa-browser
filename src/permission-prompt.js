@@ -11,9 +11,9 @@ function el(id) {
   return node;
 }
 
-// api lo expone electron/permission-prompt-preload.js vía contextBridge.
-/** @type {{ respond: (decision: string, remember: boolean) => void }} */
-const api = (/** @type {any} */ (window)).api;
+// api lo expone electron/permission-prompt-preload.js vía contextBridge; su
+// tipo está declarado en types/globals.d.ts.
+const api = window.api;
 
 const params = new URLSearchParams(location.search);
 el('msg').textContent = params.get('msg') || '';

@@ -8,6 +8,6 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["electron/**/*.js", "src/**/*.js", "scripts/**/*.js"],
+  "include": ["types/**/*.d.ts", "electron/**/*.js", "src/**/*.js", "scripts/**/*.js"],
   "exclude": ["node_modules", "build", "test-results", "playwright-report"]
 }

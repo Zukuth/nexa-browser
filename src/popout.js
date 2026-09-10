@@ -11,11 +11,9 @@
 // app owns (index.html, permission-prompt.html, screenshot-editor.html) —
 // `script-src 'self'` blocks inline scripts, which is why this was the one
 // shell document without a CSP.
-// popoutAPI lo expone electron/popout-preload.js vía contextBridge, así que no
-// existe en el tipo Window estándar — de ahí el cast puntual en vez de
-// silenciar el archivo entero con @ts-nocheck.
-/** @type {{ onInit: Function, onReady: Function }} */
-const popoutAPI = (/** @type {any} */ (window)).popoutAPI;
+// popoutAPI lo expone electron/popout-preload.js vía contextBridge; su tipo
+// está declarado en types/globals.d.ts.
+const popoutAPI = window.popoutAPI;
 
 popoutAPI.onInit((info) => {
   const wv = document.createElement('webview');
