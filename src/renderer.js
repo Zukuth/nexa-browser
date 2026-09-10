@@ -36,12 +36,57 @@ window.addEventListener('unhandledrejection', (e) => {
 document.addEventListener('dragover', (e) => e.preventDefault());
 document.addEventListener('drop', (e) => e.preventDefault());
 
-const listEl = document.getElementById('account-list');
-const btnNewTab = document.getElementById('btn-new-tab');
-const btnToggleAll = document.getElementById('btn-toggle-all');
-const addressInput = document.getElementById('input-address');
-const panelHeadersEl = document.getElementById('panel-headers');
-const panelWebviewsEl = document.getElementById('panel-webviews');
+// index.html carga este script al final del <body> (no en <head>, no con
+// defer), asi que TODO el DOM ya esta parseado cuando corren las constantes de
+// abajo, y los 215 ids que este archivo busca existen de forma estatica en
+// index.html — verificado cruzando ambos archivos, cero faltantes.
+//
+// el() convierte esa garantia implicita en explicita. Antes, un id renombrado
+// en el HTML dejaba la constante en null en silencio y el sintoma aparecia
+// mucho despues, como "Cannot read properties of null" en cualquier handler
+// que la tocara, sin rastro de cual era el elemento. Ahora falla al arrancar,
+// nombrando el id.
+//
+// Solo para ids LITERALES. Los que se arman en runtime ('wv-' + account.id,
+// 'poke-section-' + ...) siguen usando document.getElementById directo,
+// porque ahi el elemento legitimamente puede no existir todavia y el null es
+// parte del contrato — de ahi los `if (!wvEl) return` en esos lugares.
+/** @param {string} id */
+function el(id) {
+  const node = document.getElementById(id);
+  if (!node) throw new Error(`[renderer] falta el elemento #${id} en index.html`);
+  return node;
+}
+
+// Variantes de el() para los elementos cuyos .value/.checked/.disabled/.options
+// se leen o escriben: HTMLElement no declara ninguna de esas propiedades. Hay
+// una por tag en vez de un solo inputEl() generico porque el tag de cada id se
+// saco leyendo index.html — castear un <button> a HTMLInputElement typechequea
+// igual, pero seria mentira, y la proxima persona que lea la declaracion
+// deduciria el tag equivocado.
+/** @param {string} id */
+function inputEl(id) {
+  return /** @type {HTMLInputElement} */ (el(id));
+}
+/** @param {string} id */
+function selectEl(id) {
+  return /** @type {HTMLSelectElement} */ (el(id));
+}
+/** @param {string} id */
+function btnEl(id) {
+  return /** @type {HTMLButtonElement} */ (el(id));
+}
+/** @param {string} id */
+function textareaEl(id) {
+  return /** @type {HTMLTextAreaElement} */ (el(id));
+}
+
+const listEl = el('account-list');
+const btnNewTab = el('btn-new-tab');
+const btnToggleAll = el('btn-toggle-all');
+const addressInput = inputEl('input-address');
+const panelHeadersEl = el('panel-headers');
+const panelWebviewsEl = el('panel-webviews');
 // accountId -> 'connecting' | 'loading', only while that panel's <webview>
 // is actively navigating — read by renderPanelHeaders() to show a small
 // phase badge instead of a generic spinner, so a slow connection reads as
@@ -49,145 +94,145 @@ const panelWebviewsEl = document.getElementById('panel-webviews');
 // Host-UI-only: never touches the webview's own timers/throttling, so it
 // has zero effect on how fast a backgrounded game account keeps farming.
 const panelLoadingPhase = new Map();
-const railSpacesEl = document.getElementById('rail-spaces');
-const btnAddSpace = document.getElementById('btn-add-space');
-const spaceNameEl = document.getElementById('space-name');
-const spaceColorDotEl = document.getElementById('space-color-dot');
-const btnCollapseSidebar = document.getElementById('btn-collapse-sidebar');
-const sidebarEl = document.getElementById('sidebar');
-const topbarEl = document.getElementById('topbar');
-const emptyStateEl = document.getElementById('empty-state');
-const gameAccountsHintEl = document.getElementById('game-accounts-hint');
-const btnEmptyAdd = document.getElementById('btn-empty-add');
+const railSpacesEl = el('rail-spaces');
+const btnAddSpace = el('btn-add-space');
+const spaceNameEl = el('space-name');
+const spaceColorDotEl = el('space-color-dot');
+const btnCollapseSidebar = el('btn-collapse-sidebar');
+const sidebarEl = el('sidebar');
+const topbarEl = el('topbar');
+const emptyStateEl = el('empty-state');
+const gameAccountsHintEl = el('game-accounts-hint');
+const btnEmptyAdd = el('btn-empty-add');
 
-const tbBack = document.getElementById('tb-back');
-const tbForward = document.getElementById('tb-forward');
-const tbHome = document.getElementById('tb-home');
-const tbCopyUrl = document.getElementById('tb-copy-url');
-const tbReload = document.getElementById('tb-reload');
-const tbReload2 = document.getElementById('tb-reload-2');
-const tbMute = document.getElementById('tb-mute');
-const tbMuteAll = document.getElementById('tb-mute-all');
-const tbShield = document.getElementById('tb-shield');
-const tbShieldCount = document.getElementById('tb-shield-count');
-const tbScreenshot = document.getElementById('tb-screenshot');
-const tbMiniplayer = document.getElementById('tb-miniplayer');
-const tbFullscreen = document.getElementById('tb-fullscreen');
-const tbDownloads = document.getElementById('tb-downloads');
-const tbSettings = document.getElementById('tb-settings');
-const tbBookmarks = document.getElementById('tb-bookmarks');
-const tbSupport = document.getElementById('tb-support');
-const tbDns = document.getElementById('tb-dns');
-const tbTranslate = document.getElementById('tb-translate');
+const tbBack = el('tb-back');
+const tbForward = el('tb-forward');
+const tbHome = el('tb-home');
+const tbCopyUrl = el('tb-copy-url');
+const tbReload = el('tb-reload');
+const tbReload2 = el('tb-reload-2');
+const tbMute = el('tb-mute');
+const tbMuteAll = el('tb-mute-all');
+const tbShield = el('tb-shield');
+const tbShieldCount = el('tb-shield-count');
+const tbScreenshot = el('tb-screenshot');
+const tbMiniplayer = el('tb-miniplayer');
+const tbFullscreen = el('tb-fullscreen');
+const tbDownloads = el('tb-downloads');
+const tbSettings = el('tb-settings');
+const tbBookmarks = el('tb-bookmarks');
+const tbSupport = el('tb-support');
+const tbDns = el('tb-dns');
+const tbTranslate = btnEl('tb-translate');
 
-const statusSpaceInfo = document.getElementById('status-space-info');
-const statusActiveAccount = document.getElementById('status-active-account');
-const statusUpdateProgress = document.getElementById('status-update-progress');
-const statusCpu = document.getElementById('status-cpu');
-const statusRam = document.getElementById('status-ram');
-const statusTime = document.getElementById('status-time');
-const statusVersion = document.getElementById('status-version');
-const btnOptimize = document.getElementById('btn-optimize');
+const statusSpaceInfo = el('status-space-info');
+const statusActiveAccount = el('status-active-account');
+const statusUpdateProgress = el('status-update-progress');
+const statusCpu = el('status-cpu');
+const statusRam = el('status-ram');
+const statusTime = el('status-time');
+const statusVersion = el('status-version');
+const btnOptimize = btnEl('btn-optimize');
 
 function layoutLabel(mode) {
   return t('layout.' + mode);
 }
 let appMeta = { startTime: Date.now(), version: '0.1.0' };
-const bookmarksModal = document.getElementById('bookmarks-modal');
-const bookmarksListEl = document.getElementById('bookmarks-list');
-const btnCloseBookmarks = document.getElementById('btn-close-bookmarks');
-const bmAddCurrent = document.getElementById('bm-add-current');
-const bmImport = document.getElementById('bm-import');
-const bmExport = document.getElementById('bm-export');
+const bookmarksModal = el('bookmarks-modal');
+const bookmarksListEl = el('bookmarks-list');
+const btnCloseBookmarks = el('btn-close-bookmarks');
+const bmAddCurrent = el('bm-add-current');
+const bmImport = el('bm-import');
+const bmExport = el('bm-export');
 
-const shortcutsModal = document.getElementById('shortcuts-modal');
-const shortcutsListEl = document.getElementById('shortcuts-list');
-const btnCloseShortcuts = document.getElementById('btn-close-shortcuts');
-const setShowShortcuts = document.getElementById('set-show-shortcuts');
+const shortcutsModal = el('shortcuts-modal');
+const shortcutsListEl = el('shortcuts-list');
+const btnCloseShortcuts = el('btn-close-shortcuts');
+const setShowShortcuts = el('set-show-shortcuts');
 
-const downloadsModal = document.getElementById('downloads-modal');
-const downloadsListEl = document.getElementById('downloads-list');
-const btnCloseDownloads = document.getElementById('btn-close-downloads');
-const dlOpenFolder = document.getElementById('dl-open-folder');
-const dlClear = document.getElementById('dl-clear');
+const downloadsModal = el('downloads-modal');
+const downloadsListEl = el('downloads-list');
+const btnCloseDownloads = el('btn-close-downloads');
+const dlOpenFolder = el('dl-open-folder');
+const dlClear = el('dl-clear');
 
 
-const dnsModal = document.getElementById('dns-modal');
-const dnsResultsEl = document.getElementById('dns-results');
-const dnsRunBtn = document.getElementById('dns-run-test');
-const dnsCopyRestoreBtn = document.getElementById('dns-copy-restore');
-const btnCloseDns = document.getElementById('btn-close-dns');
+const dnsModal = el('dns-modal');
+const dnsResultsEl = el('dns-results');
+const dnsRunBtn = btnEl('dns-run-test');
+const dnsCopyRestoreBtn = el('dns-copy-restore');
+const btnCloseDns = el('btn-close-dns');
 
-const translateModal = document.getElementById('translate-modal');
-const translateModalTitle = document.getElementById('translate-modal-title');
-const translateProgressFill = document.getElementById('translate-progress-fill');
-const translateProgressLabel = document.getElementById('translate-progress-label');
-const translateDownloadHint = document.getElementById('translate-download-hint');
-const translateErrorEl = document.getElementById('translate-error');
-const btnCloseTranslate = document.getElementById('btn-close-translate');
+const translateModal = el('translate-modal');
+const translateModalTitle = el('translate-modal-title');
+const translateProgressFill = el('translate-progress-fill');
+const translateProgressLabel = el('translate-progress-label');
+const translateDownloadHint = el('translate-download-hint');
+const translateErrorEl = el('translate-error');
+const btnCloseTranslate = el('btn-close-translate');
 
-const updateModal = document.getElementById('update-modal');
-const updateVersionEl = document.getElementById('update-version');
-const updateNotesEl = document.getElementById('update-notes');
-const updateLaterBtn = document.getElementById('update-later');
-const updateRestartBtn = document.getElementById('update-restart');
+const updateModal = el('update-modal');
+const updateVersionEl = el('update-version');
+const updateNotesEl = el('update-notes');
+const updateLaterBtn = el('update-later');
+const updateRestartBtn = el('update-restart');
 
-const cmdkModal = document.getElementById('cmdk-modal');
-const cmdkInput = document.getElementById('cmdk-input');
-const cmdkListEl = document.getElementById('cmdk-list');
-const pokeIdlePanel = document.getElementById('poke-idle-panel');
-const btnClosePokeIdle = document.getElementById('btn-close-poke-idle');
-const tbPokeIdle = document.getElementById('tb-poke-idle');
+const cmdkModal = el('cmdk-modal');
+const cmdkInput = inputEl('cmdk-input');
+const cmdkListEl = el('cmdk-list');
+const pokeIdlePanel = el('poke-idle-panel');
+const btnClosePokeIdle = el('btn-close-poke-idle');
+const tbPokeIdle = el('tb-poke-idle');
 const pokeNavItems = document.querySelectorAll('.poke-drawer-nav .poke-nav-item');
-const pokeIdleTeamEl = document.getElementById('poke-idle-team');
-const calcSourceEl = document.getElementById('calc-source');
-const calcSpeciesEl = document.getElementById('calc-species');
-const calcLevelEl = document.getElementById('calc-level');
-const calcQualityEl = document.getElementById('calc-quality');
-const calcProjLevelEl = document.getElementById('calc-proj-level');
-const calcResultEl = document.getElementById('calc-result');
-const pokeSettingsAccountEl = document.getElementById('poke-settings-account');
+const pokeIdleTeamEl = el('poke-idle-team');
+const calcSourceEl = selectEl('calc-source');
+const calcSpeciesEl = selectEl('calc-species');
+const calcLevelEl = inputEl('calc-level');
+const calcQualityEl = inputEl('calc-quality');
+const calcProjLevelEl = inputEl('calc-proj-level');
+const calcResultEl = el('calc-result');
+const pokeSettingsAccountEl = selectEl('poke-settings-account');
 const pokeSettingsTabs = document.querySelectorAll('.poke-settings-tab');
 const pokeSettingsPanels = document.querySelectorAll('.poke-settings-panel');
-const pokeSettingsEmptyEl = document.getElementById('poke-settings-empty');
-const pokeSettingsEcoEl = document.getElementById('poke-settings-eco');
-const pokeSettingsEcoBenchmarkBtn = document.getElementById('poke-settings-eco-benchmark');
-const pokeSettingsEcoBenchmarkResultEl = document.getElementById('poke-settings-eco-benchmark-result');
-const pokeSettingsHideChatEl = document.getElementById('poke-settings-hide-chat');
-const pokeSettingsHideGameBarEl = document.getElementById('poke-settings-hide-gamebar');
-const pokeSettingsSellLockEl = document.getElementById('poke-settings-selllock');
-const pokeSettingsSellLockItemsEl = document.getElementById('poke-settings-selllock-items');
-const pokeSettingsSellLockItemPickerEl = document.getElementById('poke-settings-selllock-item-picker');
-const pokeSettingsSellLockItemAddEl = document.getElementById('poke-settings-selllock-item-add');
-const pokeSettingsCleanProfileEl = document.getElementById('poke-settings-clean-profile');
-const stabilityEnabledEl = document.getElementById('stability-enabled');
-const stabilityKeepaliveEl = document.getElementById('stability-keepalive');
-const stabilityAutoRecoveryEl = document.getElementById('stability-auto-recovery');
-const stabilityLastResortReloadEl = document.getElementById('stability-last-resort-reload');
-const stabilityNotifyEl = document.getElementById('stability-notify');
-const stabilityAccountStatusEl = document.getElementById('stability-account-status');
-const stabilityManualReconnectBtn = document.getElementById('stability-manual-reconnect');
-const stabilityTestNetworkBtn = document.getElementById('stability-test-network');
-const stabilityNetworkTestResultEl = document.getElementById('stability-network-test-result');
-const stabilityExportReportBtn = document.getElementById('stability-export-report');
-const stabilityStartNetlogBtn = document.getElementById('stability-start-netlog');
-const stabilityStopNetlogBtn = document.getElementById('stability-stop-netlog');
-const stabilityOpenCrashDumpsBtn = document.getElementById('stability-open-crash-dumps');
+const pokeSettingsEmptyEl = el('poke-settings-empty');
+const pokeSettingsEcoEl = inputEl('poke-settings-eco');
+const pokeSettingsEcoBenchmarkBtn = btnEl('poke-settings-eco-benchmark');
+const pokeSettingsEcoBenchmarkResultEl = el('poke-settings-eco-benchmark-result');
+const pokeSettingsHideChatEl = inputEl('poke-settings-hide-chat');
+const pokeSettingsHideGameBarEl = inputEl('poke-settings-hide-gamebar');
+const pokeSettingsSellLockEl = inputEl('poke-settings-selllock');
+const pokeSettingsSellLockItemsEl = el('poke-settings-selllock-items');
+const pokeSettingsSellLockItemPickerEl = el('poke-settings-selllock-item-picker');
+const pokeSettingsSellLockItemAddEl = el('poke-settings-selllock-item-add');
+const pokeSettingsCleanProfileEl = inputEl('poke-settings-clean-profile');
+const stabilityEnabledEl = inputEl('stability-enabled');
+const stabilityKeepaliveEl = inputEl('stability-keepalive');
+const stabilityAutoRecoveryEl = inputEl('stability-auto-recovery');
+const stabilityLastResortReloadEl = inputEl('stability-last-resort-reload');
+const stabilityNotifyEl = inputEl('stability-notify');
+const stabilityAccountStatusEl = el('stability-account-status');
+const stabilityManualReconnectBtn = btnEl('stability-manual-reconnect');
+const stabilityTestNetworkBtn = btnEl('stability-test-network');
+const stabilityNetworkTestResultEl = el('stability-network-test-result');
+const stabilityExportReportBtn = el('stability-export-report');
+const stabilityStartNetlogBtn = el('stability-start-netlog');
+const stabilityStopNetlogBtn = el('stability-stop-netlog');
+const stabilityOpenCrashDumpsBtn = el('stability-open-crash-dumps');
 const calcStatInputs = {
-  hp: document.getElementById('calc-stat-hp'),
-  atk: document.getElementById('calc-stat-atk'),
-  def: document.getElementById('calc-stat-def'),
-  spatk: document.getElementById('calc-stat-spatk'),
-  spdef: document.getElementById('calc-stat-spdef'),
-  speed: document.getElementById('calc-stat-speed')
+  hp: el('calc-stat-hp'),
+  atk: el('calc-stat-atk'),
+  def: el('calc-stat-def'),
+  spatk: el('calc-stat-spatk'),
+  spdef: el('calc-stat-spdef'),
+  speed: el('calc-stat-speed')
 };
-const btnLayoutMenu = document.getElementById('btn-layout-menu');
-const layoutMenu = document.getElementById('layout-menu');
+const btnLayoutMenu = el('btn-layout-menu');
+const layoutMenu = el('layout-menu');
 const layoutOptions = document.querySelectorAll('.layout-option');
-const btnZoomMenu = document.getElementById('btn-zoom-menu');
-const zoomMenu = document.getElementById('zoom-menu');
+const btnZoomMenu = el('btn-zoom-menu');
+const zoomMenu = el('zoom-menu');
 
-const urlSuggestionsEl = document.getElementById('url-suggestions');
+const urlSuggestionsEl = el('url-suggestions');
 let activeSuggestFor = null; // null | 'address' | accountId
 
 function computeSuggestions(query) {
@@ -259,91 +304,91 @@ const SIDEBAR_WIDTH_EXPANDED = 260;
 const SIDEBAR_WIDTH_COLLAPSED = 64;
 const ZOOM_LEVELS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
-const spaceModal = document.getElementById('space-modal');
-const spaceInputName = document.getElementById('space-input-name');
-const spaceColorsEl = document.getElementById('space-colors');
-const spaceIconsEl = document.getElementById('space-icons');
-const spaceInputUrl = document.getElementById('space-input-url');
-const spaceInputLayout = document.getElementById('space-input-layout');
-const btnSaveSpace = document.getElementById('btn-save-space');
-const btnCancelSpace = document.getElementById('btn-cancel-space');
-const btnDeleteSpace = document.getElementById('btn-delete-space');
+const spaceModal = el('space-modal');
+const spaceInputName = inputEl('space-input-name');
+const spaceColorsEl = el('space-colors');
+const spaceIconsEl = el('space-icons');
+const spaceInputUrl = inputEl('space-input-url');
+const spaceInputLayout = selectEl('space-input-layout');
+const btnSaveSpace = el('btn-save-space');
+const btnCancelSpace = el('btn-cancel-space');
+const btnDeleteSpace = el('btn-delete-space');
 
-const accountModal = document.getElementById('account-modal');
-const accountInputName = document.getElementById('account-input-name');
-const accountColorsEl = document.getElementById('account-colors');
-const accountInputUrl = document.getElementById('account-input-url');
-const accountInputProxy = document.getElementById('account-input-proxy');
-const accountInputProxyUser = document.getElementById('account-input-proxy-user');
-const accountInputProxyPass = document.getElementById('account-input-proxy-pass');
-const accountInputEco = document.getElementById('account-input-eco');
-const accountInputHideChat = document.getElementById('account-input-hide-chat');
-const accountInputHideGameBar = document.getElementById('account-input-hide-gamebar');
-const accountInputSellLock = document.getElementById('account-input-selllock');
-const accountSellLockItemsEl = document.getElementById('account-selllock-items');
-const accountSellLockItemPicker = document.getElementById('account-selllock-item-picker');
-const accountSellLockItemAdd = document.getElementById('account-selllock-item-add');
-const btnSaveAccount = document.getElementById('btn-save-account');
-const btnCancelAccount = document.getElementById('btn-cancel-account');
+const accountModal = el('account-modal');
+const accountInputName = inputEl('account-input-name');
+const accountColorsEl = el('account-colors');
+const accountInputUrl = inputEl('account-input-url');
+const accountInputProxy = inputEl('account-input-proxy');
+const accountInputProxyUser = inputEl('account-input-proxy-user');
+const accountInputProxyPass = inputEl('account-input-proxy-pass');
+const accountInputEco = inputEl('account-input-eco');
+const accountInputHideChat = inputEl('account-input-hide-chat');
+const accountInputHideGameBar = inputEl('account-input-hide-gamebar');
+const accountInputSellLock = inputEl('account-input-selllock');
+const accountSellLockItemsEl = el('account-selllock-items');
+const accountSellLockItemPicker = selectEl('account-selllock-item-picker');
+const accountSellLockItemAdd = el('account-selllock-item-add');
+const btnSaveAccount = el('btn-save-account');
+const btnCancelAccount = el('btn-cancel-account');
 
-const settingsModal = document.getElementById('settings-modal');
-const btnCloseSettings = document.getElementById('btn-close-settings');
+const settingsModal = el('settings-modal');
+const btnCloseSettings = el('btn-close-settings');
 const settingsNavItems = document.querySelectorAll('.settings-nav-item');
 const settingsPanes = document.querySelectorAll('.settings-pane');
-const setLanguage = document.getElementById('set-language');
-const setTheme = document.getElementById('set-theme');
-const setStartWindows = document.getElementById('set-start-windows');
-const setReopenSpace = document.getElementById('set-reopen-space');
-const setProtectionLevel = document.getElementById('set-protection-level');
-const setAutoEcoEnabled = document.getElementById('set-auto-eco-enabled');
-const setAutoEcoMinutes = document.getElementById('set-auto-eco-minutes');
-const ecoSavingsHint = document.getElementById('eco-savings-hint');
-const setShowFpsOverlay = document.getElementById('set-show-fps');
-const setShowPingOverlay = document.getElementById('set-show-ping');
-const setShowAccountMetrics = document.getElementById('set-show-account-metrics');
-const setHuntTelemetry = document.getElementById('set-hunt-telemetry');
-const setTranslateMemoryPersist = document.getElementById('set-translate-memory-persist');
-const setHwAccel = document.getElementById('set-hw-accel');
-const setBetaUpdates = document.getElementById('set-beta-updates');
-const setExportSpaces = document.getElementById('set-export-spaces');
-const setImportSpaces = document.getElementById('set-import-spaces');
-const setDefaultUrl = document.getElementById('set-default-url');
-const setSupportPaypalUrl = document.getElementById('set-support-paypal-url');
-const supportOpenPaypal = document.getElementById('support-open-paypal');
-const setDefaultZoom = document.getElementById('set-default-zoom');
-const setDefaultLayout = document.getElementById('set-default-layout');
-const setDownloadsFolderLabel = document.getElementById('set-downloads-folder-label');
-const setChooseFolder = document.getElementById('set-choose-folder');
-const setAskDownload = document.getElementById('set-ask-download');
-const verApp = document.getElementById('ver-app');
-const verElectron = document.getElementById('ver-electron');
-const verChrome = document.getElementById('ver-chrome');
-const verUpdateStatus = document.getElementById('ver-update-status');
+const setLanguage = selectEl('set-language');
+const setTheme = selectEl('set-theme');
+const setStartWindows = inputEl('set-start-windows');
+const setReopenSpace = inputEl('set-reopen-space');
+const setProtectionLevel = selectEl('set-protection-level');
+const setAutoEcoEnabled = inputEl('set-auto-eco-enabled');
+const setAutoEcoMinutes = inputEl('set-auto-eco-minutes');
+const ecoSavingsHint = el('eco-savings-hint');
+const setShowFpsOverlay = inputEl('set-show-fps');
+const setShowPingOverlay = inputEl('set-show-ping');
+const setShowAccountMetrics = inputEl('set-show-account-metrics');
+const setHuntTelemetry = inputEl('set-hunt-telemetry');
+const setTranslateMemoryPersist = inputEl('set-translate-memory-persist');
+const setHwAccel = inputEl('set-hw-accel');
+const setBetaUpdates = inputEl('set-beta-updates');
+const setExportSpaces = el('set-export-spaces');
+const setImportSpaces = el('set-import-spaces');
+const setDefaultUrl = inputEl('set-default-url');
+const setSupportPaypalUrl = textareaEl('set-support-paypal-url');
+const supportOpenPaypal = el('support-open-paypal');
+const setDefaultZoom = selectEl('set-default-zoom');
+const setDefaultLayout = selectEl('set-default-layout');
+const setDownloadsFolderLabel = el('set-downloads-folder-label');
+const setChooseFolder = el('set-choose-folder');
+const setAskDownload = inputEl('set-ask-download');
+const verApp = el('ver-app');
+const verElectron = el('ver-electron');
+const verChrome = el('ver-chrome');
+const verUpdateStatus = el('ver-update-status');
 
-const extInput = document.getElementById('ext-input');
-const extInstallBtn = document.getElementById('ext-install');
-const extError = document.getElementById('ext-error');
-const extLoadUnpacked = document.getElementById('ext-load-unpacked');
-const extOpenStore = document.getElementById('ext-open-store');
-const extListEl = document.getElementById('ext-list');
-const pluginListEl = document.getElementById('plugin-list');
+const extInput = inputEl('ext-input');
+const extInstallBtn = btnEl('ext-install');
+const extError = el('ext-error');
+const extLoadUnpacked = el('ext-load-unpacked');
+const extOpenStore = el('ext-open-store');
+const extListEl = el('ext-list');
+const pluginListEl = el('plugin-list');
 
-const pwImportBtn = document.getElementById('pw-import');
-const pwError = document.getElementById('pw-error');
-const pwListEl = document.getElementById('pw-list');
-const pwAddName = document.getElementById('pw-add-name');
-const pwAddUrl = document.getElementById('pw-add-url');
-const pwAddUser = document.getElementById('pw-add-user');
-const pwAddPass = document.getElementById('pw-add-pass');
-const pwAddSave = document.getElementById('pw-add-save');
+const pwImportBtn = el('pw-import');
+const pwError = el('pw-error');
+const pwListEl = el('pw-list');
+const pwAddName = inputEl('pw-add-name');
+const pwAddUrl = inputEl('pw-add-url');
+const pwAddUser = inputEl('pw-add-user');
+const pwAddPass = inputEl('pw-add-pass');
+const pwAddSave = el('pw-add-save');
 
-const pokeAlertEnabled = document.getElementById('poke-alert-enabled');
-const pokeAlertShiny = document.getElementById('poke-alert-shiny');
-const pokeAlertRare = document.getElementById('poke-alert-rare');
-const pokeAlertDisconnect = document.getElementById('poke-alert-disconnect');
-const pokeAlertBalls = document.getElementById('poke-alert-balls');
-const pokeAlertBallsThreshold = document.getElementById('poke-alert-balls-threshold');
-const networkListEl = document.getElementById('network-list');
+const pokeAlertEnabled = inputEl('poke-alert-enabled');
+const pokeAlertShiny = inputEl('poke-alert-shiny');
+const pokeAlertRare = inputEl('poke-alert-rare');
+const pokeAlertDisconnect = inputEl('poke-alert-disconnect');
+const pokeAlertBalls = inputEl('poke-alert-balls');
+const pokeAlertBallsThreshold = inputEl('poke-alert-balls-threshold');
+const networkListEl = el('network-list');
 
 const SPACE_COLORS = ['#4f8cff', '#ff6b6b', '#51cf66', '#fcc419', '#cc5de8', '#ff922b', '#f06595', '#22b8cf'];
 const SPACE_ICONS = ['grid', 'gamepad', 'swords', 'shield', 'flame', 'leaf', 'droplet', 'bolt', 'star', 'crown', 'ghost', 'rocket'];
@@ -362,6 +407,17 @@ const SPACE_ICON_SVGS = {
   rocket: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M14.5 3.5c3 0 5 2 5 5-3 0-6.5 1.5-9 4l-3-3c2.5-2.5 4-6 7-6z"/><path d="M10.5 12.5 6 17l-3 1 1-3 4.5-4.5"/><circle cx="15.5" cy="8.5" r="1.2"/><path d="M9 18c-1 1-4 1.5-5 1-.5-1 0-4 1-5"/></svg>'
 };
 
+// Los arrays van tipados explicitamente porque, inferidos desde [] vacio,
+// TypeScript los toma como never[] y CADA acceso a una propiedad del resultado
+// de un .find()/.filter() cuenta como error: eran 184 de los que reportaba
+// este archivo, todos falsos.
+//
+// any[] y no un typedef real por la misma razon que window.api es any en
+// types/globals.d.ts: la forma de estas entidades la define main.js y llega
+// por IPC. Enumerarlas aca crearia un segundo lugar donde mantener seis
+// shapes a mano, que se desactualiza en silencio. La mejora futura no es
+// escribirlas a mano sino derivarlas de un unico lugar compartido con main.
+/** @type {{ spaces: any[], accounts: any[], bookmarks: any[], passwords: any[], history: any[], downloads: any[], settings: any }} */
 let state = { spaces: [], accounts: [], bookmarks: [], passwords: [], history: [], downloads: [], settings: {} };
 let metrics = {};
 let gameStats = {}; // Fase B: {[accountId]: {killsPerHour, xpPerHour, goldPerHour, captures, ...} | null}
@@ -1383,10 +1439,10 @@ function positionWebviews() {
     }
   });
   panelsGeometry.forEach((panel) => {
-    const el = document.getElementById('wv-' + panel.id);
-    if (!el) return;
-    el.classList.remove('hidden-panel');
-    applyContentRect(el, panel.contentRect);
+    const wvEl = document.getElementById('wv-' + panel.id);
+    if (!wvEl) return;
+    wvEl.classList.remove('hidden-panel');
+    applyContentRect(wvEl, panel.contentRect);
   });
 }
 
@@ -2376,7 +2432,7 @@ document.addEventListener('click', () => {
 // lives here now — status + master on/off, the 3-mode intensity slider,
 // per-page stats, per-site pause/force-block, quick whitelist, and custom
 // filter rules — sized as a dropdown rather than a full page.
-const shieldMenu = document.getElementById('shield-menu');
+const shieldMenu = el('shield-menu');
 const ADBLOCK_MODES = ['standard', 'normal', 'super'];
 const ADVANCED_FILTER_LIST_KEYS = ['ads', 'tracking', 'cookies', 'annoyances'];
 const ADVANCED_FILTER_LIST_LABELS = {
@@ -3753,7 +3809,7 @@ async function refreshEcoSavingsHint() {
 // popup.html in a small floating window (see extensions:openPopup, main.js)
 // — extensions with no popup (background-only, e.g. some ad blockers) get a
 // disabled-looking icon instead of silently doing nothing on click.
-const extToolbarEl = document.getElementById('ext-toolbar');
+const extToolbarEl = el('ext-toolbar');
 function renderExtensionToolbar() {
   const list = (state.settings.extensions || []).filter((e) => e.enabled !== false);
   extToolbarEl.innerHTML = '';
@@ -3888,8 +3944,8 @@ function renderNetworkTab() {
 }
 
 const PERMISSION_KEYS = ['media', 'notifications', 'geolocation'];
-const permissionsListEl = document.getElementById('permissions-list');
-const permissionsClearAllBtn = document.getElementById('permissions-clear-all');
+const permissionsListEl = el('permissions-list');
+const permissionsClearAllBtn = el('permissions-clear-all');
 
 permissionsClearAllBtn?.addEventListener('click', async () => {
   await window.api.clearAllSitePermissions();
@@ -4721,12 +4777,12 @@ window.api.onAccountCrashed(({ id, gaveUp }) => {
   renderPanelHeaders();
 });
 
-const findbarEl = document.getElementById('findbar');
-const findbarInput = document.getElementById('findbar-input');
-const findbarCount = document.getElementById('findbar-count');
-const findbarPrev = document.getElementById('findbar-prev');
-const findbarNext = document.getElementById('findbar-next');
-const findbarClose = document.getElementById('findbar-close');
+const findbarEl = el('findbar');
+const findbarInput = inputEl('findbar-input');
+const findbarCount = el('findbar-count');
+const findbarPrev = el('findbar-prev');
+const findbarNext = el('findbar-next');
+const findbarClose = el('findbar-close');
 let findbarAccountId = null;
 
 function openFindbar(id) {
@@ -4989,23 +5045,23 @@ window.addEventListener('blur', () => {
 });
 
 window.api.onWebviewReady((accountId) => {
-  const el = document.getElementById('wv-' + accountId);
-  if (!el) return;
+  const wvEl = document.getElementById('wv-' + accountId);
+  if (!wvEl) return;
   const account = state.accounts.find((a) => a.id === accountId);
   if (account && account.url && account.url !== 'about:blank') {
-    el.src = account.url;
+    wvEl.src = account.url;
   }
 });
 
 window.api.onAccountLiveRect(({ id, contentRect }) => {
-  const el = document.getElementById('wv-' + id);
-  if (el) applyContentRect(el, contentRect);
+  const wvEl = document.getElementById('wv-' + id);
+  if (wvEl) applyContentRect(wvEl, contentRect);
 });
 
 window.api.onPipState(({ id, active }) => {
-  const el = document.getElementById('wv-' + id);
-  if (!el) return;
-  el.classList.toggle('pip-active', active);
+  const wvEl = document.getElementById('wv-' + id);
+  if (!wvEl) return;
+  wvEl.classList.toggle('pip-active', active);
   positionWebviews();
 });
 
@@ -5025,15 +5081,15 @@ async function checkPasswordEncryptionWarning() {
   if (localStorage.getItem(PASSWORD_ENCRYPTION_WARNING_DISMISSED_KEY) === '1') return;
   const available = await window.api.isPasswordEncryptionAvailable();
   if (available) return;
-  document.getElementById('security-warning-modal').classList.remove('hidden');
+  el('security-warning-modal').classList.remove('hidden');
 }
 
-document.getElementById('btn-close-security-warning').addEventListener('click', () => {
-  document.getElementById('security-warning-modal').classList.add('hidden');
+el('btn-close-security-warning').addEventListener('click', () => {
+  el('security-warning-modal').classList.add('hidden');
 });
-document.getElementById('btn-dismiss-security-warning').addEventListener('click', () => {
+el('btn-dismiss-security-warning').addEventListener('click', () => {
   localStorage.setItem(PASSWORD_ENCRYPTION_WARNING_DISMISSED_KEY, '1');
-  document.getElementById('security-warning-modal').classList.add('hidden');
+  el('security-warning-modal').classList.add('hidden');
 });
 
 async function init() {
