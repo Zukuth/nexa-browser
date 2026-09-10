@@ -6,14 +6,15 @@ Nexa Browser te deja abrir varias sesiones completamente aisladas del mismo siti
 
 [![VirusTotal](https://img.shields.io/badge/VirusTotal-0%2F67%20detections-brightgreen?logo=virustotal&logoColor=white)](https://www.virustotal.com/gui/file/d83da03ae2fa7ca534f62d8492e80df823d1091b7421cfb6d48aa604a74c2da7/detection)
 
-**Escaneado en VirusTotal: 0/67 motores antivirus lo marcaron como malicioso** ([ver análisis completo](https://www.virustotal.com/gui/file/d83da03ae2fa7ca534f62d8492e80df823d1091b7421cfb6d48aa604a74c2da7/detection)) — análisis hecho sobre `Nexa-Browser-Setup-0.3.6-x64.exe`, **la última versión estable disponible**, tal cual se publica en [Releases](https://github.com/Zukuth/nexa-browser/releases/latest).
+**Escaneado en VirusTotal: 0/67 motores antivirus lo marcaron como malicioso** ([ver análisis completo](https://www.virustotal.com/gui/file/d83da03ae2fa7ca534f62d8492e80df823d1091b7421cfb6d48aa604a74c2da7/detection)) — análisis hecho sobre `Nexa-Browser-Setup-0.3.6-x64.exe`, tal cual se publicó en [Releases](https://github.com/Zukuth/nexa-browser/releases). El instalador **no está firmado con un certificado de código**, así que Windows va a mostrar una advertencia al instalarlo ([ver cómo continuar](#instalación)); el escaneo está justamente para que puedas verificar el binario por tu cuenta.
 
 ## Por qué instalarlo
 
 Si alguna vez tuviste que:
 - Abrir cinco ventanas de incógnito para manejar cinco cuentas del mismo sitio,
 - Perder tiempo cerrando sesión y volviendo a entrar solo para revisar otra cuenta,
-- O simplemente querés un navegador liviano que no te coma la PC mientras tenés todo eso abierto a la vez,
+- Encontrarte con que la cuenta que dejaste en segundo plano se desconectó sola hace horas,
+- O querer ver varias cuentas **al mismo tiempo, lado a lado**, en vez de ir saltando entre ventanas,
 
 Nexa Browser está armado exactamente para ese problema.
 
@@ -25,8 +26,15 @@ Cada cuenta corre en su propia sesión aislada de Chromium: cookies, almacenamie
 ### 🧩 Organización en Espacios y layouts flexibles
 Agrupá tus cuentas en Espacios (trabajo, personal, gaming, lo que necesites) y elegí cómo verlas: panel único, cuadrícula automática, columnas, filas, o modo libre con paneles que arrastrás y redimensionás a tu gusto.
 
-### ⚡ Bajo consumo, sin sacrificar fluidez
-El motor interno está optimizado a propósito: los guardados se agrupan en vez de escribir a disco en cada clic, el redimensionado de ventana no recompone todo de una, y cada cuenta solo se re-renderiza cuando realmente cambia algo. Resultado: varias cuentas abiertas a la vez sin que la PC se ponga pesada.
+### 🔌 Tus cuentas en segundo plano no se desconectan
+Chromium le baja la prioridad a todo lo que no estás mirando: los timers encadenados de una pestaña en segundo plano se limitan a **uno por minuto**. El keepalive del WebSocket de cualquier juego o app en tiempo real es justo ese tipo de timer — se estrangula, el servidor cierra la sesión por inactividad, y te enterás horas después. Nexa desactiva ese mecanismo a nivel de toda la app (`disable-background-timer-throttling` y los dos flags que lo acompañan), más una escalera de recuperación de conexión por niveles que repara sin recargar la página como primer recurso.
+
+**Es la diferencia real contra usar perfiles de Chrome**: un perfil de Chrome no te deja tocar esto. Trade-off consciente y asumido: las cuentas en segundo plano consumen algo más de CPU, porque justamente les estamos prohibiendo a Chromium que las duerma.
+
+### ⚡ Trabajo de rendimiento medido, no prometido
+Cada versión corre el mismo benchmark reproducible (`node scripts/perf-benchmark.js`) y el número queda publicado más abajo, para bien o para mal. En la última pasada grande el CPU bajó **de 1.6% a 0.6% (-64%)**: overlays apagados por defecto, escritura del store fuera del hilo principal, y el sidebar dejando de reconstruirse entero en cada cambio de estado irrelevante.
+
+Lo que Nexa **no** te va a prometer: que gasta menos RAM que abrir la misma cantidad de perfiles de Chrome. Es Chromium real, cada sesión aislada paga su costo. Lo que sí te da es que esas sesiones se mantengan vivas y controlables desde una sola ventana.
 
 ### 🛡️ Bloqueador de anuncios y rastreadores integrado
 Viene activado por defecto, sin extensiones que instalar aparte — bloquea publicidad, analíticas y rastreadores conocidos en todas las cuentas.
@@ -64,31 +72,20 @@ Pausá, reanudá o cancelá descargas en curso, elegí carpeta de destino por de
 ### 🌱 Modo Eco por cuenta
 Activalo en las cuentas que dejás en segundo plano (por ejemplo, un juego idle) para reducir el consumo de CPU sin frenar el progreso real de la cuenta.
 
-## 🎮 Poke Idle World — panel de herramientas integrado
+## 🎮 Poke Idle World — panel integrado
 
-Para quienes juegan [Poke Idle World](https://poke.idleworld.online), Nexa Browser trae un panel propio (botón 🎮 en la barra superior) que lee en vivo los datos que el propio juego transmite — **de solo lectura: nunca automatiza capturas ni toca el captcha**. Todos los catálogos (ítems, Pokémon, evoluciones) se traen en vivo directo del juego, así que cualquier actualización que el juego reciba aparece automáticamente en estas herramientas, sin esperar una nueva versión de Nexa Browser.
+Para quienes juegan [Poke Idle World](https://poke.idleworld.online), Nexa Browser trae un panel propio (botón 🎮 en la barra superior) que lee en vivo los datos que el propio juego transmite — **de solo lectura: nunca automatiza capturas ni toca el captcha**. Los catálogos (ítems, Pokémon, evoluciones) se traen en vivo directo del juego, así que cualquier actualización que el juego reciba aparece sola, sin esperar una versión nueva de Nexa.
 
-### Resumen y seguimiento en vivo
-- **📊 Resumen en vivo**: muertes/hora, XP/hora, oro/hora, capturas/hora y shinies, sumado en tiempo real por cada cuenta abierta.
-- **✨ Capturas destacadas**: log en tiempo real de todo lo capturado en la sesión, con sprite, quality e IV.
-- **💰 Drops en vivo**: todo lo que sueltan tus kills en la sesión actual, con ícono e valor real a precio NPC — separado por cuenta si tenés varias abiertas.
-- **📈 Comparador de hunts**: sesión actual vs. la hunt anterior, más un historial de las últimas 20 hunts por cuenta (oro/hora, XP/hora, kills/hora).
+> **Nota de alcance (v0.4.0):** el panel se recortó a propósito de 13 a 4 secciones. Market global, Tienda portátil, Venta masiva, Depot, Tier List, Caza & XP, Drops en vivo, Comparador de hunts y Pokédex **se retiraron** — eran mucha superficie de mantenimiento acoplada a un solo juego para lo que aportaban. Lo que queda es lo que se usa todos los días.
 
-### Herramientas de análisis
-- **🧬 Calculadora de Growth/IV y Quality**: la fórmula real del juego, portada y verificada — elegí una captura o un Pokémon del equipo para autocompletar, sin tipear nada, y mirá el veredicto (Excepcional a Bajo) según el % de IV real.
-- **🏆 Tier List**: ranking del roster completo por percentil de stats base, con bono de Clan opcional, buscador por nombre y un campo para **ajustar el ranking a un nivel específico** (recalcula las stats reales a ese nivel, mismo estándar que usan las calculadoras de referencia de la comunidad). Al elegir un Pokémon se muestra su línea evolutiva completa y sus matchups de tipo más fuertes y más débiles.
-- **⚔️ Caza & XP**: XP/hora y oro/hora reales de cada especie cazable, con el multiplicador de daño de tu atacante actual contra cada tipo, buscador por nombre, y una columna opcional de "Poder a nivel X" para comparar presas ajustando por nivel.
-- **📖 Pokédex**: filtros de solo lectura por capturado/no capturado, por cuenta.
-
-### Comercio integrado (sin salir del navegador)
-- **🏪 Tienda portátil**: comprá Poké Balls, pociones y revives directo de la tienda de Mark, en lote, sin viajar al NPC.
-- **📤 Venta masiva protegida**: vendé ítems y Pokémon en lote desde el navegador, con un candado configurable por ítem/Pokémon para que nunca se vendan por error.
-- **📦 Depot portátil**: movimientos entre tu mochila/equipo y el Depot con un click — incluye el **Depot familiar** (ítems y Pokémon compartidos con tu familia en el juego), con buscador en las cuatro pestañas.
-- **🛒 Market global**: comprá y vendé directo del Market del juego, misma sesión y saldo de la cuenta elegida. Paginación real (se puede ver **todo** lo publicado, no solo los primeros resultados) y una sección de **Ofertas** que detecta automáticamente publicaciones muy por debajo de su valor típico, con insignia especial para las mejores oportunidades.
-
-### Alertas y estabilidad de conexión
-- **🔔 Alertas nativas**: notificaciones de Windows para shiny, capturas raras, desconexión/reconexión y pocas balls, configurables una por una — incluye un sniper de IV mínimo en el Market global.
-- **🩺 Panel de Estabilidad**: recuperación de conexión automática por niveles (revalidación de red, reconexión suave, reinyección de la captura de telemetría, aviso/recarga como último recurso), mantener la app activa en segundo plano, y un **Test de red a pedido** que revisa tu conexión con el servidor del juego (red, DNS, HTTPS) con un solo click.
+- **👥 Mi Equipo**: el equipo activo de cada cuenta con nivel, quality/IV, stats y los movimientos que ya debería tener aprendidos según su nivel actual, calculado contra el catálogo del propio juego.
+- **🧬 Calculadora de IV / Quality**: la fórmula real de Growth y Quality del juego, portada y verificada. Elegí una captura o un Pokémon del equipo para autocompletar, o cargá los datos a mano.
+- **🔔 Alertas nativas**: notificaciones de Windows para shiny (capturado o visto), capturas raras (Lendária o más), desconexión/reconexión y pocas balls con umbral configurable — cada una se prende y apaga por separado.
+- **⚙️ Ajustes por cuenta**: cuatro pestañas rápidas sin abrir el editor de cuentas —
+  - *Rendimiento*: Modo Eco + **Comparativa Eco**, que mide esa cuenta con Eco apagado y encendido y después restaura tu preferencia.
+  - *Interfaz del juego*: sacar el chat y la barra superior del juego **del árbol de la página** (no taparlos) — menos trabajo de layout y pintado.
+  - *Protección*: candado de venta que bloquea de verdad la venta de los Pokémon e ítems marcados, no un simple aviso de confirmación.
+  - *Estabilidad*: recuperación de conexión por niveles, mantener activo en segundo plano, recarga como último recurso (apagada por defecto) y un **Test de red a pedido** contra el servidor del juego (red, DNS, HTTPS). Todo apagado por defecto — no cambia nada hasta que lo actives.
 
 ## Instalación
 
@@ -128,11 +125,15 @@ Construido con [Electron](https://www.electronjs.org/) — motor Chromium real, 
 
 **Bloqueo de anuncios y rastreadores:** la decisión de red (bloquear/permitir cada request) corre sobre [`adblock-rs`](https://github.com/brave/adblock-rust), el mismo motor nativo en Rust que usa Brave — no una reimplementación propia. El filtrado cosmético (ocultar los huecos vacíos que deja un anuncio bloqueado) sigue corriendo sobre el motor de [`@ghostery/adblocker-electron`](https://github.com/ghostery/adblocker), sin cambios.
 
-**Para clonar y correr desde código fuente:** `adblock-rs` no trae binarios precompilados — `npm install` compila el motor desde Rust la primera vez (`cargo build --release`), así que además de Node hace falta tener instalados [Rust](https://rustup.rs/) y, en Windows, las **Build Tools de C++ de Visual Studio** (workload "Desktop development with C++"). Si te falta alguno de los dos, `npm install` va a fallar con un error de `cargo` o del linker — no es un bug del proyecto, es justo lo que hace falta instalar antes.
+**Para clonar y correr desde código fuente:** `adblock-rs` no trae binarios precompilados — `npm install` compila el motor desde Rust la primera vez (`cargo build --release`), así que para tener bloqueo de red hace falta [Rust](https://rustup.rs/) y, en Windows, las **Build Tools de C++ de Visual Studio** (workload "Desktop development with C++").
+
+**Pero no es un requisito para desarrollar.** `adblock-rs` está declarado en `optionalDependencies`, así que si esa compilación falla, `npm install` avisa y sigue en vez de abortar, y la app arranca igual: `electron/adblock-manager.js` detecta el módulo ausente y reporta el motor de red como `failed` por el mismo camino de UI que una falla de red real, sin tumbar el proceso principal. Vas a poder trabajar en todo el resto del navegador con el bloqueo de anuncios apagado.
+
+Si el bloqueo aparece como fallido y lo querés funcionando, instalá Rust + Build Tools y corré `npm install` de nuevo. El instalador ya empaquetado no se ve afectado en ningún caso: lleva el binario adentro.
 
 ---
 
-## Herramientas nuevas (v0.3.8)
+## Dos herramientas con captura de pantalla
 
 ### 📸 Captura de pantalla por cuenta
 
