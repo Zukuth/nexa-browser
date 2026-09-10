@@ -1,3 +1,4 @@
+// @ts-check
 // Shared by permissions-manager.js and adblock-manager.js — extract a
 // hostname from a URL-like string, swallowing parse errors. Distinct from
 // main.js's own `hostnameOf()`, which additionally strips a leading `www.`

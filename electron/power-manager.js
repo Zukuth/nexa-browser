@@ -1,3 +1,4 @@
+// @ts-check
 // Windows suspend/resume/lock/battery lifecycle — previously handled nowhere
 // in the app (confirmed: zero usage of powerSaveBlocker/powerMonitor before
 // this module existed). A farming browser left running for hours/days needs
@@ -11,7 +12,7 @@
 
 const { powerSaveBlocker, powerMonitor } = require('electron');
 
-let blockerId = null;
+/** @type {number|null} */ let blockerId = null;
 let monitorWired = false;
 let onBattery = false;
 let suspended = false;
@@ -37,7 +38,7 @@ function updateBlockerNeed(hasActiveGameAccount) {
     blockerId = powerSaveBlocker.start('prevent-app-suspension');
   } else if (action === 'stop') {
     try {
-      powerSaveBlocker.stop(blockerId);
+      if (blockerId !== null) powerSaveBlocker.stop(blockerId);
     } catch (err) {
       console.error('[power-manager] failed to stop powerSaveBlocker', err);
     }
@@ -45,6 +46,11 @@ function updateBlockerNeed(hasActiveGameAccount) {
   }
 }
 
+/**
+ * @param {{ onSuspend?: Function, onResume?: Function, onLockScreen?: Function,
+ *   onUnlockScreen?: Function, onACPower?: Function, onBatteryPower?: Function,
+ *   onSpeedLimitChange?: Function }} [handlers]
+ */
 function initPowerManager({
   onSuspend, onResume, onLockScreen, onUnlockScreen, onACPower, onBatteryPower, onSpeedLimitChange
 } = {}) {

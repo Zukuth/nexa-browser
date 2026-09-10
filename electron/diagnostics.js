@@ -1,3 +1,4 @@
+// @ts-check
 // Assembles a shareable diagnostic report (connection-manager state +
 // network-health snapshots + ad-block log + memory stats) and scrubs it
 // before it's ever written to disk or shown — cookies, tokens, auth

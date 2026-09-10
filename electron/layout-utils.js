@@ -1,3 +1,4 @@
+// @ts-check
 // Pure layout math — no Electron APIs, no side effects, safe to require from
 // plain Node (including test/unit/*.test.js via `node --test`, with no app
 // to launch). Kept separate from main.js specifically so this logic — the

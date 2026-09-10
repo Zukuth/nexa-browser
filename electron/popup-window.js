@@ -1,3 +1,4 @@
+// @ts-check
 const { BrowserWindow } = require('electron');
 
 // Shared by permissions-manager.js (the permission-prompt popup) and

@@ -1,3 +1,4 @@
+// @ts-check
 // Pure gating logic for the memory optimizer — extracted so it's testable
 // without a real Electron session/cache. The actual cache-clearing actions
 // (electron/main.js's optimizeMemorySafe/optimizeMemoryDeepClean) already
@@ -41,6 +42,7 @@ function shouldSkipOptimize({
 // with.
 const DEFAULT_SYSTEM_FREE_THRESHOLD_PCT = 0.3;
 
+/** @param {{ freeMb?: number, totalMb?: number, thresholdPct?: number }} [mem] */
 function systemMemoryPressureHigh({ freeMb, totalMb, thresholdPct = DEFAULT_SYSTEM_FREE_THRESHOLD_PCT } = {}) {
   if (typeof freeMb !== 'number' || typeof totalMb !== 'number' || totalMb <= 0) return false;
   return freeMb / totalMb < thresholdPct;

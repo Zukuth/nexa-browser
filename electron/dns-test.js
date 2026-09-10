@@ -1,3 +1,4 @@
+// @ts-check
 // DNS speed test — measures real resolution latency against a curated list
 // of public DNS resolvers, so the user can pick the fastest one for their
 // own network before applying it (this module only measures; it never

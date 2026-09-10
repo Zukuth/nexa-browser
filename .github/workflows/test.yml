@@ -27,6 +27,14 @@ jobs:
 
       - run: npm run lint
 
+      # jsconfig.json deja checkJs en false a propósito: activarlo de golpe
+      # reporta ~1.500 errores (77% de ellos en src/renderer.js, y la mayoría
+      # son accesos a DOM posiblemente null). En vez de eso, cada archivo que
+      # ya pasa limpio lleva "// @ts-check" en su primera línea, y esto los
+      # mantiene así. Para sumar uno nuevo: agregale el comentario y corré
+      # `npm run typecheck` — si pasa, entra.
+      - run: npm run typecheck
+
       - run: npm run check:i18n
 
       - run: npm test

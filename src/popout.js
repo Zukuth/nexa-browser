@@ -1,3 +1,4 @@
+// @ts-check
 // Popped-out account window: main sends the account's partition/preload/url
 // once (popout:init), this creates a <webview> pointed at about:blank first so
 // main's did-attach-webview handler can finish wiring the webContents (session
@@ -10,7 +11,13 @@
 // app owns (index.html, permission-prompt.html, screenshot-editor.html) —
 // `script-src 'self'` blocks inline scripts, which is why this was the one
 // shell document without a CSP.
-window.popoutAPI.onInit((info) => {
+// popoutAPI lo expone electron/popout-preload.js vía contextBridge, así que no
+// existe en el tipo Window estándar — de ahí el cast puntual en vez de
+// silenciar el archivo entero con @ts-nocheck.
+/** @type {{ onInit: Function, onReady: Function }} */
+const popoutAPI = (/** @type {any} */ (window)).popoutAPI;
+
+popoutAPI.onInit((info) => {
   const wv = document.createElement('webview');
   wv.setAttribute('partition', info.partition);
   wv.setAttribute('preload', info.preload);
@@ -29,7 +36,7 @@ window.popoutAPI.onInit((info) => {
   wv.src = 'about:blank';
   document.body.appendChild(wv);
 
-  window.popoutAPI.onReady((accountId) => {
+  popoutAPI.onReady((accountId) => {
     if (accountId === info.accountId && info.url && info.url !== 'about:blank') {
       wv.src = info.url;
     }

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 // Manual verification that translate.js's watch loop keeps a page translated
 // through the page's OWN later DOM updates — not just at the moment
 // "Traducir página" was clicked. Playwright can't read a <webview>'s content

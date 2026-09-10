@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 // Automated soak test for the CORE stability logic (game-connection-manager
 // + network-health + backoff), run against the local test-double server for
 // a sustained period of simulated churn (frames, disconnects, latency,
@@ -74,7 +75,7 @@ async function main() {
       const elapsed = Date.now() - startedAt;
       if (elapsed >= DURATION_MS) {
         clearInterval(interval);
-        resolve();
+        resolve(undefined); // resolve(): TS pide un argumento explícito con checkJs
         return;
       }
 

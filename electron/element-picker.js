@@ -1,3 +1,4 @@
+// @ts-check
 // uBlock Origin's signature "point at an element, it disappears" picker —
 // click-to-hide instead of the engine only ever acting on pre-existing
 // filter list rules. Runs entirely inside the page (webview guest) context

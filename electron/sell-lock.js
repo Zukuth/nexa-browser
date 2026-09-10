@@ -1,3 +1,4 @@
+// @ts-check
 // Sell-lock: hard-blocks selling specific caught Pokémon (by their unique
 // instance id) or specific item types (by name) the user picked, instead of
 // PokeGrid's approach of just popping a confirm() the user can click through.

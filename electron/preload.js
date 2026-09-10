@@ -1,3 +1,4 @@
+// @ts-check
 const { contextBridge, ipcRenderer } = require('electron');
 
 // NOTE: this preload runs with sandbox:true (main window webPreferences), so

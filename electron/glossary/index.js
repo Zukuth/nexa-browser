@@ -1,3 +1,4 @@
+// @ts-check
 // Glossary layer for electron/translate.js — the small, hand-verified
 // exact-match safety net for cases the MT engine itself gets wrong on
 // short, out-of-context game UI strings and chat slang. Split into this

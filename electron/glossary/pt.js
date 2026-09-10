@@ -1,3 +1,4 @@
+// @ts-check
 // Portuguese -> {es, en} term overrides. Split out of translate.js into its
 // own file (2026-09-04) once this table crossed ~150 entries across 9 real
 // chat captures and its own header comment ("intentionally small") stopped

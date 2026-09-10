@@ -1,3 +1,4 @@
+// @ts-check
 // Real reachability diagnostics — DNS + HTTPS, not just navigator.onLine.
 // `net.isOnline()` (and its renderer-side twin `navigator.onLine`) only
 // means "some network interface exists" — it says nothing about whether
@@ -45,6 +46,12 @@ async function checkAccountNetwork(accountId, opts = {}) {
     isOnlineImpl = net && typeof net.isOnline === 'function' ? net.isOnline : null
   } = opts;
 
+  /**
+   * @type {{ electronOnline: boolean|null, dnsResolved: boolean,
+   *   resolvedAddresses: string[], httpsReachable: boolean,
+   *   httpsStatus: number|null, lastErrorCode: string|null,
+   *   lastErrorDescription: string|null, proxyActive: boolean, checkedAt: number }}
+   */
   const result = {
     electronOnline: null,
     dnsResolved: false,
@@ -65,7 +72,7 @@ async function checkAccountNetwork(accountId, opts = {}) {
 
   try {
     result.electronOnline = isOnlineImpl ? !!isOnlineImpl() : null;
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     console.error('[network-health] net.isOnline() failed for', accountId, err);
   }
 
@@ -73,7 +80,7 @@ async function checkAccountNetwork(accountId, opts = {}) {
     const addresses = await resolveImpl(hostname);
     result.dnsResolved = Array.isArray(addresses) && addresses.length > 0;
     result.resolvedAddresses = Array.isArray(addresses) ? addresses : [];
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     result.dnsResolved = false;
     result.lastErrorCode = (err && err.code) || 'DNS_ERROR';
     result.lastErrorDescription = (err && err.message) || String(err);
@@ -94,7 +101,7 @@ async function checkAccountNetwork(accountId, opts = {}) {
     const res = await fetchImpl(`https://${hostname}/`, { method: 'HEAD', signal: controller.signal });
     result.httpsReachable = true;
     result.httpsStatus = res.status;
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     result.httpsReachable = false;
     // Don't overwrite a DNS-error reason with a generic fetch-abort reason —
     // the DNS failure is the more specific, more useful diagnosis.
@@ -113,6 +120,10 @@ async function checkAccountNetwork(accountId, opts = {}) {
 // captureMode is hardcoded to 'default' and never 'includeSensitive' or
 // 'everything', which can capture cookies/auth data — callers must not be
 // able to override this.
+/**
+ * @param {any} ses
+ * @param {{ path?: string, maxSizeMb?: number }} [opts]
+ */
 async function startNetLogCapture(ses, { path, maxSizeMb = 20 } = {}) {
   if (!ses || !ses.netLog) return { ok: false, error: 'session sin netLog disponible' };
   if (!path) return { ok: false, error: 'se requiere una ruta de archivo' };
@@ -122,7 +133,7 @@ async function startNetLogCapture(ses, { path, maxSizeMb = 20 } = {}) {
       maxFileSize: Math.max(1, maxSizeMb) * 1024 * 1024
     });
     return { ok: true, path };
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     console.error('[network-health] no se pudo iniciar netLog', err);
     return { ok: false, error: String((err && err.message) || err) };
   }
@@ -133,7 +144,7 @@ async function stopNetLogCapture(ses) {
   try {
     const path = await ses.netLog.stopLogging();
     return { ok: true, path };
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     console.error('[network-health] no se pudo detener netLog', err);
     return { ok: false, error: String((err && err.message) || err) };
   }

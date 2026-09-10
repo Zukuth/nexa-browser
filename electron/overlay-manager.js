@@ -1,3 +1,4 @@
+// @ts-check
 // Per-tab FPS/ping diagnostic overlays — split out of main.js (perf/
 // maintainability pass, 2026-08-21) as the first slice of that file's
 // too-big-to-safely-edit problem, following the same one-feature-per-module

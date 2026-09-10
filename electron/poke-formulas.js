@@ -1,3 +1,4 @@
+// @ts-check
 // Pure Poke Idle World game-math — no Electron APIs, no side effects, safe to
 // require from plain Node (mirrors layout-utils.js). Every formula here was
 // extracted verbatim from the user's own reference tool (pokemon-360.web.app,
@@ -73,7 +74,8 @@ function inferGrowth(base, level, quality, observed, statKey) {
     if (growthStat(base, g, level, quality, statKey) === observed) matches.push(g);
   }
   if (matches.length) return { exact: true, values: matches };
-  let best = null, bestDiff = Infinity;
+  /** @type {number|null} */ let best = null;
+  let bestDiff = Infinity;
   for (let g = GROWTH_MIN; g <= GROWTH_MAX; g++) {
     const diff = Math.abs(growthStat(base, g, level, quality, statKey) - observed);
     if (diff < bestDiff) { bestDiff = diff; best = g; }

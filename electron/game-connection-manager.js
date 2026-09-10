@@ -1,3 +1,4 @@
+// @ts-check
 // Per-account connection state machine — pure logic only in this file. No
 // Electron APIs, no webContents, no CDP: everything here is a plain
 // function of (state, event) -> nextState, fully unit-testable without a
@@ -148,7 +149,12 @@ function shouldResetBackoff(lastHealthyAt, now = Date.now()) {
 // Every stop condition is independent — any one of them alone is sufficient
 // to stop retrying. No infinite reconnect loops: maxAttempts is a hard
 // ceiling regardless of backoff/reset behavior elsewhere.
-function shouldStopRetrying({ closed, quitting, isLoginPage, noInternet, userDisabled, attemptCount, maxAttempts } = {}) {
+/**
+ * @param {{ closed?: boolean, quitting?: boolean, isLoginPage?: boolean,
+ *   noInternet?: boolean, userDisabled?: boolean, attemptCount?: number,
+ *   maxAttempts?: number }} [conditions]
+ */
+function shouldStopRetrying({ closed, quitting, isLoginPage, noInternet, userDisabled, attemptCount = 0, maxAttempts } = {}) {
   if (closed) return { stop: true, reason: 'account-closed' };
   if (quitting) return { stop: true, reason: 'app-quitting' };
   if (isLoginPage) return { stop: true, reason: 'on-login-page' };
@@ -162,10 +168,14 @@ function shouldStopRetrying({ closed, quitting, isLoginPage, noInternet, userDis
 // count, and last-healthy timestamp; not itself the thing under heavy test
 // (reduce()/backoff helpers are), but exercised indirectly by the wiring
 // tests once Etapa 5 lands.
+/**
+ * @param {string} accountId
+ * @param {{ getWc?: Function, onRecoveryLevel?: Function, onStateChange?: Function }} [hooks]
+ */
 function createAccountConnectionManager(accountId, { getWc, onRecoveryLevel, onStateChange } = {}) {
   let state = STATES.INITIALIZING;
   let attemptCount = 0;
-  let lastHealthyAt = null;
+  /** @type {number|null} */ let lastHealthyAt = null;
 
   function handleEvent(event, now = Date.now()) {
     const prevState = state;

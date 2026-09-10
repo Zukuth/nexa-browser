@@ -1,3 +1,4 @@
+// @ts-check
 // Real Picture-in-Picture with working controls — built on the browser's
 // own native video.requestPictureInPicture(), not a fully custom window.
 //
@@ -100,6 +101,7 @@ function setupMediaSessionScript(video) {
 // existed. No x/y (toolbar button — no click point to go on): picks
 // whichever <video> is largest/most visible on screen right now, since the
 // toolbar isn't tied to a specific spot on the page.
+/** @param {{ x?: number, y?: number }} [point] */
 function requestPipWithControlsScript({ x, y } = {}) {
   const pointPick = (x != null && y != null)
     ? `

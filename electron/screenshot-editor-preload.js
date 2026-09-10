@@ -1,3 +1,4 @@
+// @ts-check
 const { contextBridge, ipcRenderer } = require('electron');
 
 // Minimal preload for the screenshot editor window (src/screenshot-editor.html)

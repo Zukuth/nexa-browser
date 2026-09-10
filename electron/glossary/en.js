@@ -1,3 +1,4 @@
+// @ts-check
 // English -> {es} term overrides. Split out of translate.js's TERM_OVERRIDES
 // into its own file (2026-09-04) — see electron/glossary/pt.js for why, and
 // electron/glossary/index.js for how this plugs back in.

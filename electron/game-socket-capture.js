@@ -1,3 +1,4 @@
+// @ts-check
 // Passive WebSocket telemetry capture for the game's own webview. Replaced
 // an earlier CDP-based implementation (wc.debugger.attach + Network.enable)
 // after CDP caused a real bug in production: a debugger detach silently

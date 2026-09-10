@@ -1,3 +1,4 @@
+// @ts-check
 // Pure classification of Electron's render-process-gone/child-process-gone
 // event details — no Electron APIs touched here, just a lookup over the
 // documented `reason`/`type` values, so the orchestration logic in main.js
@@ -7,6 +8,7 @@
 
 const CRITICAL_REASONS = new Set(['oom', 'crashed', 'abnormal-exit', 'killed', 'integrity-failure', 'launch-failed']);
 
+/** @param {{ reason?: string, type?: string }} [details] */
 function classifyCrash({ reason, type } = {}) {
   const category = type || 'Renderer'; // render-process-gone events carry no `type` — they're always the renderer
   const normalizedReason = reason || 'unknown';

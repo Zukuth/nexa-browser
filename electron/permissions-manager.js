@@ -1,3 +1,4 @@
+// @ts-check
 // Web permission handling (camera/mic, notifications, geolocation, and the
 // handful of low-risk permissions every site gets automatically) — split out
 // of main.js so the permission-prompt window lifecycle and the per-site

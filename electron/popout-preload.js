@@ -1,3 +1,4 @@
+// @ts-check
 const { contextBridge, ipcRenderer } = require('electron');
 
 // Minimal preload for a popped-out account window (src/popout.html) — just

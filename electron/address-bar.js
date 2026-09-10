@@ -1,3 +1,4 @@
+// @ts-check
 // Pure address-bar input normalization — extracted so it's unit-testable
 // without Electron (mirrors how security.test.js already tests
 // isAllowedBookmarkUrl as pure logic). Used by account:navigate's IPC
