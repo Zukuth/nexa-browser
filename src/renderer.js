@@ -81,6 +81,30 @@ function textareaEl(id) {
   return /** @type {HTMLTextAreaElement} */ (el(id));
 }
 
+// querySelector/querySelectorAll devuelven Element, que no declara .style ni
+// .dataset — dos cosas que este archivo usa todo el tiempo sobre nodos que en
+// la practica son siempre HTMLElement (todo lo que hay en index.html lo es).
+// Estos dos wrappers ponen el cast UNA vez, en el origen, en vez de repetirlo
+// en cada uso. A diferencia de el(), qs() NO tira si no encuentra: un selector
+// que no matchea es un caso normal aca (paneles que todavia no se renderizaron),
+// y devolver null mantiene el contrato que el codigo ya asume.
+/**
+ * @param {string} selector
+ * @param {ParentNode} [root]
+ * @returns {HTMLElement|null}
+ */
+function qs(selector, root = document) {
+  return /** @type {HTMLElement|null} */ (root.querySelector(selector));
+}
+/**
+ * @param {string} selector
+ * @param {ParentNode} [root]
+ * @returns {HTMLElement[]}
+ */
+function qsa(selector, root = document) {
+  return /** @type {HTMLElement[]} */ ([...root.querySelectorAll(selector)]);
+}
+
 const listEl = el('account-list');
 const btnNewTab = el('btn-new-tab');
 const btnToggleAll = el('btn-toggle-all');
@@ -183,7 +207,7 @@ const cmdkListEl = el('cmdk-list');
 const pokeIdlePanel = el('poke-idle-panel');
 const btnClosePokeIdle = el('btn-close-poke-idle');
 const tbPokeIdle = el('tb-poke-idle');
-const pokeNavItems = document.querySelectorAll('.poke-drawer-nav .poke-nav-item');
+const pokeNavItems = qsa('.poke-drawer-nav .poke-nav-item');
 const pokeIdleTeamEl = el('poke-idle-team');
 const calcSourceEl = selectEl('calc-source');
 const calcSpeciesEl = selectEl('calc-species');
@@ -192,8 +216,8 @@ const calcQualityEl = inputEl('calc-quality');
 const calcProjLevelEl = inputEl('calc-proj-level');
 const calcResultEl = el('calc-result');
 const pokeSettingsAccountEl = selectEl('poke-settings-account');
-const pokeSettingsTabs = document.querySelectorAll('.poke-settings-tab');
-const pokeSettingsPanels = document.querySelectorAll('.poke-settings-panel');
+const pokeSettingsTabs = qsa('.poke-settings-tab');
+const pokeSettingsPanels = qsa('.poke-settings-panel');
 const pokeSettingsEmptyEl = el('poke-settings-empty');
 const pokeSettingsEcoEl = inputEl('poke-settings-eco');
 const pokeSettingsEcoBenchmarkBtn = btnEl('poke-settings-eco-benchmark');
@@ -219,16 +243,16 @@ const stabilityStartNetlogBtn = el('stability-start-netlog');
 const stabilityStopNetlogBtn = el('stability-stop-netlog');
 const stabilityOpenCrashDumpsBtn = el('stability-open-crash-dumps');
 const calcStatInputs = {
-  hp: el('calc-stat-hp'),
-  atk: el('calc-stat-atk'),
-  def: el('calc-stat-def'),
-  spatk: el('calc-stat-spatk'),
-  spdef: el('calc-stat-spdef'),
-  speed: el('calc-stat-speed')
+  hp: inputEl('calc-stat-hp'),
+  atk: inputEl('calc-stat-atk'),
+  def: inputEl('calc-stat-def'),
+  spatk: inputEl('calc-stat-spatk'),
+  spdef: inputEl('calc-stat-spdef'),
+  speed: inputEl('calc-stat-speed')
 };
 const btnLayoutMenu = el('btn-layout-menu');
 const layoutMenu = el('layout-menu');
-const layoutOptions = document.querySelectorAll('.layout-option');
+const layoutOptions = qsa('.layout-option');
 const btnZoomMenu = el('btn-zoom-menu');
 const zoomMenu = el('zoom-menu');
 
@@ -333,8 +357,8 @@ const btnCancelAccount = el('btn-cancel-account');
 
 const settingsModal = el('settings-modal');
 const btnCloseSettings = el('btn-close-settings');
-const settingsNavItems = document.querySelectorAll('.settings-nav-item');
-const settingsPanes = document.querySelectorAll('.settings-pane');
+const settingsNavItems = qsa('.settings-nav-item');
+const settingsPanes = qsa('.settings-pane');
 const setLanguage = selectEl('set-language');
 const setTheme = selectEl('set-theme');
 const setStartWindows = inputEl('set-start-windows');
@@ -417,8 +441,8 @@ const SPACE_ICON_SVGS = {
 // por IPC. Enumerarlas aca crearia un segundo lugar donde mantener seis
 // shapes a mano, que se desactualiza en silencio. La mejora futura no es
 // escribirlas a mano sino derivarlas de un unico lugar compartido con main.
-/** @type {{ spaces: any[], accounts: any[], bookmarks: any[], passwords: any[], history: any[], downloads: any[], settings: any }} */
-let state = { spaces: [], accounts: [], bookmarks: [], passwords: [], history: [], downloads: [], settings: {} };
+/** @type {{ spaces: any[], accounts: any[], groups: any[], bookmarks: any[], passwords: any[], history: any[], downloads: any[], settings: any }} */
+let state = { spaces: [], accounts: [], groups: [], bookmarks: [], passwords: [], history: [], downloads: [], settings: {} };
 let metrics = {};
 let gameStats = {}; // Fase B: {[accountId]: {killsPerHour, xpPerHour, goldPerHour, captures, ...} | null}
 
@@ -659,7 +683,7 @@ function t(key, vars) {
   return str;
 }
 
-let alertAudioContext = null;
+/** @type {AudioContext|null} */ let alertAudioContext = null;
 function playAlertTone(kind) {
   try {
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -695,19 +719,19 @@ function playAlertTone(kind) {
 }
 
 function translateStaticDom() {
-  document.querySelectorAll('[data-i18n]').forEach((el) => {
+  qsa('[data-i18n]').forEach((el) => {
     el.textContent = t(el.getAttribute('data-i18n'));
   });
-  document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
+  qsa('[data-i18n-placeholder]').forEach((el) => {
     el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
   });
-  document.querySelectorAll('[data-i18n-title]').forEach((el) => {
+  qsa('[data-i18n-title]').forEach((el) => {
     el.title = t(el.getAttribute('data-i18n-title'));
   });
   // title alone isn't a reliable accessible name for a screen reader (many
   // have title-announcement disabled, and it never shows without a hover-
   // capable pointer) — icon-only buttons need a real aria-label too.
-  document.querySelectorAll('[data-i18n-aria-label]').forEach((el) => {
+  qsa('[data-i18n-aria-label]').forEach((el) => {
     el.setAttribute('aria-label', t(el.getAttribute('data-i18n-aria-label')));
   });
 }
@@ -781,9 +805,9 @@ const PERF_LOG = localStorage.getItem('nexaPerfLog') === '1';
 // app is built around. The 1s ticker already exists for the status bar
 // clock, so piggybacking on it costs nothing extra to schedule.
 function refreshAccountMetricsRows() {
-  listEl.querySelectorAll('.account-item[data-account-id]').forEach((item) => {
-    item.querySelector('.account-metrics-row')?.remove();
-    item.querySelector('.account-game-stats-row')?.remove();
+  qsa('.account-item[data-account-id]', listEl).forEach((item) => {
+    qs('.account-metrics-row', item)?.remove();
+    qs('.account-game-stats-row', item)?.remove();
 
     const accountId = item.dataset.accountId;
     const account = state.accounts.find((a) => a.id === accountId);
@@ -793,7 +817,7 @@ function refreshAccountMetricsRows() {
     // already forces a full rebuild — meaning this span reliably exists
     // already whenever we get here with an open, openedAt-having account.
     if (account.openedAt) {
-      const durationEl = item.querySelector('.account-open-duration');
+      const durationEl = qs('.account-open-duration', item);
       if (durationEl) durationEl.textContent = formatDuration(Date.now() - account.openedAt);
     }
 
@@ -1463,7 +1487,7 @@ function renderSplitDividers() {
   // "catch up on any geometry that arrived mid-drag" calls below — would
   // otherwise pile up duplicate divider elements each time (confirmed live:
   // a real e2e regression, 3 '.split-divider-h' elements instead of 1).
-  panelHeadersEl.querySelectorAll('.split-divider').forEach((el) => el.remove());
+  qsa('.split-divider', panelHeadersEl).forEach((el) => el.remove());
 
   const mode = state.settings.layoutMode;
   if (mode !== 'columns' && mode !== 'rows' && mode !== 'grid') return;
@@ -1529,8 +1553,8 @@ function startSplitDrag(e, group, field, pairIndex) {
   // place — so instead of hiding everything behind a ghost, the real page content
   // is resized live on every mousemove via setLiveRect, and only the final commit
   // (persisted fracs + a full renderLayout) happens on mouseup.
-  const headerA = panelHeadersEl.querySelector(`.panel-header[data-id="${group[pairIndex].id}"]`);
-  const headerB = panelHeadersEl.querySelector(`.panel-header[data-id="${group[pairIndex + 1].id}"]`);
+  const headerA = qs(`.panel-header[data-id="${group[pairIndex].id}"]`, panelHeadersEl);
+  const headerB = qs(`.panel-header[data-id="${group[pairIndex + 1].id}"]`, panelHeadersEl);
   const headerH = group[pairIndex].rect.height;
 
   // startSizes stays untouched for the whole drag — every onMove computes the new
@@ -1683,7 +1707,7 @@ function startFreeDrag(e, id, mode) {
   overlay.id = 'free-drag-overlay';
   document.body.appendChild(overlay);
 
-  let activeGhost = null;
+  /** @type {HTMLElement|null} */ let activeGhost = null;
   panelsGeometry.forEach((p) => {
     const g = document.createElement('div');
     g.className = 'free-ghost' + (p.id === id ? ' active' : '');
@@ -1886,8 +1910,8 @@ function openAccountModal(account) {
   accountInputName.focus();
 }
 
-let itemCatalogCache = null;
-let itemCatalogPromise = null;
+/** @type {any} */ let itemCatalogCache = null;
+/** @type {Promise<any>|null} */ let itemCatalogPromise = null;
 async function ensureItemCatalogRenderer() {
   if (itemCatalogCache) return itemCatalogCache;
   if (!itemCatalogPromise) {
@@ -1923,7 +1947,7 @@ function renderSellLockItems(account) {
   accountSellLockItemsEl.innerHTML = ids
     .map((id) => `<span class="selllock-chip" data-id="${escapeHtmlClient(String(id))}">${escapeHtmlClient(byId.get(id) || `#${id}`)}<button type="button" data-remove="${escapeHtmlClient(String(id))}">×</button></span>`)
     .join('');
-  accountSellLockItemsEl.querySelectorAll('button[data-remove]').forEach((btn) => {
+  qsa('button[data-remove]', accountSellLockItemsEl).forEach((btn) => {
     btn.addEventListener('click', async () => {
       if (!editingAccountId) return;
       const account2 = getAccount(editingAccountId);
@@ -4288,7 +4312,7 @@ function renderPokeIdleTeam() {
     });
   });
 
-  pokeIdleTeamEl.querySelectorAll('.poke-team-lock').forEach((btn) => {
+  qsa('.poke-team-lock', pokeIdleTeamEl).forEach((btn) => {
     btn.addEventListener('click', async () => {
       await window.api.toggleSellLockPoke(btn.dataset.accountId, btn.dataset.pokeId);
       renderPokeIdleTeam();
@@ -5045,7 +5069,7 @@ window.addEventListener('blur', () => {
 });
 
 window.api.onWebviewReady((accountId) => {
-  const wvEl = document.getElementById('wv-' + accountId);
+  const wvEl = /** @type {any} */ (document.getElementById('wv-' + accountId));
   if (!wvEl) return;
   const account = state.accounts.find((a) => a.id === accountId);
   if (account && account.url && account.url !== 'about:blank') {
