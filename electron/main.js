@@ -29,7 +29,8 @@ const { autoUpdater } = require('electron-updater');
 const I18N = require('../src/i18n-data.js');
 function mt(lang, key, vars) {
   let str = (I18N[lang] && I18N[lang][key]) ?? I18N.es[key] ?? key;
-  if (vars) for (const k of Object.keys(vars)) str = str.replace(`{${k}}`, vars[k]);
+  // replaceAll por el mismo motivo documentado en t() (src/renderer.js).
+  if (vars) for (const k of Object.keys(vars)) str = str.replaceAll(`{${k}}`, vars[k]);
   return str;
 }
 

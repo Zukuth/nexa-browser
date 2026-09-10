@@ -593,7 +593,12 @@ function t(key, vars) {
   const dict = (window.NEXA_I18N && window.NEXA_I18N[state.settings.language]) || {};
   let str = dict[key] ?? (window.NEXA_I18N && window.NEXA_I18N.es[key]) ?? key;
   if (vars) {
-    for (const k of Object.keys(vars)) str = str.replace(`{${k}}`, vars[k]);
+    // replaceAll, no replace: una clave que use la misma variable dos veces
+    // ('{name} se movió, avisale a {name}') dejaría el segundo {name} literal
+    // en pantalla. Hoy ninguna clave del catálogo repite una variable, así que
+    // esto es preventivo — pero es la clase de bug que ningún test agarra y
+    // que solo se ve en producción, en el idioma que nadie revisó.
+    for (const k of Object.keys(vars)) str = str.replaceAll(`{${k}}`, vars[k]);
   }
   return str;
 }

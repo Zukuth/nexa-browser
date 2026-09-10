@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 // Two checks over src/i18n-data.js, both run by hand (see package.json) and in
 // CI (test.yml).
 //
@@ -87,9 +88,69 @@ for (const [key, files] of [...missingKeys].sort()) {
   console.error(`[i18n] "${key}" se usa en ${files.join(', ')} pero no existe en el catalogo`);
 }
 
+// ---- 3. TILDES FALTANTES (es / pt-BR) ----
+// Nacio de un hallazgo real: TODO el bloque stability.* (y parte de pokeIdle.*)
+// se habia escrito sin tildes -- "Recuperacion de conexion, suspension de
+// Windows y diagnostico" -- mientras el resto del catalogo si las llevaba.
+// Para el usuario hispano/luso eso se lee como traduccion automatica, y es
+// invisible para los chequeos 1 y 2: las claves existen y estan sincronizadas,
+// solo que el texto esta mal escrito.
+//
+// Lista explicita de pares mal->bien en vez de una regla general, por dos
+// razones: (a) no hay forma confiable de derivar la tilde sin un diccionario
+// completo, y (b) la MISMA palabra puede ser correcta en un idioma e incorrecta
+// en el otro -- "bateria" es correcto en pt-BR y es "bateria"->"bateria" con
+// tilde en es. Por eso las listas estan separadas por idioma.
+// OJO con los plurales en español: "accion"->"acción" lleva tilde, pero
+// "acciones" NO. Por eso la lista de es solo tiene singulares en -cion/-sion;
+// meter los plurales daria falsos positivos sobre texto correcto. En pt-BR es
+// al reves ("opcao"->"opção", "opcoes"->"opções"), asi que ahi si van ambos.
+const ACCENT_WORDS = {
+  es: ['ademas', 'analisis', 'aquí', 'articulo', 'así', 'automatica', 'automatico',
+    'basico', 'bateria', 'boton', 'busqueda', 'camara', 'categoria', 'codigo', 'conexion',
+    'configuracion', 'contrasena', 'contrasenas', 'credito', 'criterio', 'decision', 'deberia',
+    'demas', 'despues', 'diagnostico', 'direccion', 'diá', 'energia', 'especifico', 'estan',
+    'estara', 'exito', 'grafico', 'informacion', 'limite', 'linea', 'logica', 'maximo', 'medicion',
+    'metodo', 'minimo', 'multiples', 'notificacion', 'numero', 'opcion', 'pagina', 'parametro',
+    'periodo', 'permitira', 'podes', 'podria', 'posicion', 'practico', 'preferis', 'presion',
+    'proteccion', 'proximo', 'publico', 'queres', 'rapida', 'rapidas', 'rapido', 'rapidos', 'razon',
+    'recuperacion', 'redireccion', 'respondio', 'sera', 'segun', 'sesion', 'solido', 'suspension',
+    'tambien', 'tecnica', 'tecnico', 'telefono', 'tenes', 'todavia', 'traduccion', 'ultima',
+    'ultimo', 'unica', 'unico', 'valido', 'version'],
+  'pt-BR': ['analise', 'animacao', 'area', 'automatica', 'automatico', 'avancado', 'basico',
+    'codigo', 'conexao', 'conexoes', 'configuracao', 'confiavel', 'confiaveis', 'criterio',
+    'desconexao', 'desconexoes', 'diagnostico', 'disponivel', 'disponiveis', 'endereco', 'enderecos',
+    'especifico', 'extensao', 'extensoes', 'grafico', 'informacao', 'medicao', 'minimo', 'maximo',
+    'metodo', 'nivel', 'notificacao', 'notificacoes', 'numero', 'opcao', 'opcoes', 'padrao',
+    'pagina', 'parametro', 'possivel', 'posicao', 'pratico', 'protecao', 'proximo', 'publico',
+    'rapida', 'rapidas', 'rapido', 'relatorio', 'recuperacao', 'sessao', 'suspensao', 'tecnica',
+    'tecnico', 'traducao', 'transferencia', 'ultima', 'ultimo', 'unica', 'unico', 'versao']
+};
+
+for (const [lang, words] of Object.entries(ACCENT_WORDS)) {
+  if (!DICTIONARIES[lang]) continue;
+  // \b no sirve solo: en JS las vocales acentuadas NO son caracteres de
+  // palabra, asi que /\bpresion\b/ matchea dentro de "presioná" (correcto) y
+  // reporta un falso positivo. Los lookarounds explicitos incluyen las
+  // acentuadas, para que "presion" solo dispare cuando esta realmente aislado.
+  const LETRA = 'a-zA-Z\\u00C0-\\u017F';
+  const pattern = new RegExp(`(?<![${LETRA}])(${words.join('|')})(?![${LETRA}])`, 'gi');
+  for (const [key, value] of Object.entries(DICTIONARIES[lang])) {
+    if (typeof value !== 'string') continue;
+    // Un placeholder ({version}, {status}) no es texto para el usuario: se
+    // reemplaza en runtime, asi que su nombre en ingles no lleva tilde nunca.
+    const sinPlaceholders = value.replace(/\{[a-zA-Z]+\}/g, '');
+    const hits = sinPlaceholders.match(pattern);
+    if (hits) {
+      hasProblems = true;
+      console.error(`[i18n] "${key}" (${lang}) tiene palabras sin tilde: ${[...new Set(hits)].join(', ')}`);
+    }
+  }
+}
+
 if (hasProblems) {
   console.error(`\n[i18n] Revisa src/i18n-data.js -- cada idioma (${LANGS.join(', ')}) debe tener el mismo set de claves, y toda clave usada desde el codigo debe existir.`);
   process.exit(1);
 } else {
-  console.log(`[i18n] OK -- ${allKeys.size} claves, ${LANGS.length} idiomas (${LANGS.join(', ')}), todas sincronizadas y todas las claves referenciadas existen.`);
+  console.log(`[i18n] OK -- ${allKeys.size} claves, ${LANGS.length} idiomas (${LANGS.join(', ')}), todas sincronizadas, todas las claves referenciadas existen y sin tildes faltantes en es/pt-BR.`);
 }
