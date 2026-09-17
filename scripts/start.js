@@ -1,9 +1,12 @@
+// @ts-check
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const electronPath = require('electron');
+// Desde Node (no desde Electron), require('electron') devuelve la ruta al
+// ejecutable, pero sus tipos describen la API de Electron: de ahi el cast.
+const electronPath = /** @type {string} */ (/** @type {unknown} */ (require('electron')));
 const appRoot = path.resolve(__dirname, '..');
 const tempProfileDir = path.join(os.tmpdir(), `nexa-browser-dev-profile-${Date.now()}-${process.pid}`);
 const lockErrorPattern = /Lock file can not be created! Error code: 5/;
@@ -15,7 +18,7 @@ function safeWrite(stream, chunk) {
   try {
     stream.write(chunk);
   } catch (err) {
-    if (!err || err.code !== 'EPIPE') throw err;
+    if (!err || /** @type {NodeJS.ErrnoException} */ (err).code !== 'EPIPE') throw err;
   }
 }
 

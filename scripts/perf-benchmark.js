@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 // Automates the manual benchmark protocol documented in README.md's
 // "Rendimiento por versión" table: N accounts freshly opened, all pointed at
 // the game's real login screen, a stabilization delay, then a real
@@ -29,7 +30,9 @@ async function main() {
   console.log(`[benchmark] launching app (${ACCOUNT_COUNT} accounts on ${GAME_LOGIN_URL}, ${STABILIZE_MS}ms stabilization)...`);
   const app = await electron.launch({
     args: [PROJECT_ROOT, `--user-data-dir=${userDataDir}`],
-    executablePath: require('electron')
+    // Desde Node (no desde Electron), require('electron') devuelve la ruta al
+    // ejecutable, pero sus tipos describen la API de Electron: de ahi el cast.
+    executablePath: /** @type {string} */ (/** @type {unknown} */ (require('electron')))
   });
 
   try {
