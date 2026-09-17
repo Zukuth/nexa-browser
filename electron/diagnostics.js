@@ -89,6 +89,7 @@ function scrubReport(input, keyHint) {
 // networkSnapshots: array of network-health.checkAccountNetwork results
 // adBlockLog: array of {url, hostname, resourceType, initiator, accountId, timestamp}
 // memoryStats: whatever shape app.getAppMetrics()-derived data already has
+/** @param {{ accountConnectionStates?: any[], networkSnapshots?: any[], adBlockLog?: any[], memoryStats?: any[] }} [input] */
 function buildReport({ accountConnectionStates = [], networkSnapshots = [], adBlockLog = [], memoryStats = [] } = {}) {
   const raw = {
     generatedAt: Date.now(),

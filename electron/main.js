@@ -1,3 +1,4 @@
+// @ts-check
 const { app, BrowserWindow, ipcMain, session, Menu, shell, dialog, clipboard, Notification, net, crashReporter } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -284,6 +285,7 @@ const PANEL_HEADER_HEIGHT = 30;
 // and normalizeFracsWithMin now live in ./layout-utils (required above) so
 // they can be unit-tested without launching the app — see test/unit/.
 
+/** @type {BrowserWindow|null} */
 let mainWindow = null;
 // A destroyed BrowserWindow is still a truthy JS object — `if (mainWindow)`
 // alone doesn't catch it, which is exactly what let an uncaught
@@ -292,6 +294,25 @@ let mainWindow = null;
 // during app shutdown) crash the whole process. Use this everywhere instead.
 function mainWindowAlive() {
   return !!mainWindow && !mainWindow.isDestroyed();
+}
+// La misma comprobacion, pero devolviendo la ventana (o null) en vez de un
+// booleano: TypeScript no puede estrechar `mainWindow` a traves de una
+// llamada a mainWindowAlive(), asi que el codigo que usa la ventana despues
+// del chequeo la toma de aca.
+/** @returns {BrowserWindow|null} */
+function liveMainWindow() {
+  return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+}
+// Para dialogos que solo se abren a pedido de la propia ventana principal
+// (IPC de su renderer, menu contextual de una cuenta que vive dentro de
+// ella): ahi la ventana existe por construccion. Si alguna vez no, falla con
+// un error con nombre en vez de un TypeError generico, mismo criterio que
+// el() en renderer.js.
+/** @returns {BrowserWindow} */
+function requireMainWindow() {
+  const win = liveMainWindow();
+  if (!win) throw new Error('[main] la ventana principal no existe o ya se destruyo');
+  return win;
 }
 let appQuitting = false;
 let data = store.load();
@@ -304,6 +325,7 @@ let passwordEncryptionAvailable = true;
 // Acerca de, which just shows the static installed version regardless).
 // 'idle' before the very first check ever runs (dev, or hasn't reached
 // app.whenReady() yet).
+/** @type {{ state: string, lastError: string|null, lastCheckedAt: number|null }} */
 let updateStatus = { state: 'idle', lastError: null, lastCheckedAt: null };
 
 // Always start on auto grid, regardless of whichever layout was active when the
@@ -415,6 +437,7 @@ function findWidevineCdm() {
       'C:\\Program Files\\Microsoft\\Edge\\Application',
       'C:\\Program Files (x86)\\Microsoft\\Edge\\Application'
     ];
+    /** @type {{ dllPath: string, version: string, source: string, browserVersion: string }|null} */
     let best = null;
     for (const root of roots) {
       let versions;
@@ -505,11 +528,13 @@ const poppedOutWindows = new Map();
 // crash-durability window from "instant" to "at most PERSIST_DEBOUNCE_MS old",
 // which flushPersist() (called on quit) closes for the normal-exit case anyway.
 const PERSIST_DEBOUNCE_MS = 400;
+/** @type {NodeJS.Timeout|null} */
 let persistTimer = null;
 let persistDirty = false;
 // store.save() is async now (see store.js) — this tracks the promise of
 // whatever write is currently running so flushPersist() can actually wait
 // for it instead of returning before the data has landed on disk.
+/** @type {Promise<void>|null} */
 let persistInFlight = null;
 
 // store.js's save() still expects each password entry to carry its real
@@ -660,7 +685,8 @@ function startPokeIdleAlertLoop() {
         // Flashes the taskbar icon so a shiny/rare catch or a disconnect is
         // noticeable even when Nexa is minimized or behind another window —
         // Windows stops the flash on its own once the user focuses it back.
-        if (mainWindowAlive() && !mainWindow.isFocused()) mainWindow.flashFrame(true);
+        const win = liveMainWindow();
+        if (win && !win.isFocused()) win.flashFrame(true);
       }
     }
   }, 5000);
@@ -685,19 +711,20 @@ const downloadSessionsWired = new WeakSet();
 // reflecting whichever item last fired an 'updated' event, since users can
 // have several downloads running at once across different accounts.
 function updateTaskbarProgress() {
-  if (!mainWindowAlive()) return;
+  const win = liveMainWindow();
+  if (!win) return;
   const active = data.downloads.filter((d) => d.state === 'progressing');
   if (active.length === 0) {
-    mainWindow.setProgressBar(-1);
+    win.setProgressBar(-1);
     return;
   }
   const allPaused = active.every((d) => d.paused);
   const received = active.reduce((sum, d) => sum + d.receivedBytes, 0);
   const total = active.reduce((sum, d) => sum + (d.totalBytes || 0), 0);
   if (total > 0) {
-    mainWindow.setProgressBar(received / total, { mode: allPaused ? 'paused' : 'normal' });
+    win.setProgressBar(received / total, { mode: allPaused ? 'paused' : 'normal' });
   } else {
-    mainWindow.setProgressBar(2, { mode: 'indeterminate' });
+    win.setProgressBar(2, { mode: 'indeterminate' });
   }
 }
 
@@ -705,9 +732,14 @@ function handleDownloads(ses) {
   if (downloadSessionsWired.has(ses)) return;
   downloadSessionsWired.add(ses);
   ses.on('will-download', (event, item) => {
+    /** @type {string|null} */
     let savePath = null;
     if (data.settings.askDownloadLocation) {
-      const chosen = dialog.showSaveDialogSync(mainWindow, { defaultPath: item.getFilename() });
+      // Sin ventana principal el dialogo sale sin padre, igual que antes
+      // cuando se le pasaba null.
+      const win = liveMainWindow();
+      const saveOptions = { defaultPath: item.getFilename() };
+      const chosen = win ? dialog.showSaveDialogSync(win, saveOptions) : dialog.showSaveDialogSync(saveOptions);
       if (!chosen) {
         event.preventDefault();
         return;
@@ -1000,20 +1032,20 @@ function handleAccountShortcut(input, account) {
   const view = views.get(account.id);
 
   if (ctrl && !shift && !alt && key === 'f') {
-    if (mainWindowAlive()) mainWindow.webContents.send('findbar:open', { id: account.id });
+    liveMainWindow()?.webContents.send('findbar:open', { id: account.id });
     return true;
   }
   if (key === 'escape') {
     view?.stopFindInPage('clearSelection');
-    if (mainWindowAlive()) mainWindow.webContents.send('findbar:close', { id: account.id });
+    liveMainWindow()?.webContents.send('findbar:close', { id: account.id });
     return false; // let Escape still propagate normally for anything else on the page
   }
   if (ctrl && !shift && !alt && /^[1-9]$/.test(key)) {
-    if (mainWindowAlive()) mainWindow.webContents.send('shortcut:selectPanel', { n: Number(key) });
+    liveMainWindow()?.webContents.send('shortcut:selectPanel', { n: Number(key) });
     return true;
   }
   if (ctrl && !shift && !alt && key === 'tab') {
-    if (mainWindowAlive()) mainWindow.webContents.send('shortcut:nextPanel');
+    liveMainWindow()?.webContents.send('shortcut:nextPanel');
     return true;
   }
   if (ctrl && shift && !alt && key === 'n') {
@@ -1054,7 +1086,7 @@ function handleAccountShortcut(input, account) {
     return true;
   }
   if (ctrl && !shift && !alt && key === 'l') {
-    if (mainWindowAlive()) mainWindow.webContents.send('shortcut:focusAddress');
+    liveMainWindow()?.webContents.send('shortcut:focusAddress');
     return true;
   }
   if (ctrl && !shift && !alt && (key === '=' || key === '+')) {
@@ -1070,11 +1102,12 @@ function handleAccountShortcut(input, account) {
     return true;
   }
   if (key === 'f11') {
-    // mainWindowAlive(), not a bare call: this handler runs off a webview's
+    // liveMainWindow(), not a bare call: this handler runs off a webview's
     // before-input-event, which can still fire while the window is being torn
     // down — and a destroyed BrowserWindow is a truthy object whose methods
     // throw (see mainWindowAlive's own comment for the crash that taught us).
-    if (mainWindowAlive()) mainWindow.setFullScreen(!mainWindow.isFullScreen());
+    const win = liveMainWindow();
+    if (win) win.setFullScreen(!win.isFullScreen());
     return true;
   }
   // Some games call preventDefault() on their own contextmenu event to
@@ -1105,7 +1138,7 @@ function handleAccountShortcut(input, account) {
     return true;
   }
   if (ctrl && !shift && !alt && key === ',') {
-    if (mainWindowAlive()) mainWindow.webContents.send('shortcut:openSettings');
+    liveMainWindow()?.webContents.send('shortcut:openSettings');
     return true;
   }
   if (ctrl && !shift && !alt && key === 'w') {
@@ -1385,9 +1418,7 @@ function wireAccountWebContents(wc, account, hostWebContents) {
       setTimeout(async () => {
         if (wc.isDestroyed() || !translationEnabled.has(account.id)) return;
         const result = await performTranslate(account.id, to);
-        if (result.ok && mainWindowAlive()) {
-          mainWindow.webContents.send('translate:autoApplied', { id: account.id });
-        }
+        if (result.ok) liveMainWindow()?.webContents.send('translate:autoApplied', { id: account.id });
       }, 1500);
     }
     wc.setZoomFactor(account.zoom || data.settings.defaultZoom || 1);
@@ -1435,7 +1466,7 @@ function wireAccountWebContents(wc, account, hostWebContents) {
     // crashed account showed literally nothing on screen by default: no
     // overlay, no badge, just ~1s of frozen content then a silent reload,
     // or a permanently dead panel with zero indication if it gave up.
-    if (mainWindowAlive()) mainWindow.webContents.send('account:crashed', { id: account.id, crashes, gaveUp });
+    liveMainWindow()?.webContents.send('account:crashed', { id: account.id, crashes, gaveUp });
     if (!gaveUp && !wc.isDestroyed()) {
       setTimeout(() => {
         if (!wc.isDestroyed()) wc.reload();
@@ -1453,8 +1484,9 @@ function wireAccountWebContents(wc, account, hostWebContents) {
   wc.on('found-in-page', (_e, result) => {
     // `if (mainWindow)` is exactly the check mainWindowAlive() exists to
     // replace — a destroyed window is still truthy.
-    if (mainWindowAlive()) {
-      mainWindow.webContents.send('findbar:result', {
+    const win = liveMainWindow();
+    if (win) {
+      win.webContents.send('findbar:result', {
         id: account.id,
         matches: result.matches,
         activeMatchOrdinal: result.activeMatchOrdinal
@@ -1504,7 +1536,7 @@ function wireAccountWebContents(wc, account, hostWebContents) {
   // module-scope Set that nothing ever read — removed, since dead state that
   // looks authoritative is worse than no state.
   wc.ipc.on('nexa-pip-state', (_e, active) => {
-    if (mainWindowAlive()) mainWindow.webContents.send('account:pipState', { id: account.id, active });
+    liveMainWindow()?.webContents.send('account:pipState', { id: account.id, active });
   });
 
   preconnectAccountHost(account, wc.session);
@@ -1881,15 +1913,15 @@ async function translateSelectionAt(id, x, y) {
       html: false,
       onDownloadProgress: ({ filename, loaded, total }) => {
         downloadHappened = true;
-        if (mainWindowAlive()) mainWindow.webContents.send('translate:downloadProgress', { id, filename, loaded, total });
+        liveMainWindow()?.webContents.send('translate:downloadProgress', { id, filename, loaded, total });
       }
     });
-    if (downloadHappened && mainWindowAlive()) mainWindow.webContents.send('translate:downloadFinished', { id });
+    if (downloadHappened) liveMainWindow()?.webContents.send('translate:downloadFinished', { id });
     await wc.executeJavaScript(translate.applySelectionTranslationScript(translated, extracted.startIndex));
     finished = true;
     if (!wc.isDestroyed()) wc.executeJavaScript(translate.finishSelectionLoadingScript(translated.length)).catch(() => {});
     return { ok: true, translated: translated.length, from, to };
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     console.error('[translate] selection translate failed', err);
     return { ok: false, error: String((err && err.message) || err) };
   } finally {
@@ -1941,6 +1973,7 @@ async function pickElementToBlock(wc, lang) {
 
 function showPageContextMenu(wc, params, accountId) {
   const lang = data.settings.language || 'es';
+  /** @type {Electron.MenuItemConstructorOptions[]} */
   const items = [
     { label: mt(lang, 'ctx.back'), enabled: wc.navigationHistory.canGoBack(), click: () => wc.navigationHistory.goBack() },
     { label: mt(lang, 'ctx.forward'), enabled: wc.navigationHistory.canGoForward(), click: () => wc.navigationHistory.goForward() },
@@ -2025,7 +2058,7 @@ function showPageContextMenu(wc, params, accountId) {
     {
       label: mt(lang, 'ctx.saveAs'),
       click: async () => {
-        const result = await dialog.showSaveDialog(mainWindow, { defaultPath: wc.getTitle() || 'page' });
+        const result = await dialog.showSaveDialog(requireMainWindow(), { defaultPath: wc.getTitle() || 'page' });
         // Logged, not swallowed: the user already picked a filename at this
         // point, so a failure here (disk full, denied path) otherwise means
         // no file, no error and no trace of why.
@@ -2047,7 +2080,7 @@ function showPageContextMenu(wc, params, accountId) {
     { label: mt(lang, 'ctx.inspect'), click: () => wc.inspectElement(params.x, params.y) }
   );
 
-  Menu.buildFromTemplate(items).popup({ window: mainWindow });
+  Menu.buildFromTemplate(items).popup({ window: liveMainWindow() ?? undefined });
 }
 
 function pushHistory(url, title) {
@@ -2085,7 +2118,7 @@ function notifyNav(id, url) {
   const now = Date.now();
   if (now - (lastNavUpdateSentAt.get(id) || 0) < NAV_UPDATE_THROTTLE_MS) return;
   lastNavUpdateSentAt.set(id, now);
-  if (mainWindowAlive()) mainWindow.webContents.send('nav:update', { id, url });
+  liveMainWindow()?.webContents.send('nav:update', { id, url });
 }
 
 // The renderer owns creation now (it reactively creates a <webview> for every
@@ -2102,8 +2135,9 @@ function sidebarWidth() {
 }
 
 function contentBounds() {
-  if (!mainWindowAlive()) return { x: 0, y: 0, width: 0, height: 0 };
-  const [winWidth, winHeight] = mainWindow.getContentSize();
+  const win = liveMainWindow();
+  if (!win) return { x: 0, y: 0, width: 0, height: 0 };
+  const [winWidth, winHeight] = win.getContentSize();
   const top = TOPBAR_HEIGHT;
   const left = RAIL_WIDTH + sidebarWidth();
   return {
@@ -2180,10 +2214,11 @@ function buildGeometry(cells, maximized) {
 // elements are real DOM the renderer positions itself off this same
 // payload (see renderPanelWebviews in renderer.js).
 function renderLayout() {
-  if (!mainWindowAlive()) return;
+  const win = liveMainWindow();
+  if (!win) return;
   const bounds = contentBounds();
   const { cells, maximized } = computeCells(bounds);
-  mainWindow.webContents.send('panels:geometry', buildGeometry(cells, maximized));
+  win.webContents.send('panels:geometry', buildGeometry(cells, maximized));
 }
 
 // For changes that only affect a panel's displayed metadata (mute/name/color/
@@ -2193,13 +2228,14 @@ function renderLayout() {
 // written back when the two functions did meaningfully different amounts of
 // work, so this diff doesn't have to also chase down every one of them.
 function broadcastGeometryOnly() {
-  if (!mainWindowAlive()) return;
+  const win = liveMainWindow();
+  if (!win) return;
   const { cells, maximized } = computeCells(contentBounds());
-  mainWindow.webContents.send('panels:geometry', buildGeometry(cells, maximized));
+  win.webContents.send('panels:geometry', buildGeometry(cells, maximized));
 }
 
 function createWindow() {
-  mainWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     name: 'main-window',
     windowStatePersistence: true,
     width: 1280,
@@ -2217,6 +2253,7 @@ function createWindow() {
       webviewTag: true
     }
   });
+  mainWindow = win;
 
   const shellUrl = require('url').pathToFileURL(path.join(__dirname, '..', 'src', 'index.html')).href;
 
@@ -2231,7 +2268,7 @@ function createWindow() {
   // window to it — arbitrary content, in the document that owns window.api.
   // Guest pages are unaffected: each account is a <webview>, a separate
   // webContents with its own navigation, not this one.
-  mainWindow.webContents.on('will-navigate', (event, url) => {
+  win.webContents.on('will-navigate', (event, url) => {
     if (url === shellUrl) return;
     event.preventDefault();
     console.warn('[shell] blocked a navigation away from the app UI:', url);
@@ -2254,19 +2291,19 @@ function createWindow() {
   // from becoming a navigation request in the first place — lives at the top
   // of src/renderer.js, where it belongs as renderer code.)
 
-  mainWindow.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
-  mainWindow.once('ready-to-show', () => {
-    if (!mainWindowAlive()) return;
-    mainWindow.show();
-    mainWindow.focus();
+  win.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
+  win.once('ready-to-show', () => {
+    if (win.isDestroyed()) return;
+    win.show();
+    win.focus();
   });
-  mainWindow.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
+  win.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
     console.error('[boot] did-fail-load', { errorCode, errorDescription, validatedURL, isMainFrame });
   });
-  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+  win.webContents.on('render-process-gone', (_e, details) => {
     console.error('[boot] render-process-gone', details);
   });
-  mainWindow.on('unresponsive', () => {
+  win.on('unresponsive', () => {
     console.error('[boot] main window became unresponsive');
   });
 
@@ -2278,13 +2315,13 @@ function createWindow() {
   // The old `appQuitting` flag (set in 'before-quit') was too late for this:
   // that event only fires after 'window-all-closed', which itself only
   // fires after every window (and its children) is already destroyed.
-  mainWindow.on('close', () => {
+  win.on('close', () => {
     appQuitting = true;
   });
 
-  wireDidAttachWebview(mainWindow.webContents);
+  wireDidAttachWebview(win.webContents);
 
-  mainWindow.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+  win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
     console.log(`[renderer] ${message} (${sourceId}:${line})`);
   });
 
@@ -2293,17 +2330,17 @@ function createWindow() {
   // doesn't provide this by default the way a real browser does — only the
   // account webviews had it (see showPageContextMenu below), so typing a
   // URL had no way to paste via the mouse, only via Ctrl+V.
-  mainWindow.webContents.on('context-menu', (_e, params) => {
+  win.webContents.on('context-menu', (_e, params) => {
     if (!params.isEditable) return;
     const lang = data.settings.language || 'es';
-    const wc = mainWindow.webContents;
+    const wc = win.webContents;
     Menu.buildFromTemplate([
       { label: mt(lang, 'ctx.cut'), enabled: params.editFlags.canCut, click: () => wc.cut() },
       { label: mt(lang, 'ctx.copy'), enabled: params.editFlags.canCopy, click: () => wc.copy() },
       { label: mt(lang, 'ctx.paste'), enabled: params.editFlags.canPaste, click: () => wc.paste() },
       { type: 'separator' },
       { label: mt(lang, 'ctx.selectAll'), enabled: params.editFlags.canSelectAll, click: () => wc.selectAll() }
-    ]).popup({ window: mainWindow });
+    ]).popup({ window: win });
   });
 
   // Throttled: OS resize events can fire dozens of times per second while the
@@ -2313,9 +2350,10 @@ function createWindow() {
   // responsive), then at most once per RESIZE_THROTTLE_MS while still moving,
   // with one guaranteed trailing render so the final size is always exact.
   const RESIZE_THROTTLE_MS = 50;
+  /** @type {NodeJS.Timeout|null} */
   let resizeThrottleTimer = null;
   let resizeRenderPending = false;
-  mainWindow.on('resize', () => {
+  win.on('resize', () => {
     if (resizeThrottleTimer) {
       resizeRenderPending = true;
       return;
@@ -2330,7 +2368,7 @@ function createWindow() {
     }, RESIZE_THROTTLE_MS);
   });
 
-  return mainWindow;
+  return win;
 }
 
 // Coalesced across a microtask: several IPC handlers call persist() +
@@ -2346,7 +2384,7 @@ function broadcastState() {
   stateBroadcastQueued = true;
   queueMicrotask(() => {
     stateBroadcastQueued = false;
-    if (mainWindowAlive()) mainWindow.webContents.send('state:update', data);
+    liveMainWindow()?.webContents.send('state:update', data);
   });
 }
 
@@ -2575,7 +2613,7 @@ ipcMain.on('groups:contextmenu', (_e, payload) => {
   const menu = Menu.buildFromTemplate([
     {
       label: mt(lang, 'ctx.renameGroup'),
-      click: () => mainWindow.webContents.send('ui:promptRenameGroup', { groupId: group.id, currentName: group.name })
+      click: () => liveMainWindow()?.webContents.send('ui:promptRenameGroup', { groupId: group.id, currentName: group.name })
     },
     {
       label: mt(lang, 'ctx.deleteGroup'),
@@ -2589,7 +2627,7 @@ ipcMain.on('groups:contextmenu', (_e, payload) => {
       }
     }
   ]);
-  menu.popup({ window: mainWindow });
+  menu.popup({ window: liveMainWindow() ?? undefined });
 });
 
 ipcMain.on('accounts:contextmenu', (_e, payload) => {
@@ -2635,7 +2673,7 @@ ipcMain.on('accounts:contextmenu', (_e, payload) => {
         broadcastState();
       }
     },
-    { label: mt(lang, 'ctx.editAccount'), click: () => mainWindow.webContents.send('ui:open-account-editor', { id }) },
+    { label: mt(lang, 'ctx.editAccount'), click: () => liveMainWindow()?.webContents.send('ui:open-account-editor', { id }) },
     {
       label: mt(lang, 'ctx.moveToGroup'),
       submenu: [
@@ -2667,7 +2705,7 @@ ipcMain.on('accounts:contextmenu', (_e, payload) => {
         { type: 'separator' },
         {
           label: mt(lang, 'ctx.newGroup'),
-          click: () => mainWindow.webContents.send('ui:promptNewGroup', { accountId: id, spaceId: account.spaceId })
+          click: () => liveMainWindow()?.webContents.send('ui:promptNewGroup', { accountId: id, spaceId: account.spaceId })
         }
       ]
     },
@@ -2692,7 +2730,7 @@ ipcMain.on('accounts:contextmenu', (_e, payload) => {
       click: () => removeAccountCompletely(id)
     }
   ]);
-  menu.popup({ window: mainWindow });
+  menu.popup({ window: liveMainWindow() ?? undefined });
 });
 
 ipcMain.handle('accounts:update', (_e, { id, name, color, url, proxy, ecoMode, hideChat, hideGameBar, sellLockOn, cleanGameProfile, chatAutoTranslate }) => {
@@ -3221,7 +3259,7 @@ ipcMain.handle('account:captureScreenshot', async (_e, { id }) => {
     const image = await wc.capturePage();
     const filePath = writeScreenshotFile(image.toPNG());
     return { ok: true, path: filePath };
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     console.error('[screenshot] failed to capture/save', err);
     return { ok: false, error: String((err && err.message) || err) };
   }
@@ -3233,6 +3271,7 @@ ipcMain.handle('account:captureScreenshot', async (_e, { id }) => {
 // annotations before it's written. Same window/preload split as the
 // popped-out account window (popout-preload.js) — its own minimal IPC
 // surface, nothing shared with the main app's window.api.
+/** @type {BrowserWindow|null} */
 let activeScreenshotEditorWindow = null;
 ipcMain.handle('account:openScreenshotEditor', async (_e, { id }) => {
   const wc = views.get(id);
@@ -3266,7 +3305,7 @@ ipcMain.handle('account:openScreenshotEditor', async (_e, { id }) => {
     });
     activeScreenshotEditorWindow = editorWin;
     return { ok: true };
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     console.error('[screenshot-editor] failed to open', err);
     return { ok: false, error: String((err && err.message) || err) };
   }
@@ -3282,7 +3321,7 @@ ipcMain.handle('screenshot-editor:save', (_e, dataUrl) => {
     const base64 = String(dataUrl || '').replace(/^data:image\/png;base64,/, '');
     const filePath = writeScreenshotFile(Buffer.from(base64, 'base64'));
     return { ok: true, path: filePath };
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     console.error('[screenshot-editor] failed to save', err);
     return { ok: false, error: String((err && err.message) || err) };
   }
@@ -3409,7 +3448,7 @@ ipcMain.on('spaces:contextmenu', (_e, payload) => {
   const isFirst = data.spaces[0]?.id === id;
   const lang = data.settings.language || 'es';
   const menu = Menu.buildFromTemplate([
-    { label: mt(lang, 'ctx.editSpace'), click: () => mainWindow.webContents.send('ui:open-space-editor', { id }) },
+    { label: mt(lang, 'ctx.editSpace'), click: () => liveMainWindow()?.webContents.send('ui:open-space-editor', { id }) },
     { label: mt(lang, 'ctx.duplicateSpace'), click: () => duplicateSpace(id) },
     { type: 'separator' },
     {
@@ -3418,7 +3457,7 @@ ipcMain.on('spaces:contextmenu', (_e, payload) => {
       click: () => removeSpace(id)
     }
   ]);
-  menu.popup({ window: mainWindow });
+  menu.popup({ window: liveMainWindow() ?? undefined });
 });
 
 ipcMain.handle('spaces:activate', (_e, { id }) => {
@@ -3461,8 +3500,9 @@ ipcMain.on('account:setLiveRect', (_e, payload) => {
   if (!payload) return;
   const { id, rect } = payload;
   if (!rect || [rect.x, rect.y, rect.width, rect.height].some((n) => typeof n !== 'number' || !Number.isFinite(n))) return;
-  if (!mainWindowAlive()) return;
-  mainWindow.webContents.send('account:liveRect', {
+  const win = liveMainWindow();
+  if (!win) return;
+  win.webContents.send('account:liveRect', {
     id,
     contentRect: {
       x: rect.x,
@@ -3501,8 +3541,9 @@ ipcMain.handle('accounts:setZoomAll', (_e, { factor }) => {
 });
 
 ipcMain.on('app:toggleFullscreen', () => {
-  if (!mainWindowAlive()) return;
-  mainWindow.setFullScreen(!mainWindow.isFullScreen());
+  const win = liveMainWindow();
+  if (!win) return;
+  win.setFullScreen(!win.isFullScreen());
 });
 
 ipcMain.on('app:relaunch', () => {
@@ -3663,13 +3704,13 @@ ipcMain.handle('app:openExternal', async (_e, { url }) => {
     if (parsed.protocol !== 'https:') return { ok: false, error: 'invalid-url' };
     await shell.openExternal(parsed.toString());
     return { ok: true };
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     return { ok: false, error: String((err && err.message) || err) };
   }
 });
 
 ipcMain.handle('settings:chooseDownloadsFolder', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
+  const result = await dialog.showOpenDialog(requireMainWindow(), { properties: ['openDirectory'] });
   if (result.canceled || !result.filePaths[0]) return data;
   data.settings.downloadsFolder = result.filePaths[0];
   persist();
@@ -3698,7 +3739,7 @@ ipcMain.handle('plugins:list', () => {
 });
 
 ipcMain.handle('settings:exportSpaces', async () => {
-  const result = await dialog.showSaveDialog(mainWindow, {
+  const result = await dialog.showSaveDialog(requireMainWindow(), {
     defaultPath: 'nexa-browser-espacios.json',
     filters: [{ name: 'JSON', extensions: ['json'] }]
   });
@@ -3716,7 +3757,7 @@ ipcMain.handle('settings:exportSpaces', async () => {
 });
 
 ipcMain.handle('settings:importSpaces', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
+  const result = await dialog.showOpenDialog(requireMainWindow(), {
     properties: ['openFile'],
     filters: [{ name: 'JSON', extensions: ['json'] }]
   });
@@ -3796,7 +3837,7 @@ ipcMain.handle('bookmarks:remove', (_e, { id }) => {
 });
 
 ipcMain.handle('bookmarks:export', async () => {
-  const result = await dialog.showSaveDialog(mainWindow, {
+  const result = await dialog.showSaveDialog(requireMainWindow(), {
     defaultPath: 'marcadores-nexa-browser.html',
     filters: [{ name: 'Marcadores (HTML)', extensions: ['html'] }]
   });
@@ -3819,7 +3860,7 @@ ipcMain.handle('bookmarks:export', async () => {
 });
 
 ipcMain.handle('bookmarks:import', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
+  const result = await dialog.showOpenDialog(requireMainWindow(), {
     properties: ['openFile'],
     filters: [{ name: 'Marcadores', extensions: ['html', 'htm', 'json'] }]
   });
@@ -3863,7 +3904,7 @@ ipcMain.handle('bookmarks:import', async () => {
 });
 
 ipcMain.handle('passwords:import', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
+  const result = await dialog.showOpenDialog(requireMainWindow(), {
     properties: ['openFile'],
     filters: [{ name: 'CSV', extensions: ['csv'] }]
   });
@@ -3948,7 +3989,8 @@ ipcMain.handle('passwords:list', (e) => {
   // during shutdown, or while a popped-out account window outlives it), which
   // is the opposite of what a belt-and-suspenders check is for. No main window
   // means there is no legitimate caller for this channel at all.
-  if (!mainWindowAlive() || e.sender !== mainWindow.webContents) return [];
+  const win = liveMainWindow();
+  if (!win || e.sender !== win.webContents) return [];
   return data.passwords.map((p) => ({ ...p, password: passwordSecrets.get(p.id) || '' }));
 });
 
@@ -3957,7 +3999,8 @@ ipcMain.handle('passwords:list', (e) => {
 // for the same reason: this is the only channel that hands the real value
 // back, and it is deliberately not part of the state broadcast.
 ipcMain.handle('proxy:getPassword', (e, { id }) => {
-  if (!mainWindowAlive() || e.sender !== mainWindow.webContents) return '';
+  const win = liveMainWindow();
+  if (!win || e.sender !== win.webContents) return '';
   return getProxyPassword(id);
 });
 
@@ -4207,7 +4250,7 @@ async function pulseGameRealtimeConnection(wc) {
     `);
     report.pulsed = true;
     return { ...report, ok: true };
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     return { ...report, error: String((err && err.message) || err) };
   }
 }
@@ -4267,7 +4310,7 @@ function requireGameWebContents(id) {
 // whatever's already cached.
 ipcMain.handle('pokes:get', async (_e, { id }) => {
   const { wc, error } = requireGameWebContents(id);
-  if (error) return { ok: false, error };
+  if (!wc) return { ok: false, error };
   try {
     const waitPromise = gameTelemetry.waitForNextPokes(id);
     const sent = await wc.executeJavaScript(sendGameSocketFrameScript({ type: 'pokes-get' }));
@@ -4275,7 +4318,7 @@ ipcMain.handle('pokes:get', async (_e, { id }) => {
     const confirmed = await waitPromise;
     if (!confirmed) return { ok: false, error: mt(data.settings.language || 'es', 'err.serverTimeout') };
     return { ok: true };
-  } catch (e) {
+  } catch (/** @type {any} */ e) {
     return { ok: false, error: String((e && e.message) || e) };
   }
 });
@@ -4324,8 +4367,9 @@ let lastOptimizeAt = Date.now();
 let optimizeRunning = false;
 
 function broadcastOptimizeStatus() {
-  if (!mainWindowAlive()) return;
-  mainWindow.webContents.send('memory:optimizeStatus', {
+  const win = liveMainWindow();
+  if (!win) return;
+  win.webContents.send('memory:optimizeStatus', {
     lastOptimizeAt,
     running: optimizeRunning,
     dueIn: Math.max(0, lastOptimizeAt + 24 * 60 * 60 * 1000 - Date.now())
@@ -4494,7 +4538,7 @@ function startAutoOptimizeLoop() {
     }
     const { freeMb, totalMb } = systemFreeMemoryInfo();
     if (memoryOptimizer.systemMemoryPressureHigh({ freeMb, totalMb })) {
-      console.log('[optimize] system-wide free memory low (', Math.round(freeMb), '/', Math.round(totalMb), 'MB free) — running auto-optimization early (safe tier)');
+      console.log('[optimize] system-wide free memory low (', Math.round(freeMb ?? 0), '/', Math.round(totalMb ?? 0), 'MB free) — running auto-optimization early (safe tier)');
       await optimizeMemorySafe();
     }
   }, 30 * 60 * 1000);
@@ -4530,9 +4574,7 @@ function getOrCreateConnectionManager(accountId) {
     manager = gameConnectionManager.createAccountConnectionManager(accountId, {
       getWc: () => views.get(accountId),
       onStateChange: (change) => {
-        if (mainWindowAlive()) {
-          mainWindow.webContents.send('stability:update', change);
-        }
+        liveMainWindow()?.webContents.send('stability:update', change);
       },
       onRecoveryLevel: (info) => runRecoveryLevel(info).catch((err) => console.error('[stability] recovery level failed', err))
     });
@@ -4945,6 +4987,7 @@ ipcMain.handle('diagnostics:openCrashDumpsFolder', async () => {
   }
 });
 
+/** @type {{ accountId: string, path: string }|null} */
 let activeNetLogSession = null; // { accountId, path } | null — one capture at a time, kept simple on purpose
 
 ipcMain.handle('diagnostics:startNetLog', async (_e, { id }) => {
@@ -5203,7 +5246,7 @@ async function translateChatMessages(id) {
           // indication anything is happening.
           onDownloadProgress: ({ filename, loaded, total }) => {
             downloadHappened = true;
-            if (mainWindowAlive()) mainWindow.webContents.send('translate:downloadProgress', { id, filename, loaded, total });
+            liveMainWindow()?.webContents.send('translate:downloadProgress', { id, filename, loaded, total });
           }
         });
         entries.forEach((e, i) => translations.push({ index: e.index, text: translated[i] }));
@@ -5211,11 +5254,11 @@ async function translateChatMessages(id) {
         console.error('[translate] chat group', from, '->', to, 'failed for', id, err);
       }
     }
-    if (downloadHappened && mainWindowAlive()) mainWindow.webContents.send('translate:downloadFinished', { id });
+    if (downloadHappened) liveMainWindow()?.webContents.send('translate:downloadFinished', { id });
     if (translations.length) await wc.executeJavaScript(translate.applyChatTranslationsScript(translations));
     if (!wc.isDestroyed()) wc.executeJavaScript(translate.chatTranslateStatusScript('done', translations.length)).catch(() => {});
     return { ok: true, translated: translations.length, seen: extracted.items.length };
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     console.error('[translate] chat auto-translate failed for', id, err);
     if (!wc.isDestroyed()) wc.executeJavaScript(translate.chatTranslateStatusScript('done', 0)).catch(() => {});
     return { ok: false, error: String((err && err.message) || err) };
@@ -5372,16 +5415,14 @@ async function performTranslate(id, to) {
       for (let round = 0; round < 5; round++) {
         const pending = await wc.executeJavaScript(translate.drainPendingScript());
         if (!pending || !pending.fragments.length) break;
-        if (mainWindowAlive()) {
-          mainWindow.webContents.send('translate:progress', { id, done: 0, total: pending.fragments.length });
-        }
+        liveMainWindow()?.webContents.send('translate:progress', { id, done: 0, total: pending.fragments.length });
         const { results, translatedCount: groupCount } = await translateFragmentsMixed(pending.fragments, watching.to, watching.pageLang, {
           html: false,
           onProgress: (done, total) => {
-            if (mainWindowAlive()) mainWindow.webContents.send('translate:progress', { id, done, total });
+            liveMainWindow()?.webContents.send('translate:progress', { id, done, total });
           },
           onDownloadProgress: ({ filename, loaded, total }) => {
-            if (mainWindowAlive()) mainWindow.webContents.send('translate:downloadProgress', { id, filename, loaded, total });
+            liveMainWindow()?.webContents.send('translate:downloadProgress', { id, filename, loaded, total });
           }
         });
         await wc.executeJavaScript(translate.applyPendingScript(results));
@@ -5418,16 +5459,14 @@ async function performTranslate(id, to) {
     const priorityFragments = extracted.fragments.slice(0, visibleCount);
     const restFragments = extracted.fragments.slice(visibleCount);
 
-    if (mainWindowAlive()) {
-      mainWindow.webContents.send('translate:progress', { id, done: 0, total: priorityFragments.length });
-    }
+    liveMainWindow()?.webContents.send('translate:progress', { id, done: 0, total: priorityFragments.length });
     const { results: translatedPriority, translatedCount: priorityTranslatedCount, from: dominantFrom } = await translateFragmentsMixed(priorityFragments, to, extracted.from, {
       html: false,
       onProgress: (done, total) => {
-        if (mainWindowAlive()) mainWindow.webContents.send('translate:progress', { id, done, total });
+        liveMainWindow()?.webContents.send('translate:progress', { id, done, total });
       },
       onDownloadProgress: ({ filename, loaded, total }) => {
-        if (mainWindowAlive()) mainWindow.webContents.send('translate:downloadProgress', { id, filename, loaded, total });
+        liveMainWindow()?.webContents.send('translate:downloadProgress', { id, filename, loaded, total });
       }
     });
     await wc.executeJavaScript(translate.applyTranslatedTextScript(translatedPriority, 0));
@@ -5446,7 +5485,7 @@ async function performTranslate(id, to) {
 
     translationEnabled.set(id, to);
     return { ok: true, translated: priorityTranslatedCount, from: dominantFrom || extracted.from, to };
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     console.error('[translate] failed', err);
     return { ok: false, error: String((err && err.message) || err) };
   } finally {
@@ -5474,7 +5513,7 @@ ipcMain.handle('translate:restore', async (_e, { id }) => {
   try {
     await wc.executeJavaScript(translate.restorePageTextScript());
     return { ok: true };
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     return { ok: false, error: String((err && err.message) || err) };
   }
 });
@@ -5647,9 +5686,10 @@ if (!gotSingleInstanceLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (mainWindowAlive()) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
+    const win = liveMainWindow();
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
     }
   });
 }
@@ -5788,8 +5828,9 @@ app.whenReady().then(() => {
     updateStatus = { state: 'error', lastError: err && err.message ? err.message : String(err), lastCheckedAt: Date.now() };
   });
   autoUpdater.on('download-progress', (progress) => {
-    if (!mainWindowAlive()) return;
-    mainWindow.webContents.send('update:downloadProgress', {
+    const win = liveMainWindow();
+    if (!win) return;
+    win.webContents.send('update:downloadProgress', {
       percent: progress.percent,
       transferred: progress.transferred,
       total: progress.total,
@@ -5803,14 +5844,15 @@ app.whenReady().then(() => {
   // only from that notification, or not at all.
   autoUpdater.on('update-downloaded', (info) => {
     updateStatus = { state: 'downloaded', lastError: null, lastCheckedAt: Date.now() };
-    if (!mainWindowAlive()) return;
+    const win = liveMainWindow();
+    if (!win) return;
     const notes = info.releaseNotes;
     const releaseNotes = typeof notes === 'string'
       ? notes
       : Array.isArray(notes)
         ? notes.map((n) => `## ${n.version}\n${n.note || ''}`).join('\n\n')
         : '';
-    mainWindow.webContents.send('update:downloaded', { version: info.version, releaseNotes });
+    win.webContents.send('update:downloaded', { version: info.version, releaseNotes });
   });
   // Explicit capture from the host UI's own window.onerror/unhandledrejection
   // (wired in renderer.js), landing in the same log as everything else here
@@ -5829,8 +5871,8 @@ app.whenReady().then(() => {
     console.error('[renderer-error]', info && info.kind, info && info.message, info && info.stack);
   });
 
-  createWindow();
-  mainWindow.webContents.once('did-finish-load', () => {
+  const win = createWindow();
+  win.webContents.once('did-finish-load', () => {
     renderLayout();
     broadcastState();
     // Deferred past first paint — see the comment on loadAdBlockEngine().
@@ -5841,7 +5883,7 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     console.error('[boot] failed during app.whenReady()', err);
     dialog.showErrorBox('Nexa Browser', String(err && err.stack ? err.stack : err));
   }
