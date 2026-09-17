@@ -17,7 +17,7 @@ function createGameTestDoubleServer() {
   const server = http.createServer((req, res) => {
     let url;
     try {
-      url = new URL(req.url, `http://${req.headers.host}`);
+      url = new URL(String(req.url), `http://${req.headers.host}`);
     } catch {
       res.writeHead(400);
       res.end();
@@ -99,13 +99,18 @@ function createGameTestDoubleServer() {
     latencyMs = Math.max(0, ms);
   }
 
+  /** @param {number} [port] @returns {Promise<number>} */
   function listen(port = 0) {
     return new Promise((resolve, reject) => {
       server.once('error', reject);
-      server.listen(port, '127.0.0.1', () => resolve(server.address().port));
+      server.listen(port, '127.0.0.1', () => {
+        const address = /** @type {import('net').AddressInfo} */ (server.address());
+        resolve(address.port);
+      });
     });
   }
 
+  /** @returns {Promise<void>} */
   function close() {
     return new Promise((resolve) => {
       closeAllAbrupt();

@@ -1,6 +1,10 @@
 {
   "compilerOptions": {
-    "checkJs": false,
+    "checkJs": true,
+    // Sin esto, checkJs arrastra los .js de node_modules (bergamot-translator,
+    // adblock-rs) al chequeo: ~300 errores en codigo de terceros que no
+    // controlamos. 0 = no seguir JS dentro de node_modules.
+    "maxNodeModuleJsDepth": 0,
     "allowJs": true,
     "noImplicitAny": false,
     "target": "ES2023",
