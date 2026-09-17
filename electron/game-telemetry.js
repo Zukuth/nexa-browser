@@ -94,6 +94,23 @@ function isGameUrl(url) {
   }
 }
 
+// Solo el host, sin mirar el path: para decisiones que valen en TODA la
+// pagina del juego, /login incluida. isGameUrl() arriba no sirve para eso
+// porque su exclusion de /login existe para la captura de frames, no para
+// endurecer nada — usarla en la politica de permisos dejaba justo la
+// pantalla donde arranca cada cuenta nueva (DEFAULT_START_URL en main.js)
+// con openExternal auto-concedido y camara/ubicacion preguntando en vez de
+// denegadas. Host exacto, no sufijo: poke.idleworld.online.attacker.test no
+// es el juego.
+/** @param {string|null|undefined} url */
+function isGameHost(url) {
+  try {
+    return new URL(String(url)).hostname === GAME_HOSTNAME;
+  } catch {
+    return false;
+  }
+}
+
 function emptyLive() {
   return {
     attempts: 0,
@@ -1080,6 +1097,7 @@ function isLikelyFrozen(state, thresholdMs, now = Date.now()) {
 
 module.exports = {
   isGameUrl,
+  isGameHost,
   attachCapture,
   detachCapture,
   reattachCapture,

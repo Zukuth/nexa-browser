@@ -76,6 +76,7 @@ mock.module('electron', {
 const { createPermissionsManager } = require('../../electron/permissions-manager');
 
 const GAME_URL = 'https://poke.idleworld.online/game';
+const GAME_LOGIN_URL = 'https://poke.idleworld.online/login';
 const SITE = 'https://meet.example.com/room';
 
 let data;
@@ -179,6 +180,50 @@ describe('permission request handler: decisions that never prompt', () => {
     assert.deepEqual(request(ses, 'openExternal', SITE), { answered: true, granted: true });
     account.url = GAME_URL; // and back
     assert.deepEqual(request(ses, 'openExternal', GAME_URL), { answered: true, granted: false });
+  });
+
+  // El endurecimiento del juego tiene que valer en TODA su pagina, no solo
+  // despues de entrar: /login es donde arranca cada cuenta nueva
+  // (DEFAULT_START_URL en main.js). isGameUrl() excluye /login a proposito
+  // porque decide si se engancha la captura de frames; la politica de
+  // permisos mira solo el host.
+  test('the game login page gets the same narrowing as the game itself', () => {
+    const ses = wire({ url: GAME_LOGIN_URL });
+    for (const p of ['media', 'geolocation', 'openExternal']) {
+      assert.deepEqual(request(ses, p, GAME_LOGIN_URL), { answered: true, granted: false }, p);
+    }
+    assert.equal(windows.length, 0, 'no debe abrir ningun prompt');
+    assert.equal(
+      ses.check({}, 'openExternal', 'https://poke.idleworld.online'),
+      false,
+      'el check handler tiene que coincidir con el request handler'
+    );
+  });
+
+  test('the narrowing survives the /login -> /game transition in both directions', () => {
+    const account = { url: GAME_LOGIN_URL };
+    const ses = wire(account);
+    assert.deepEqual(request(ses, 'openExternal', GAME_LOGIN_URL), {
+      answered: true,
+      granted: false
+    });
+    account.url = GAME_URL;
+    assert.deepEqual(request(ses, 'openExternal', GAME_URL), { answered: true, granted: false });
+    account.url = GAME_LOGIN_URL;
+    assert.deepEqual(request(ses, 'openExternal', GAME_LOGIN_URL), {
+      answered: true,
+      granted: false
+    });
+  });
+
+  test('a lookalike hostname is not treated as the game', () => {
+    // El endurecimiento se decide por host exacto: un dominio que solo
+    // CONTIENE el del juego no hereda sus denegaciones.
+    const ses = wire({ url: 'https://poke.idleworld.online.attacker.test/login' });
+    assert.deepEqual(request(ses, 'openExternal', 'https://poke.idleworld.online.attacker.test/'), {
+      answered: true,
+      granted: true
+    });
   });
 
   test('a promptable permission with no parseable requesting URL is denied without a prompt', () => {

@@ -160,7 +160,14 @@ function createPermissionsManager({ getData, persist, broadcastState, mt, getMai
     // the account's very first URL was for the rest of that view's life,
     // silently stopping the game's camera/geolocation denial (or wrongly
     // keeping it) after the same tab navigates somewhere else.
-    const isGameAccount = () => !!(account && account.url && gameTelemetry.isGameUrl(account.url));
+    //
+    // isGameHost(), not isGameUrl(): the latter excludes /login (it gates
+    // frame capture, see its comment in game-telemetry.js), and every new
+    // account starts exactly there (DEFAULT_START_URL in main.js), so the
+    // narrowing below used to be off on the login page — openExternal
+    // auto-granted, camera/location prompting instead of denied — on a page
+    // that runs the same third-party game code as the rest of the site.
+    const isGameAccount = () => !!(account && account.url && gameTelemetry.isGameHost(account.url));
     const alwaysDenied = (permission) => !ALLOWED_PERMISSIONS.has(permission) || (isGameAccount() && GAME_DENIED_PERMISSIONS.has(permission));
     let pendingPrompts = 0;
     ses.setPermissionRequestHandler((_wc, permission, callback, details) => {
