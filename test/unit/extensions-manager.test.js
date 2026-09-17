@@ -545,6 +545,11 @@ describe('extensions:installFromStore — extraction failure', () => {
     assert.equal(result.ok, false);
     assert.match(result.error, /local file header/);
     assert.deepEqual(tempLeftovers(), []);
+    assert.equal(
+      fs.existsSync(path.join(EXTENSIONS_DIR, STORE_ID)),
+      false,
+      'la carpeta que extract-zip ya habia creado no debe quedar huerfana'
+    );
     assert.deepEqual(data.settings.extensions, []);
   });
 });

@@ -337,6 +337,10 @@ function createExtensionsManager({ getData, persist, broadcastState, mt, getMain
       await extractZip(zipPath, { dir: destDir });
     } catch (/** @type {any} */ err) {
       fs.unlinkSync(zipPath);
+      // extractZip() ya creo destDir antes de fallar: sin esto quedaba una
+      // carpeta huerfana (a veces a medio extraer) en EXTENSIONS_DIR, que
+      // solo desaparecia si el usuario reintentaba la misma extension.
+      fs.rmSync(destDir, { recursive: true, force: true });
       throw err;
     }
     fs.unlinkSync(zipPath);
