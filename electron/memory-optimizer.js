@@ -42,8 +42,7 @@ function shouldSkipOptimize({
 // with.
 const DEFAULT_SYSTEM_FREE_THRESHOLD_PCT = 0.3;
 
-/** @param {{ freeMb?: number, totalMb?: number, thresholdPct?: number }} [mem] */
-/** @param {{ freeMb?: number|null, totalMb?: number|null, thresholdPct?: number }} [info] */
+/** @param {{ freeMb?: number|null, totalMb?: number|null, thresholdPct?: number }} [mem] */
 function systemMemoryPressureHigh({ freeMb, totalMb, thresholdPct = DEFAULT_SYSTEM_FREE_THRESHOLD_PCT } = {}) {
   if (typeof freeMb !== 'number' || typeof totalMb !== 'number' || totalMb <= 0) return false;
   return freeMb / totalMb < thresholdPct;
