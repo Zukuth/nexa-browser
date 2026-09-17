@@ -1,3 +1,4 @@
+// @ts-check
 // Catches uncaught exceptions/rejections in the HOST chrome UI itself (this
 // file) — not account webviews, which already have their own extensive
 // crash/error coverage in main.js (render-process-gone, unresponsive,
@@ -226,8 +227,8 @@ const pokeSettingsHideChatEl = inputEl('poke-settings-hide-chat');
 const pokeSettingsHideGameBarEl = inputEl('poke-settings-hide-gamebar');
 const pokeSettingsSellLockEl = inputEl('poke-settings-selllock');
 const pokeSettingsSellLockItemsEl = el('poke-settings-selllock-items');
-const pokeSettingsSellLockItemPickerEl = el('poke-settings-selllock-item-picker');
-const pokeSettingsSellLockItemAddEl = el('poke-settings-selllock-item-add');
+const pokeSettingsSellLockItemPickerEl = selectEl('poke-settings-selllock-item-picker');
+const pokeSettingsSellLockItemAddEl = btnEl('poke-settings-selllock-item-add');
 const pokeSettingsCleanProfileEl = inputEl('poke-settings-clean-profile');
 const stabilityEnabledEl = inputEl('stability-enabled');
 const stabilityKeepaliveEl = inputEl('stability-keepalive');
@@ -542,6 +543,7 @@ function setDragInProgress(value) {
 // never actually swaps -- no exception anywhere, since nothing throws.
 // Releasing the mouse outside the window normally also blurs the window, so
 // that's the recovery hook below actually runs the drag's own cleanup.
+/** @type {(() => void)|null} */
 let activeDragCleanup = null;
 let editingSpaceId = null;
 
@@ -559,6 +561,7 @@ let draggedSpaceId = null;
 // See the sidebarSignature comment inside render() — lets it skip rebuilding
 // the account-list DOM when nothing about the accounts/groups themselves
 // changed since the last time it actually rebuilt.
+/** @type {string|null} */
 let lastSidebarSignature = null;
 // Same skip-if-unchanged pattern as sidebarSignature, applied to
 // renderPanelHeaders()/renderRail() — audit finding: unlike the account
@@ -566,7 +569,9 @@ let lastSidebarSignature = null;
 // nothing to do with panels/spaces at all — a download-progress tick, an
 // unrelated settings toggle) tore down and rebuilt every panel header/space
 // icon and its handlers from scratch.
+/** @type {string|null} */
 let lastPanelHeadersSignature = null;
+/** @type {string|null} */
 let lastRailSignature = null;
 
 function reorderIds(ids, draggedId, targetId) {
@@ -640,6 +645,7 @@ function escapeHtmlClient(s) {
 // for the "should always be a plain number" case, where the correct
 // behavior is a safe display fallback, not HTML-escaping a string that was
 // never supposed to be a string.
+/** @param {any} value @param {string|number} [fallback] */
 function numOr(value, fallback = '?') {
   return Number.isFinite(value) ? value : fallback;
 }
@@ -723,7 +729,7 @@ function translateStaticDom() {
     el.textContent = t(el.getAttribute('data-i18n'));
   });
   qsa('[data-i18n-placeholder]').forEach((el) => {
-    el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
+    /** @type {HTMLInputElement|HTMLTextAreaElement} */ (el).placeholder = t(el.getAttribute('data-i18n-placeholder'));
   });
   qsa('[data-i18n-title]').forEach((el) => {
     el.title = t(el.getAttribute('data-i18n-title'));
@@ -916,13 +922,13 @@ function render() {
     item.ondragstart = (e) => {
       draggedAccountId = account.id;
       listDragInProgress = true;
-      e.dataTransfer.effectAllowed = 'move';
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
       item.classList.add('dragging');
     };
     item.ondragover = (e) => {
       if (!draggedAccountId || draggedAccountId === account.id) return;
       e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
     };
     item.ondrop = (e) => {
       e.preventDefault();
@@ -1006,16 +1012,17 @@ function render() {
   // ungrouped accounts render first exactly as before this existed, then
   // each group as a header followed by its accounts, hidden while collapsed.
   const spaceGroups = (state.groups || []).filter((g) => g.spaceId === space?.id);
+  /** @type {Map<string, any[]>} */
   const groupedAccounts = new Map(spaceGroups.map((g) => [g.id, []]));
   const ungroupedAccounts = [];
   spaceAccounts.forEach((account) => {
-    if (account.groupId && groupedAccounts.has(account.groupId)) groupedAccounts.get(account.groupId).push(account);
+    if (account.groupId && groupedAccounts.has(account.groupId)) groupedAccounts.get(account.groupId)?.push(account);
     else ungroupedAccounts.push(account);
   });
 
   ungroupedAccounts.forEach((account) => listEl.appendChild(buildAccountItem(account)));
   spaceGroups.forEach((group) => {
-    const accountsInGroup = groupedAccounts.get(group.id);
+    const accountsInGroup = groupedAccounts.get(group.id) || [];
     const header = document.createElement('div');
     header.className = 'account-group-header';
     const caret = document.createElement('span');
@@ -1155,13 +1162,13 @@ function renderRail() {
     icon.ondragstart = (e) => {
       draggedSpaceId = space.id;
       listDragInProgress = true;
-      e.dataTransfer.effectAllowed = 'move';
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
       icon.classList.add('dragging');
     };
     icon.ondragover = (e) => {
       if (!draggedSpaceId || draggedSpaceId === space.id) return;
       e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
     };
     icon.ondrop = (e) => {
       e.preventDefault();
@@ -1179,7 +1186,7 @@ function renderRail() {
     if (count > 0) {
       const badge = document.createElement('div');
       badge.className = 'space-badge';
-      badge.textContent = count;
+      badge.textContent = String(count);
       icon.appendChild(badge);
     }
 
@@ -1205,11 +1212,13 @@ function renderPanelHeaders() {
   // they only ever matter for restoring an in-progress address-bar edit
   // after a rebuild, which is a no-op if nothing gets rebuilt below.
   const focused = document.activeElement;
-  const isUrlFocused = focused && focused.classList && focused.classList.contains('panel-url');
-  const focusedPanelId = isUrlFocused ? focused.dataset.id : null;
-  const focusedValue = isUrlFocused ? focused.value : null;
-  const focusedSelStart = isUrlFocused ? focused.selectionStart : null;
-  const focusedSelEnd = isUrlFocused ? focused.selectionEnd : null;
+  const focusedUrl = focused && focused.classList && focused.classList.contains('panel-url')
+    ? /** @type {HTMLInputElement} */ (focused)
+    : null;
+  const focusedPanelId = focusedUrl ? focusedUrl.dataset.id : null;
+  const focusedValue = focusedUrl ? focusedUrl.value : null;
+  const focusedSelStart = focusedUrl ? focusedUrl.selectionStart : null;
+  const focusedSelEnd = focusedUrl ? focusedUrl.selectionEnd : null;
 
   if (panelHeadersStale) {
   lastPanelHeadersSignature = panelHeadersSignature;
@@ -1368,7 +1377,7 @@ function applyContentRect(el, rect) {
 // often — the per-account check is just a DOM lookup.
 function reconcileWebviews() {
   const openIds = new Set(state.accounts.filter((a) => !a.closed).map((a) => a.id));
-  Array.from(panelWebviewsEl.children).forEach((el) => {
+  /** @type {HTMLElement[]} */ (Array.from(panelWebviewsEl.children)).forEach((el) => {
     if (!openIds.has(el.dataset.id)) el.remove();
   });
   // panelLoadingPhase entries are only ever removed on did-stop-loading (see
@@ -1452,7 +1461,7 @@ function reconcileWebviews() {
 // account can't hide it the normal way while PiP is active.
 function positionWebviews() {
   const visibleIds = new Set(panelsGeometry.map((p) => p.id));
-  Array.from(panelWebviewsEl.children).forEach((el) => {
+  /** @type {HTMLElement[]} */ (Array.from(panelWebviewsEl.children)).forEach((el) => {
     if (visibleIds.has(el.dataset.id)) return;
     if (el.classList.contains('pip-active')) {
       el.classList.remove('hidden-panel');
@@ -1575,7 +1584,9 @@ function startSplitDrag(e, group, field, pairIndex) {
   // as smooth (the divider line and headers still update synchronously
   // below) while cutting the actual IPC traffic to the display's real
   // refresh rate.
+  /** @type {{ rectA: any, rectB: any }|null} */
   let pendingRects = null;
+  /** @type {number|null} */
   let rafId = null;
   function flushLiveRect() {
     rafId = null;
@@ -1707,8 +1718,7 @@ function startFreeDrag(e, id, mode) {
   overlay.id = 'free-drag-overlay';
   document.body.appendChild(overlay);
 
-  /** @type {HTMLElement|null} */ let activeGhost = null;
-  panelsGeometry.forEach((p) => {
+  const ghosts = panelsGeometry.map((p) => {
     const g = document.createElement('div');
     g.className = 'free-ghost' + (p.id === id ? ' active' : '');
     g.style.left = p.fullRect.x + 'px';
@@ -1717,8 +1727,9 @@ function startFreeDrag(e, id, mode) {
     g.style.height = p.fullRect.height + 'px';
     g.textContent = p.name;
     overlay.appendChild(g);
-    if (p.id === id) activeGhost = g;
+    return g;
   });
+  const activeGhost = ghosts[panelsGeometry.indexOf(panel)];
 
   const startRect = { ...panel.fullRect };
   const startX = e.clientX;
@@ -2171,7 +2182,7 @@ async function runEcoBenchmark() {
     renderEcoBenchmarkResult(before, after);
   } catch (err) {
     if (pokeSettingsEcoBenchmarkResultEl) {
-      pokeSettingsEcoBenchmarkResultEl.textContent = err?.message || t('pokeIdle.ecoBenchmarkFailed');
+      pokeSettingsEcoBenchmarkResultEl.textContent = /** @type {any} */ (err)?.message || t('pokeIdle.ecoBenchmarkFailed');
     }
   } finally {
     account.ecoMode = originalEcoMode;
@@ -2303,7 +2314,7 @@ pokeSettingsSellLockItemAddEl?.addEventListener('click', async () => {
   renderPokeSettingsLockItems(account);
 });
 pokeSettingsSellLockItemsEl?.addEventListener('click', async (event) => {
-  const removeBtn = event.target.closest('button[data-remove]');
+  const removeBtn = /** @type {HTMLButtonElement|null} */ (/** @type {HTMLElement} */ (event.target).closest('button[data-remove]'));
   if (!removeBtn) return;
   const account = selectedPokeSettingsAccount();
   if (!account) return;
@@ -2427,6 +2438,7 @@ btnZoomMenu.addEventListener('click', (e) => {
   else window.api.showViews();
 });
 
+/** @param {{ keepZoom?: boolean, keepLayout?: boolean }} [opts] */
 function closeAllMenus({ keepZoom, keepLayout } = {}) {
   if (!keepLayout && !layoutMenu.classList.contains('hidden')) {
     layoutMenu.classList.add('hidden');
@@ -2475,6 +2487,7 @@ function shieldModeLabel(mode) {
 // re-renders the whole popup after `onAdd` resolves. `hidden` starts the
 // row collapsed (the custom-rules row toggles open via its own "+ Nueva
 // regla" button instead of always showing).
+/** @param {{ placeholder: string, hidden?: boolean, onAdd: (val: string) => any }} opts */
 function createAddInputRow({ placeholder, hidden, onAdd }) {
   const row = document.createElement('div');
   row.className = 'shield-input-row' + (hidden ? ' hidden' : '');
@@ -3175,7 +3188,7 @@ bmExport.addEventListener('click', async () => {
     const result = await window.api.exportBookmarks();
     if (!result.ok && result.error) alert(t('bookmarks.exportError', { message: result.error }));
   } catch (err) {
-    alert(t('bookmarks.exportError', { message: err.message }));
+    alert(t('bookmarks.exportError', { message: /** @type {any} */ (err).message }));
   }
 });
 
@@ -3806,6 +3819,7 @@ function closeSettingsModal() {
 // Real measured CPU%, not an estimate — see eco:getSavings in main.js,
 // which compares each auto-eco'd account's actual CPU reading right before
 // throttling kicked in against its latest reading now.
+/** @type {ReturnType<typeof setInterval>|null} */
 let ecoSavingsInterval = null;
 async function refreshEcoSavingsHint() {
   if (settingsModal.classList.contains('hidden')) return;
@@ -4057,6 +4071,7 @@ const POKE_NOTABLE_VISIBLE_LIMIT = 30;
 // a normal id. Resolve by matching the name's trailing word(s) against every
 // normal-range name already in the cached catalog, so this works for any
 // prefix the game adds later, not just the ones seen so far.
+/** @type {Map<string, number>|null} */
 let speciesNameToDexIdCache = null;
 function getSpeciesNameToDexIdMap() {
   if (speciesNameToDexIdCache || !creatureCatalogCache) return speciesNameToDexIdCache;
@@ -4345,8 +4360,11 @@ function maybePlayGameAlertSounds() {
     }
   }
 }
+/** @type {any[]|null} */
 let creatureCatalogCache = null;
+/** @type {Promise<any[]>|null} */
 let creatureCatalogPromise = null;
+/** @returns {Promise<any[]>} */
 function ensureCreatureCatalogRenderer(forceRefresh = false) {
   if (forceRefresh) {
     creatureCatalogCache = null;
@@ -4360,7 +4378,8 @@ function ensureCreatureCatalogRenderer(forceRefresh = false) {
       return list;
     });
   }
-  return creatureCatalogPromise;
+  // window.api es any, asi que TS no ve que la asignacion de arriba lo dejo no-null.
+  return /** @type {Promise<any[]>} */ (creatureCatalogPromise);
 }
 
 async function populateCalcSpeciesDropdown() {
@@ -4712,7 +4731,7 @@ setExportSpaces.addEventListener('click', async () => {
     if (result.ok) alert(t('spaces.exportOk'));
     else if (result.error) alert(t('spaces.exportError', { message: result.error }));
   } catch (err) {
-    alert(t('spaces.exportError', { message: err.message }));
+    alert(t('spaces.exportError', { message: /** @type {any} */ (err).message }));
   }
 });
 
@@ -4722,7 +4741,7 @@ setImportSpaces.addEventListener('click', async () => {
     if (result.ok) alert(t('spaces.importOk'));
     else if (result.error) alert(t('spaces.importError', { message: result.error }));
   } catch (err) {
-    alert(t('spaces.importError', { message: err.message }));
+    alert(t('spaces.importError', { message: /** @type {any} */ (err).message }));
   }
 });
 
@@ -4739,6 +4758,7 @@ window.api.onStateUpdate((data) => {
 // ── Memory optimizer UI ──────────────────────────────────────────────────────
 const OPTIMIZE_DUE_MS = 24 * 60 * 60 * 1000;
 
+/** @param {{ running?: boolean, lastOptimizeAt?: number|null, dueIn?: number|null }} [status] */
 function applyOptimizeStatus({ running, lastOptimizeAt, dueIn } = {}) {
   if (!btnOptimize) return;
   if (running) {
@@ -4894,6 +4914,7 @@ const SHORTCUTS_OVERLAY_ENTRIES = [
   ['Ctrl+D', 'js.shortcutBookmark'],
   ['Ctrl+ +/-/0', 'js.shortcutZoom']
 ];
+/** @type {HTMLDivElement|null} */
 let shortcutsOverlayEl = null;
 function closeShortcutsOverlay() {
   if (shortcutsOverlayEl) { shortcutsOverlayEl.remove(); shortcutsOverlayEl = null; }
@@ -4929,7 +4950,7 @@ function toggleShortcutsOverlay() {
 
 document.addEventListener('keydown', (e) => {
   if (e.key === '?' && !e.ctrlKey && !e.altKey) {
-    const target = e.target;
+    const target = /** @type {HTMLElement|null} */ (e.target);
     const isTyping = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
     if (!isTyping) {
       e.preventDefault();

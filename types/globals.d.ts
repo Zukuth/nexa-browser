@@ -36,7 +36,7 @@ interface Window {
   NEXA_I18N: Record<string, Record<string, string>>;
 
   /** Fallback de sprites del panel de Poke Idle World (src/renderer.js). */
-  pokeSpriteFallback?: (img: HTMLImageElement) => void;
+  pokeSpriteFallback?: (img: HTMLImageElement, pngSrc?: string) => void;
 
   /** Prefijo viejo de WebKit — sigue existiendo en Chromium. */
   webkitAudioContext?: typeof AudioContext;
