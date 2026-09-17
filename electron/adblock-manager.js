@@ -1,3 +1,4 @@
+// @ts-check
 // Ad/tracker blocking — filter engine, cosmetic filtering, per-page/lifetime
 // stats, and the whole adblock:* IPC surface — split out of main.js so this
 // one feature (by far the most iterated-on this project has, across several
@@ -34,6 +35,9 @@ const ADBLOCKER_COSMETIC_PRELOAD = require.resolve('@ghostery/adblocker-electron
 // try/catch (engineStatus becomes 'failed', same UI path as a real network
 // fetch failure) instead of this require() crashing the whole main process
 // before a single window even opens.
+// Native module with no bundled .d.ts — its Engine/FilterSet surface is
+// untyped on purpose rather than hand-declared here and left to drift.
+/** @type {any} */
 let adblockRust = null;
 try {
   adblockRust = require('adblock-rs');
@@ -126,6 +130,7 @@ function hostMatchesSet(hostname, set) {
 // category their tracking/ad infrastructure is publicly known for. Anything
 // not recognized falls into 'other' rather than being guessed — matches
 // this project's live-verification-over-guessing rule.
+/** @type {Array<[RegExp, string]>} */
 const HOSTNAME_CATEGORY_MAP = [
   [/(^|\.)doubleclick\.net$|(^|\.)googlesyndication\.com$|(^|\.)googleadservices\.com$|(^|\.)adservice\.google\.|(^|\.)amazon-adsystem\.com$|(^|\.)criteo\.(net|com)$|(^|\.)taboola\.com$|(^|\.)outbrain\.com$|(^|\.)adnxs\.com$|(^|\.)pubmatic\.com$|(^|\.)rubiconproject\.com$|(^|\.)openx\.net$/, 'ads'],
   [/(^|\.)facebook\.net$|(^|\.)facebook\.com$|(^|\.)fbcdn\.net$|(^|\.)twitter\.com$|(^|\.)x\.com$|(^|\.)tiktok\.com$|(^|\.)linkedin\.com$|(^|\.)pinterest\.com$|(^|\.)reddit\.com$|(^|\.)snapchat\.com$/, 'social'],
@@ -195,7 +200,9 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
   //    Doesn't gate protection status — if it fails to load, network
   //    blocking above is completely unaffected, only the visual cleanup is
   //    missing until the next successful rebuild.
+  /** @type {any} adblock-rs Engine (see adblockRust above) */
   let networkEngine = null;
+  /** @type {import('@ghostery/adblocker-electron').ElectronBlocker|null} */
   let cosmeticEngine = null;
   // Real health state for the popup/diagnostics — isEngineReady() alone
   // (a boolean) can't distinguish "still building on first launch" from
@@ -205,6 +212,7 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
   // way; a later rebuild (mode/filter-list change) re-enters 'loading' too,
   // same as the very first load.
   let engineStatus = 'loading'; // 'loading' | 'ready' | 'failed'
+  /** @type {string|null} */
   let engineLastError = null;
   const blockedCounts = new Map(); // accountId -> count
   // Distinct hostnames this account's CURRENT page has contacted (blocked or
@@ -447,6 +455,7 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
   // anything else that calls the injected persist() directly (a real
   // settings/account change) still gets the fast, snappy 400ms path.
   const STATS_PERSIST_DEBOUNCE_MS = 5000;
+  /** @type {NodeJS.Timeout|null} */
   let statsPersistTimer = null;
   function persistStatsDebounced() {
     if (statsPersistTimer) return;
@@ -563,7 +572,8 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
     } catch (err) {
       if (myGeneration !== loadGeneration) return; // superseded by a newer rebuild — discard
       engineStatus = 'failed';
-      engineLastError = err && err.message ? err.message : String(err);
+      const e = /** @type {any} */ (err);
+      engineLastError = e && e.message ? e.message : String(e);
       console.error('[adblock] failed to load filter engine', err);
     }
   }
@@ -585,12 +595,14 @@ function createAdblockManager({ getData, persist, broadcastState, getAccount }) 
   // exactly one real rebuild — reading whatever settings are current at the
   // moment it actually runs, not whatever each individual caller saw.
   const ADBLOCK_REBUILD_DEBOUNCE_MS = 400;
+  /** @type {NodeJS.Timeout|null} */
   let rebuildDebounceTimer = null;
+  /** @type {Promise<void>|null} */
   let rebuildPendingPromise = null;
   function rebuildAdBlockEngine() {
     if (rebuildDebounceTimer) clearTimeout(rebuildDebounceTimer);
     if (!rebuildPendingPromise) {
-      rebuildPendingPromise = new Promise((resolve) => {
+      rebuildPendingPromise = new Promise(/** @param {() => void} resolve */ (resolve) => {
         rebuildDebounceTimer = setTimeout(() => {
           rebuildDebounceTimer = null;
           loadAdBlockEngine().finally(() => {

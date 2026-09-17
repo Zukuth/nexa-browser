@@ -1,3 +1,4 @@
+// @ts-check
 // Motor de telemetría en tiempo real para cuentas de poke.idleworld.online.
 // Lee los frames WebSocket que el propio juego ya transmite (protocolo JSON
 // documentado, no DOM) vía un parche pasivo de WebSocket.prototype inyectado
@@ -250,12 +251,19 @@ function removeState(accountId) {
 // mid-session. If the fetch ever fails, loot just contributes 0 to
 // goldPerHour instead of throwing — same honest-undercount policy as the
 // xpGained fallback above.
+/** @type {Map<number, number>|null} */
 let itemPriceCatalog = null; // itemId -> npcPrice
+/** @type {Map<string, number>|null} */
 let itemPriceByName = null; // item name -> npcPrice (some events only give a name, e.g. profession-photo)
+/** @type {Map<number, string>|null} */
 let itemNameById = null; // itemId -> name, for resolving field-kill loot (which only carries itemId+qty) into a readable drops list
+/** @type {Map<number, string>|null} */
 let itemIconById = null; // itemId -> icon URL, for the "Drops en vivo" panel
+/** @type {Map<string, string>|null} */
 let itemIconByName = null; // item name -> icon URL, for namedLoot (profession-photo)
+/** @type {any[]|null} */
 let itemCatalogItems = null; // enriched raw item rows for UI tools such as Pokepedia drops
+/** @type {Promise<void>|null} */
 let itemPriceCatalogPromise = null;
 function ensureItemPriceCatalog() {
   if (itemPriceCatalog || itemPriceCatalogPromise) return itemPriceCatalogPromise;
@@ -270,6 +278,7 @@ function ensureItemPriceCatalog() {
       const enrichedItems = [];
       for (const item of (data && data.items) || []) {
         if (item && item.id != null && typeof item.npcPrice === 'number') {
+          /** @type {string|null} */
           let iconUrl = null;
           byId.set(item.id, item.npcPrice);
           if (item.name) { byName.set(item.name, item.npcPrice); nameById.set(item.id, item.name); }
@@ -329,8 +338,11 @@ function ensureItemPriceCatalog() {
 // the Tier List / Comparador / Caza & XP tools (poke-formulas.js), which need
 // the full per-species record (base stats, type, huntLevel, sellValue,
 // experience, loot), not just name/rarity/attacks.
+/** @type {Map<number, any>|null} */
 let creatureCatalog = null; // pokeId (== speciesId in poke-delta/pokes frames) -> full creatures.json record
+/** @type {Promise<void>|null} */
 let creatureCatalogPromise = null;
+/** @type {number|null} */
 let creatureCatalogUpdatedAt = null;
 function ensureCreatureCatalog(forceRefresh = false) {
   if (forceRefresh) {
@@ -380,13 +392,16 @@ function getCreatureCatalogMeta() {
 // an item with no name has nothing to show in a picker anyway.
 function getItemCatalogArray() {
   if (itemCatalogItems) return itemCatalogItems.filter((item) => item && item.name).map((item) => ({ ...item }));
-  if (!itemNameById) return [];
+  // All three maps are assigned together in ensureItemPriceCatalog().
+  const iconById = itemIconById;
+  const priceById = itemPriceCatalog;
+  if (!itemNameById || !iconById || !priceById) return [];
   return Array.from(itemNameById.entries()).map(([id, name]) => ({
     id,
     name,
-    icon: itemIconById.get(id) || null,
-    iconUrl: itemIconById.get(id) || null,
-    npcPrice: itemPriceCatalog.get(id) ?? null,
+    icon: iconById.get(id) || null,
+    iconUrl: iconById.get(id) || null,
+    npcPrice: priceById.get(id) ?? null,
     category: null,
     description: ''
   }));
@@ -884,6 +899,9 @@ function shouldPollTick(tickCount, emptyStreak, {
   return tickCount % skip === 0;
 }
 
+/** @typedef {{ onFrame?: (msg: any) => void }} CaptureOptions */
+
+/** @param {any} wc @param {string} accountId @param {CaptureOptions} [opts] */
 function attachCaptureViaJs(wc, accountId, { onFrame } = {}) {
   if (jsCaptureIntervals.has(accountId)) return;
   const socketCapture = require('./game-socket-capture');
@@ -955,6 +973,7 @@ function detachCaptureViaJs(accountId) {
 // game's domain, per the port plan's scoping rule. Takes the webContents
 // directly (not a WebContentsView wrapper — accounts are real <webview>
 // elements now, see wireAccountWebContents in main.js).
+/** @param {any} wc @param {string} accountId @param {CaptureOptions} [opts] */
 function attachCapture(wc, accountId, { onFrame } = {}) {
   return attachCaptureViaJs(wc, accountId, { onFrame });
 }
@@ -976,6 +995,7 @@ function detachCapture(accountId) {
 // other than a full navigation) while the account otherwise looks alive —
 // a plain attachCapture() call would silently no-op on that instead of
 // fixing it.
+/** @param {any} wc @param {string} accountId @param {CaptureOptions} [opts] */
 function reattachCapture(wc, accountId, { onFrame } = {}) {
   detachCaptureViaJs(accountId);
   attachCaptureViaJs(wc, accountId, { onFrame });
