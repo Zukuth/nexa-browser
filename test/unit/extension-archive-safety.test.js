@@ -8,13 +8,14 @@
 // extensions-manager.js calls app.getPath('userData') at module load, so the
 // electron module is mocked before requiring it, the same way store.test.js
 // does.
-const { test, describe, mock } = require('node:test');
+const { test, describe, after, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const os = require('node:os');
 const path = require('node:path');
 const fs = require('node:fs');
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexa-ext-test-'));
+after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
 
 mock.module('electron', {
   exports: {
@@ -27,6 +28,7 @@ mock.module('electron', {
 const {
   zipEntryIsSymlink,
   assertZipEntryPathSafe,
+  assertNoEscapedEntries,
   crxToZip
 } = require('../../electron/extensions-manager');
 
@@ -94,6 +96,61 @@ describe('assertZipEntryPathSafe()', () => {
     // path.relative() is what makes this safe — a naive startsWith() check on
     // the joined string would accept "<dest>-evil" as being inside "<dest>".
     assert.throws(() => assertZipEntryPathSafe(dest, '../ext-dest-evil/payload.js'), /outside its own folder/);
+  });
+});
+
+// The post-extraction walk. In the real install it never gets to act: yauzl
+// 2.x already rejects '..' and absolute entry names, and the pre-scan rejects
+// symlink entries, before anything reaches disk. It is the last line of
+// defense if either of those ever changes, so it is tested on real directory
+// trees here. Windows only lets an unprivileged process create directory
+// junctions, which Node reports as symbolic links, so those stand in for a
+// smuggled symlink.
+describe('assertNoEscapedEntries()', () => {
+  const linkType = process.platform === 'win32' ? 'junction' : 'dir';
+  const makeTree = () => {
+    const root = fs.mkdtempSync(path.join(tmpRoot, 'walk-'));
+    fs.mkdirSync(path.join(root, 'js', 'lib'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'manifest.json'), '{}');
+    fs.writeFileSync(path.join(root, 'js', 'lib', 'a.js'), '');
+    return root;
+  };
+
+  test('accepts an ordinary nested extension folder', () => {
+    assert.doesNotThrow(() => assertNoEscapedEntries(makeTree()));
+  });
+
+  test('accepts an empty folder', () => {
+    assert.doesNotThrow(() => assertNoEscapedEntries(fs.mkdtempSync(path.join(tmpRoot, 'walk-empty-'))));
+  });
+
+  test('rejects a directory link at the top level', () => {
+    const root = makeTree();
+    const outside = fs.mkdtempSync(path.join(tmpRoot, 'outside-'));
+    fs.symlinkSync(outside, path.join(root, 'escape'), linkType);
+    assert.throws(() => assertNoEscapedEntries(root), /symlink/);
+  });
+
+  test('rejects a directory link nested several levels deep', () => {
+    const root = makeTree();
+    const outside = fs.mkdtempSync(path.join(tmpRoot, 'outside-'));
+    fs.symlinkSync(outside, path.join(root, 'js', 'lib', 'escape'), linkType);
+    assert.throws(() => assertNoEscapedEntries(root), /symlink/);
+  });
+
+  test('rejects a link even when it points back inside the folder', () => {
+    // An unpacked extension never needs a link at all, so the target is
+    // irrelevant: any link is refused.
+    const root = makeTree();
+    fs.symlinkSync(path.join(root, 'js'), path.join(root, 'js-alias'), linkType);
+    assert.throws(() => assertNoEscapedEntries(root), /symlink/);
+  });
+
+  test('resolves the destination itself first, so reaching it through a link is fine', () => {
+    const real = makeTree();
+    const alias = path.join(fs.mkdtempSync(path.join(tmpRoot, 'alias-parent-')), 'alias');
+    fs.symlinkSync(real, alias, linkType);
+    assert.doesNotThrow(() => assertNoEscapedEntries(alias));
   });
 });
 

@@ -521,5 +521,6 @@ module.exports = {
   // real CRX download.
   zipEntryIsSymlink,
   assertZipEntryPathSafe,
+  assertNoEscapedEntries,
   crxToZip
 };
