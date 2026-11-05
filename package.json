@@ -42,7 +42,7 @@
     "yauzl": "^2.10.0"
   },
   "optionalDependencies": {
-    "adblock-rs": "^0.13.3"
+    "adblock-rs": "^0.13.5"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
